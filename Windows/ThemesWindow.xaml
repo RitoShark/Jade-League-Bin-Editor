@@ -1,0 +1,97 @@
+<Window x:Class="Jade.Windows.ThemesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Jade Themes" Height="400" Width="600"
+        Background="#1E1E1E"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        ResizeMode="CanResize">
+    
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#007ACC"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="15,8"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#1C97EA"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
+    </Window.Resources>
+    
+    <Border BorderThickness="1" BorderBrush="#3E3E42">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            
+            <!-- Custom Title Bar -->
+            <Border x:Name="TitleBar" Grid.Row="0" Background="#252526" Height="30" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
+                    <Image Source="/jade.ico" Width="16" Height="16" Margin="0,0,8,0"/>
+                    <TextBlock Text="Jade Themes" Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+            
+            <!-- Content -->
+            <Grid Grid.Row="1" Margin="20">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="20"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                
+                <!-- Title -->
+                <StackPanel Grid.Row="0">
+                    <TextBlock Text="Themes" FontSize="20" FontWeight="Bold" Foreground="White"/>
+                    <TextBlock x:Name="CurrentThemeText" Text="Current Theme: Dark Emptiness" FontSize="14" Foreground="#CCCCCC" Margin="0,5,0,0"/>
+                </StackPanel>
+        
+                <!-- Theme Section -->
+                <TextBlock Grid.Row="2" Text="Color Theme" FontWeight="SemiBold" Foreground="White"/>
+                
+                <StackPanel Grid.Row="3" Margin="0,10,0,0">
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,10">
+                        Choose your preferred color theme for the editor.
+                    </TextBlock>
+                    
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <Button x:Name="Theme1Button" Content="Dark Emptiness" Click="OnTheme1" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#3C3C3C" BorderThickness="0"/>
+                        <Button x:Name="Theme2Button" Content="Blue Guilt" Click="OnTheme2" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#1E3A5F" BorderThickness="0"/>
+                        <Button x:Name="Theme3Button" Content="Red Regret" Click="OnTheme3" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#5F1E1E" BorderThickness="0"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <Button x:Name="Theme4Button" Content="Pink Remembrance" Click="OnTheme4" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#E8B4D4" Foreground="Black" BorderThickness="0"/>
+                        <Button x:Name="Theme5Button" Content="Primo" Click="OnTheme5" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#D2F0FF" Foreground="Black" BorderThickness="0"/>
+                        <Button x:Name="Theme6Button" Content="Green Nostalgia" Click="OnTheme6" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#2D5F3F" BorderThickness="0"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <Button x:Name="Theme7Button" Content="AMOLED" Click="OnTheme7" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#000000" Foreground="White" BorderThickness="0"/>
+                        <Button x:Name="Theme8Button" Content="Purple Void" Click="OnTheme8" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#1A0F2E" Foreground="White" BorderThickness="0"/>
+                        <Button x:Name="Theme9Button" Content="Violet Sorrow" Click="OnTheme9" HorizontalAlignment="Left" Background="#2E1A47" Foreground="White" BorderThickness="0"/>
+                    </StackPanel>
+                </StackPanel>
+                
+                <!-- Action Buttons -->
+                <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+                    <Button Content="Reload UI" Click="OnApplyTheme" Margin="0,0,10,0" Background="#2D7A2D"/>
+                    <Button Content="Close" Click="OnClose"/>
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

@@ -1,0 +1,180 @@
+<Window x:Class="Jade.Windows.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Jade Settings" Height="650" Width="600"
+        Background="#1E1E1E"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        ResizeMode="CanResize">
+    
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#007ACC"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="15,8"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#1C97EA"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
+    </Window.Resources>
+    
+    <Border BorderThickness="1" BorderBrush="#3E3E42">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            
+            <!-- Custom Title Bar -->
+            <Border x:Name="TitleBar" Grid.Row="0" Background="#252526" Height="30" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
+                    <Image Source="/jade.ico" Width="16" Height="16" Margin="0,0,8,0"/>
+                    <TextBlock Text="Jade Settings" Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+            
+            <!-- Content -->
+            <Grid Grid.Row="1" Margin="20">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="20"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="20"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                
+                <!-- Title -->
+                <TextBlock Grid.Row="0" Text="Settings" FontSize="20" FontWeight="Bold" Foreground="White"/>
+        
+        <!-- Hashes Section -->
+        <TextBlock Grid.Row="2" Text="Hash Files" FontWeight="SemiBold" Foreground="White"/>
+        
+        <StackPanel Grid.Row="3" Margin="0,10,0,0">
+            <TextBlock TextWrapping="Wrap" Margin="0,0,0,10">
+                Hash files are used to convert hashed values (like 0xac080f05) into readable names.
+                Download them automatically or place your own in the hashes folder.
+            </TextBlock>
+            
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <Button Content="Download Hashes" Click="OnDownloadHashes" HorizontalAlignment="Left" Margin="0,0,10,0"/>
+                <Button Content="Open Hashes Folder" Click="OnOpenHashesFolder" HorizontalAlignment="Left" Margin="0,0,10,0"/>
+                <Button x:Name="AutoDownloadToggleButton" 
+                        Content="Auto-download: Disabled" 
+                        Click="OnToggleAutoDownload" 
+                        HorizontalAlignment="Left"
+                        Background="#7A2D2D"
+                        Padding="15,8"/>
+            </StackPanel>
+            
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <Button x:Name="PreloadHashToggleButton" 
+                        Content="Preload hashes: Disabled" 
+                        Click="OnTogglePreloadHash" 
+                        HorizontalAlignment="Left"
+                        Margin="0,0,10,0"
+                        Background="#7A2D2D"
+                        Padding="15,8"
+                        ToolTip="When enabled: Fast conversion but uses ~500MB of RAM.&#x0a;When disabled: Slower conversion but low RAM usage."/>
+                        
+                <Button x:Name="BinaryFormatToggleButton" 
+                        Content="Binary format: Disabled" 
+                        Click="OnToggleBinaryFormat" 
+                        HorizontalAlignment="Left"
+                        Background="#7A2D2D"
+                        Padding="15,8"
+                        ToolTip="When enabled: Converts hashes to binary for faster loading.&#x0a;When disabled: Keeps hashes as readable text files."/>
+            </StackPanel>
+            
+            <TextBlock x:Name="HashStatusText" 
+                       Margin="0,0,0,5" 
+                       FontSize="12" 
+                       Foreground="#858585"
+                       TextWrapping="Wrap"/>
+            
+            <TextBlock x:Name="HashFolderPath" 
+                       Margin="0,0,0,0" 
+                       FontSize="12" 
+                       Foreground="#858585"
+                       TextWrapping="Wrap"/>
+        </StackPanel>
+        
+        <!-- Temp Folder Section -->
+        <TextBlock Grid.Row="5" Text="Temporary Files" FontWeight="SemiBold" Foreground="White"/>
+        
+        <StackPanel Grid.Row="6" Margin="0,10,0,0">
+            <TextBlock TextWrapping="Wrap" Margin="0,0,0,10">
+                Temporary files are created when converting BIN files for editing.
+            </TextBlock>
+            
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <Button Content="Clear Temp Folder" Click="OnClearTempFolder" HorizontalAlignment="Left" Margin="0,0,10,0"/>
+                <Button Content="Open Temp Folder" Click="OnOpenTempFolder" HorizontalAlignment="Left" Margin="0,0,10,0"/>
+                <Button x:Name="AutoClearToggleButton" 
+                        Content="Auto-clear: Enabled" 
+                        Click="OnToggleAutoClear" 
+                        HorizontalAlignment="Left"
+                        Background="#2D7A2D"
+                        Padding="15,8"/>
+            </StackPanel>
+            
+            <TextBlock x:Name="TempFolderPath" 
+                       Margin="0,0,0,0" 
+                       FontSize="12" 
+                       Foreground="#858585"
+                       TextWrapping="Wrap"/>
+        </StackPanel>
+        
+        <!-- File Association Section -->
+        <TextBlock Grid.Row="7" Text="File Association" FontWeight="SemiBold" Foreground="White" Margin="0,10,0,0"/>
+        
+        <StackPanel Grid.Row="7" Margin="0,30,0,0">
+            <TextBlock TextWrapping="Wrap" Margin="0,0,0,10">
+                Register Jade as a handler for .bin files. This adds Jade to the Windows "Open with" menu.
+            </TextBlock>
+            
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <Button x:Name="RegisterBinButton" 
+                        Content="Register .bin File Association" 
+                        Click="OnRegisterBinAssociation" 
+                        HorizontalAlignment="Left"
+                        Margin="0,0,10,0"
+                        Padding="15,8"/>
+                <Button x:Name="UnregisterBinButton" 
+                        Content="Unregister" 
+                        Click="OnUnregisterBinAssociation" 
+                        HorizontalAlignment="Left"
+                        Background="#7A2D2D"
+                        Padding="15,8"/>
+            </StackPanel>
+            
+            <TextBlock x:Name="FileAssociationStatus" 
+                       Margin="0,0,0,0" 
+                       FontSize="12" 
+                       Foreground="#858585"
+                       TextWrapping="Wrap"/>
+        </StackPanel>
+        
+                <!-- Action Buttons -->
+                <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+                    <Button Content="Restart App" Click="OnRestart" Margin="0,0,10,0" Background="#2D7A2D"/>
+                    <Button Content="Close" Click="OnClose"/>
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

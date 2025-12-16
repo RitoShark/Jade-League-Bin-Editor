@@ -1,0 +1,565 @@
+<Window x:Class="Jade.Windows.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Jade - BIN Editor" Height="700" Width="1200"
+        Background="#1E1E1E"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="SingleBorderWindow"
+        ResizeMode="CanResize"
+        WindowState="Maximized"
+        Icon="/jade.ico">
+    
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="30"
+                      ResizeBorderThickness="6"
+                      GlassFrameThickness="0,0,0,1"
+                      CornerRadius="0"
+                      UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+    
+    <Window.Resources>
+        <!-- Dark Menu Style -->
+        <Style TargetType="Menu">
+            <Setter Property="Background" Value="#252526"/>
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+        </Style>
+        
+        <!-- Separator Style for Menu -->
+        <Style TargetType="{x:Type Separator}">
+            <Setter Property="Margin" Value="6,4,6,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Separator}">
+                        <Rectangle Fill="#3E3E42" Height="1"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- VSCode-style Menu Item -->
+        <Style TargetType="MenuItem">
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="Background" Value="#1E1E1E"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="Border" 
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter Grid.Column="0"
+                                                  ContentSource="Header"
+                                                  Margin="{TemplateBinding Padding}"
+                                                  VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1"
+                                           Text="{TemplateBinding InputGestureText}"
+                                           Margin="12,0,8,0"
+                                           Foreground="#808080"
+                                           VerticalAlignment="Center"/>
+                                <Popup x:Name="PART_Popup"
+                                       Placement="Bottom"
+                                       IsOpen="{TemplateBinding IsSubmenuOpen}"
+                                       AllowsTransparency="True"
+                                       Focusable="False">
+                                    <Border Background="#1E1E1E" 
+                                            BorderBrush="#3E3E42" 
+                                            BorderThickness="1"
+                                            Padding="2"
+                                            MinWidth="180">
+                                        <ItemsPresenter/>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#2D2D30"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#656565"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- Dark TextBox Style with Dark Selection -->
+        <Style TargetType="TextBox">
+            <Setter Property="SelectionBrush" Value="#264F78"/>
+            <Setter Property="SelectionTextBrush" Value="#FFFFFF"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ScrollViewer x:Name="PART_ContentHost" 
+                                          Focusable="False"
+                                          HorizontalScrollBarVisibility="{TemplateBinding HorizontalScrollBarVisibility}"
+                                          VerticalScrollBarVisibility="{TemplateBinding VerticalScrollBarVisibility}">
+                                <ScrollViewer.Resources>
+                                    <Style TargetType="Rectangle">
+                                        <Setter Property="Fill" Value="{DynamicResource ScrollBarTrackBrush}"/>
+                                    </Style>
+                                </ScrollViewer.Resources>
+                            </ScrollViewer>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- Scrollbar Color Resources -->
+        <SolidColorBrush x:Key="ScrollBarTrackBrush" Color="#3E3E42"/>
+        <SolidColorBrush x:Key="ScrollBarThumbBrush" Color="#686868"/>
+        <SolidColorBrush x:Key="ScrollBarThumbHoverBrush" Color="#9E9E9E"/>
+        
+        <!-- Style for the scrollbar corner rectangle -->
+        <Style TargetType="{x:Type Rectangle}" x:Key="ScrollBarCorner">
+            <Setter Property="Fill" Value="{DynamicResource ScrollBarTrackBrush}"/>
+        </Style>
+        
+        <!-- Scrollbar Styles -->
+        <Style x:Key="ScrollBarThumb" TargetType="{x:Type Thumb}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Thumb}">
+                        <Border x:Name="ThumbBorder" Background="{DynamicResource ScrollBarThumbBrush}" CornerRadius="4"/>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ThumbBorder" Property="Background" Value="{DynamicResource ScrollBarThumbHoverBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <Style TargetType="{x:Type ScrollBar}">
+            <Setter Property="Background" Value="{DynamicResource ScrollBarTrackBrush}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ScrollBar}">
+                        <Grid>
+                            <Border Background="{TemplateBinding Background}" CornerRadius="4"/>
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource ScrollBarThumb}"/>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Height" Value="12"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="{x:Type ScrollBar}">
+                                <Grid>
+                                    <Border Background="{TemplateBinding Background}" CornerRadius="4"/>
+                                    <Track x:Name="PART_Track">
+                                        <Track.Thumb>
+                                            <Thumb Style="{StaticResource ScrollBarThumb}"/>
+                                        </Track.Thumb>
+                                    </Track>
+                                </Grid>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Trigger>
+                <Trigger Property="Orientation" Value="Vertical">
+                    <Setter Property="Width" Value="12"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    
+    <Grid x:Name="RootGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Custom Title Bar -->
+        <Border x:Name="TitleBar" Grid.Row="0" Background="#252526" Height="30" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+            <Border.Resources>
+                <!-- Style for Title Bar Buttons -->
+                <Style TargetType="Button" x:Key="TitleBarToolbarButton">
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Setter Property="Foreground" Value="#CCCCCC"/>
+                    <Setter Property="BorderThickness" Value="1"/>
+                    <Setter Property="BorderBrush" Value="Transparent"/>
+                    <Setter Property="Width" Value="28"/>
+                    <Setter Property="Height" Value="26"/>
+                    <Setter Property="VerticalAlignment" Value="Center"/>
+                    <Setter Property="Margin" Value="2,0"/>
+                    <Setter Property="FontFamily" Value="Segoe UI Emoji"/>
+                    <Setter Property="FontSize" Value="14"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="{TemplateBinding Background}" 
+                                        BorderBrush="{TemplateBinding BorderBrush}" 
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="2">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                    <Style.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="#3E3E42"/>
+                            <Setter Property="BorderBrush" Value="#007ACC"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter Property="Background" Value="#007ACC"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+
+                <!-- Window Caption Buttons -->
+                <Style x:Key="CaptionButtonStyle" TargetType="Button">
+                    <Setter Property="Width" Value="46"/>
+                    <Setter Property="Height" Value="32"/>
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Setter Property="Foreground" Value="#CCCCCC"/>
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+                    <Setter Property="FontSize" Value="10"/>
+                    <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="{TemplateBinding Background}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                    <Style.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="#33FFFFFF"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter Property="Background" Value="#66FFFFFF"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+
+                <Style x:Key="CloseButtonStyle" TargetType="Button" BasedOn="{StaticResource CaptionButtonStyle}">
+                    <Style.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="#E81123"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter Property="Background" Value="#CC0E1A"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+
+                <!-- Style for Title Bar Toggle Buttons -->
+                <Style TargetType="ToggleButton" x:Key="TitleBarToolbarToggleButton">
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Setter Property="Foreground" Value="#CCCCCC"/>
+                    <Setter Property="BorderThickness" Value="1"/>
+                    <Setter Property="BorderBrush" Value="Transparent"/>
+                    <Setter Property="Width" Value="28"/>
+                    <Setter Property="Height" Value="26"/>
+                    <Setter Property="VerticalAlignment" Value="Center"/>
+                    <Setter Property="Margin" Value="2,0"/>
+                    <Setter Property="FontFamily" Value="Segoe UI Emoji"/>
+                    <Setter Property="FontSize" Value="14"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ToggleButton">
+                                <Border Background="{TemplateBinding Background}" 
+                                        BorderBrush="{TemplateBinding BorderBrush}" 
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="2">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                    <Style.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="#3E3E42"/>
+                            <Setter Property="BorderBrush" Value="#007ACC"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter Property="Background" Value="#007ACC"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter Property="Background" Value="#007ACC"/>
+                            <Setter Property="Foreground" Value="White"/>
+                            <Setter Property="BorderBrush" Value="#007ACC"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Resources>
+            
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/> <!-- Icon + Title -->
+                    <ColumnDefinition Width="*"/>    <!-- Spacer -->
+                    <ColumnDefinition Width="Auto"/> <!-- Toolbar -->
+                    <ColumnDefinition Width="Auto"/> <!-- Window Controls -->
+                </Grid.ColumnDefinitions>
+                
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
+                    <Image Source="/jade.ico" Width="16" Height="16" Margin="0,0,8,0"/>
+                    <TextBlock x:Name="TitleText" Text="Jade - BIN Editor" Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+                </StackPanel>
+                
+                <!-- Toolbar Buttons -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+                    <!-- General Editing Tools -->
+                    <ToggleButton x:Name="IconButton" Style="{StaticResource TitleBarToolbarToggleButton}" Content="✎" ToolTip="General Editing Tools" Click="OnIconButtonClick" WindowChrome.IsHitTestVisibleInChrome="True"/>
+                    <ToggleButton x:Name="ParticleButton" Style="{StaticResource TitleBarToolbarToggleButton}" Content="✨" ToolTip="Particle Editing Tools" Click="OnParticleButtonClick" WindowChrome.IsHitTestVisibleInChrome="True"/>
+                    
+                    <Rectangle Width="1" Height="16" Fill="#3E3E42" Margin="4,0"/>
+
+                    <!-- Toggle Buttons for Search/Replace -->
+                    <ToggleButton x:Name="FindButton" Style="{StaticResource TitleBarToolbarToggleButton}" Content="🔍" ToolTip="Find (Ctrl+F)" Click="OnFind" WindowChrome.IsHitTestVisibleInChrome="True"/>
+                    <ToggleButton x:Name="ReplaceButton" Style="{StaticResource TitleBarToolbarToggleButton}" Content="🔁" ToolTip="Replace (Ctrl+H)" Click="OnReplace" WindowChrome.IsHitTestVisibleInChrome="True"/>
+                    
+                    <Rectangle Width="1" Height="16" Fill="#3E3E42" Margin="4,0"/>
+                    
+                    <!-- Action Buttons -->
+                    <Button x:Name="ThemesButton" Style="{StaticResource TitleBarToolbarButton}" Content="🎨" ToolTip="Themes" Click="OnThemes" WindowChrome.IsHitTestVisibleInChrome="True"/>
+                    <Button x:Name="SettingsButton" Style="{StaticResource TitleBarToolbarButton}" Content="⚙" ToolTip="Settings" Click="OnSettings" WindowChrome.IsHitTestVisibleInChrome="True"/>
+                    <Button x:Name="AboutButton" Style="{StaticResource TitleBarToolbarButton}" Content="❓" ToolTip="About Jade" Click="OnAbout" WindowChrome.IsHitTestVisibleInChrome="True"/>
+                </StackPanel>
+                
+                <!-- Window Controls -->
+                <StackPanel Grid.Column="3" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <!-- Separator before window controls -->
+                    <Rectangle Width="1" Height="20" Fill="#3E3E42" Margin="0,0,4,0"/>
+                    
+                    <Button x:Name="MinimizeButton" Content="&#xE921;" Style="{StaticResource CaptionButtonStyle}" Click="MinimizeWindow"/>
+                    <Button x:Name="MaximizeButton" Content="&#xE922;" Style="{StaticResource CaptionButtonStyle}" Click="MaximizeWindow"/>
+                    <Button x:Name="CloseButton" Content="&#xE8BB;" Style="{StaticResource CloseButtonStyle}" Click="CloseWindow"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Menu Bar -->
+        <Menu x:Name="MenuBar" Grid.Row="1" Background="#252526" Padding="4,2">
+                <MenuItem Header="File">
+                    <MenuItem Header="Open..." Click="OnOpenFile" InputGestureText="Ctrl+O"/>
+                    <MenuItem Header="Save" Click="OnSaveFile" InputGestureText="Ctrl+S"/>
+                    <MenuItem Header="Save As..." Click="OnSaveFileAs" InputGestureText="Ctrl+Shift+S"/>
+                    <Separator Background="#3E3E42"/>
+                    <MenuItem Header="Open Log File" Click="OnOpenLog"/>
+                    <Separator Background="#3E3E42"/>
+                    <MenuItem Header="Exit" Click="OnExit"/>
+                </MenuItem>
+                <MenuItem Header="Edit">
+                    <MenuItem Header="Undo" Click="OnUndo" InputGestureText="Ctrl+Z"/>
+                    <MenuItem Header="Redo" Click="OnRedo" InputGestureText="Ctrl+Y"/>
+                    <Separator Background="#3E3E42"/>
+                    <MenuItem Header="Cut" Click="OnCut" InputGestureText="Ctrl+X"/>
+                    <MenuItem Header="Copy" Click="OnCopy" InputGestureText="Ctrl+C"/>
+                    <MenuItem Header="Paste" Click="OnPaste" InputGestureText="Ctrl+V"/>
+                    <Separator Background="#3E3E42"/>
+                    <MenuItem Header="Find..." Click="OnFind" InputGestureText="Ctrl+F"/>
+                    <MenuItem Header="Replace..." Click="OnReplace" InputGestureText="Ctrl+H"/>
+                    <MenuItem Header="Compare Files..." Click="OnCompareFiles" InputGestureText="Ctrl+D"/>
+                    <Separator Background="#3E3E42"/>
+                    <MenuItem Header="Select All" Click="OnSelectAll" InputGestureText="Ctrl+A"/>
+                </MenuItem>
+                <MenuItem Header="Tools">
+                    <MenuItem Header="Themes..." Click="OnThemes"/>
+                    <MenuItem Header="Settings..." Click="OnSettings"/>
+                    <Separator Background="#3E3E42"/>
+                    <MenuItem Header="About Jade" Click="OnAbout"/>
+                </MenuItem>
+            </Menu>
+
+        <!-- Editor Area with Tabs and Welcome Screen -->
+        <Grid Grid.Row="2">
+            <!-- Welcome Screen -->
+            <Border x:Name="WelcomeScreen"
+                    Background="#2D2D30"
+                    Visibility="Visible">
+                <TextBlock Text="Import a bin to start editing"
+                           Foreground="#808080"
+                           FontSize="18"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"/>
+            </Border>
+            
+            <!-- Drop Overlay for drag and drop -->
+            <Border x:Name="DropOverlay"
+                    Background="#80007ACC"
+                    Visibility="Collapsed"
+                    Panel.ZIndex="100">
+                <TextBlock Text="Drop file here"
+                           Foreground="White"
+                           FontSize="24"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"/>
+            </Border>
+            
+            <!-- Tab Control -->
+            <TabControl x:Name="EditorTabControl"
+                        Background="#1E1E1E"
+                        BorderThickness="0"
+                        Visibility="Collapsed"
+                        SelectionChanged="OnTabSelectionChanged">
+            <TabControl.Resources>
+                <Style TargetType="TabControl">
+                    <Setter Property="Background" Value="#1E1E1E"/>
+                </Style>
+                <Style TargetType="TabItem">
+                    <Setter Property="Background" Value="#252526"/>
+                    <Setter Property="Foreground" Value="#CCCCCC"/>
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Setter Property="Padding" Value="12,6"/>
+                    <Setter Property="FontSize" Value="13"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="TabItem">
+                                <Border x:Name="Border" Background="{TemplateBinding Background}" 
+                                        BorderThickness="0" Padding="{TemplateBinding Padding}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{TemplateBinding Header}" 
+                                                   Foreground="{TemplateBinding Foreground}"
+                                                   VerticalAlignment="Center"/>
+                                        <Button Content="✕" 
+                                                Margin="8,0,0,0"
+                                                Background="Transparent"
+                                                Foreground="#CCCCCC"
+                                                BorderThickness="0"
+                                                Padding="4,0"
+                                                FontSize="12"
+                                                Click="OnCloseTab"
+                                                Tag="{Binding RelativeSource={RelativeSource TemplatedParent}}"/>
+                                    </StackPanel>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter TargetName="Border" Property="Background" Value="#1E1E1E"/>
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="Border" Property="Background" Value="#3E3E42"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </TabControl.Resources>
+            </TabControl>
+        </Grid>
+
+        <!-- Status Bar -->
+        <Border x:Name="StatusBarBorder" Grid.Row="3" Background="#007ACC" BorderThickness="0">
+            <Grid Height="24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                
+                <TextBlock x:Name="StatusText" 
+                           Grid.Column="0"
+                           Text="Ready" 
+                           Foreground="White" 
+                           VerticalAlignment="Center" 
+                           Margin="10,0"/>
+                
+                <!-- Separator -->
+                <Border Grid.Column="1" Width="1" Background="White" Opacity="0.3" Margin="0,5"/>
+
+                <TextBlock x:Name="ErrorCountText"
+                           Grid.Column="2"
+                           Text=""
+                           Foreground="Red"
+                           VerticalAlignment="Center"
+                           Margin="10,0"/>
+
+                <!-- Separator -->
+                <Border Grid.Column="3" Width="1" Background="White" Opacity="0.3" Margin="0,5"/>
+
+                <TextBlock x:Name="FileTypeText"
+                           Grid.Column="4"
+                           Text=""
+                           Foreground="White"
+                           VerticalAlignment="Center"
+                           Margin="10,0"/>
+                
+                <!-- Separator -->
+                <Border Grid.Column="5" Width="1" Background="White" Opacity="0.3" Margin="0,5"/>
+
+                <TextBlock x:Name="ZoomLevel"
+                           Grid.Column="6"
+                           Text="100%"
+                           Foreground="White"
+                           VerticalAlignment="Center"
+                           Margin="10,0"
+                           ToolTip="Zoom Level (Ctrl+Scroll to change)"/>
+                
+                <!-- Separator -->
+                <Border Grid.Column="7" Width="1" Background="White" Opacity="0.3" Margin="0,5"/>
+
+                <TextBlock x:Name="LineCount"
+                           Grid.Column="8"
+                           Text="0 lines"
+                           Foreground="White"
+                           VerticalAlignment="Center"
+                           Margin="10,0"/>
+                
+                <!-- Separator -->
+                <Border Grid.Column="9" Width="1" Background="White" Opacity="0.3" Margin="0,5"/>
+
+                <TextBlock x:Name="CaretPosition"
+                           Grid.Column="10"
+                           Text="Ln 1, Col 1"
+                           Foreground="White"
+                           VerticalAlignment="Center"
+                           Margin="10,0"/>
+                
+                <!-- Separator -->
+                <Border Grid.Column="11" Width="1" Background="White" Opacity="0.3" Margin="0,5"/>
+
+                <TextBlock x:Name="RamUsageText"
+                           Grid.Column="12"
+                           Text=""
+                           Foreground="White"
+                           VerticalAlignment="Center"
+                           Margin="10,0"
+                           ToolTip="Application RAM Usage"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
