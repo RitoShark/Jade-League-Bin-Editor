@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -11,18 +12,217 @@ namespace Jade.Windows;
 public partial class ThemesWindow : Window
 {
     private string _currentTheme = "Default";
+    public System.Collections.ObjectModel.ObservableCollection<ThemeItem> Themes { get; set; } = new();
+    public System.Collections.ObjectModel.ObservableCollection<BracketThemeItem> BracketThemes { get; set; } = new();
+
+    public class ThemeItem
+    {
+        public string Id { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public System.Windows.Media.SolidColorBrush Background { get; set; } = System.Windows.Media.Brushes.Transparent;
+        public System.Windows.Media.SolidColorBrush EditorBackground { get; set; } = System.Windows.Media.Brushes.Transparent;
+        public System.Windows.Media.SolidColorBrush TitleBarBackground { get; set; } = System.Windows.Media.Brushes.Transparent;
+        public System.Windows.Media.SolidColorBrush StatusBarBackground { get; set; } = System.Windows.Media.Brushes.Transparent;
+        public System.Windows.Media.SolidColorBrush Foreground { get; set; } = System.Windows.Media.Brushes.White;
+        public System.Windows.Media.SolidColorBrush TabBackground { get; set; } = System.Windows.Media.Brushes.Transparent;
+        public System.Windows.Media.SolidColorBrush SelectedTabBackground { get; set; } = System.Windows.Media.Brushes.Transparent;
+    }
+
+    public class BracketThemeItem
+    {
+        public string Id { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public System.Windows.Media.SolidColorBrush PreviewColor1 { get; set; } = System.Windows.Media.Brushes.Gold;
+        public System.Windows.Media.SolidColorBrush PreviewColor2 { get; set; } = System.Windows.Media.Brushes.Orchid;
+        public System.Windows.Media.SolidColorBrush PreviewColor3 { get; set; } = System.Windows.Media.Brushes.DeepSkyBlue;
+        
+        // Full syntax colors for preview
+        public System.Windows.Media.SolidColorBrush KeywordColor { get; set; } = System.Windows.Media.Brushes.DodgerBlue;
+        public System.Windows.Media.SolidColorBrush CommentColor { get; set; } = System.Windows.Media.Brushes.Gray;
+        public System.Windows.Media.SolidColorBrush StringColor { get; set; } = System.Windows.Media.Brushes.Orange;
+        public System.Windows.Media.SolidColorBrush NumberColor { get; set; } = System.Windows.Media.Brushes.LightBlue;
+        public System.Windows.Media.SolidColorBrush PropertyColor { get; set; } = System.Windows.Media.Brushes.DodgerBlue;
+    }
     
     public ThemesWindow()
     {
         InitializeComponent();
         
-        // Load theme preference
+        // Initialize themes
+        InitializeThemes();
+        InitializeBracketThemes();
+        
+        // Load theme preferences
         LoadThemePreference();
         
         // Apply current theme to this window
         ApplyWindowTheme(_currentTheme);
         
+        // Set DataContext for binding
+        this.DataContext = this;
+        
         Logger.Info("Themes window opened");
+    }
+
+    private void InitializeThemes()
+    {
+        Themes.Add(new ThemeItem { 
+            Id = "Default", DisplayName = "Dark Emptiness", 
+            Background = GetBrush(30, 30, 30), EditorBackground = GetBrush(30, 30, 30), 
+            TitleBarBackground = GetBrush(37, 37, 38), StatusBarBackground = GetBrush(80, 80, 80),
+            Foreground = GetBrush(212, 212, 212), TabBackground = GetBrush(37, 37, 38),
+            SelectedTabBackground = GetBrush(62, 62, 66)
+        });
+        Themes.Add(new ThemeItem { 
+            Id = "DarkBlue", DisplayName = "Blue Guilt", 
+            Background = GetBrush(15, 25, 40), EditorBackground = GetBrush(20, 30, 45), 
+            TitleBarBackground = GetBrush(25, 35, 50), StatusBarBackground = GetBrush(0, 90, 158),
+            Foreground = GetBrush(220, 230, 240), TabBackground = GetBrush(25, 35, 50),
+            SelectedTabBackground = GetBrush(45, 65, 90)
+        });
+        Themes.Add(new ThemeItem { 
+            Id = "DarkRed", DisplayName = "Red Regret", 
+            Background = GetBrush(40, 15, 20), EditorBackground = GetBrush(45, 20, 25), 
+            TitleBarBackground = GetBrush(50, 25, 30), StatusBarBackground = GetBrush(158, 0, 40),
+            Foreground = GetBrush(240, 220, 225), TabBackground = GetBrush(50, 25, 30),
+            SelectedTabBackground = GetBrush(90, 45, 55)
+        });
+        Themes.Add(new ThemeItem { 
+            Id = "LightPink", DisplayName = "Pink Remembrance", 
+            Background = GetBrush(200, 150, 180), EditorBackground = GetBrush(210, 165, 190), 
+            TitleBarBackground = GetBrush(180, 130, 160), StatusBarBackground = GetBrush(199, 21, 133),
+            Foreground = System.Windows.Media.Brushes.Black, TabBackground = GetBrush(180, 130, 160),
+            SelectedTabBackground = GetBrush(230, 150, 190)
+        });
+        Themes.Add(new ThemeItem { 
+            Id = "PastelBlue", DisplayName = "Primo", 
+            Background = GetBrush(230, 245, 255), EditorBackground = GetBrush(210, 240, 255), 
+            TitleBarBackground = GetBrush(255, 240, 250), StatusBarBackground = GetBrush(80, 200, 255),
+            Foreground = System.Windows.Media.Brushes.Black, TabBackground = GetBrush(235, 225, 255),
+            SelectedTabBackground = GetBrush(160, 230, 255)
+        });
+        Themes.Add(new ThemeItem { 
+            Id = "ForestGreen", DisplayName = "Green Nostalgia", 
+            Background = GetBrush(20, 35, 25), EditorBackground = GetBrush(25, 45, 30), 
+            TitleBarBackground = GetBrush(30, 50, 35), StatusBarBackground = GetBrush(34, 139, 34),
+            Foreground = GetBrush(200, 230, 210), TabBackground = GetBrush(30, 50, 35),
+            SelectedTabBackground = GetBrush(50, 85, 60)
+        });
+        Themes.Add(new ThemeItem { 
+            Id = "AMOLED", DisplayName = "AMOLED", 
+            Background = GetBrush(0, 0, 0), EditorBackground = GetBrush(0, 0, 0), 
+            TitleBarBackground = GetBrush(10, 10, 10), StatusBarBackground = GetBrush(20, 20, 20),
+            Foreground = GetBrush(180, 180, 180), TabBackground = GetBrush(10, 10, 10),
+            SelectedTabBackground = GetBrush(30, 30, 30)
+        });
+        Themes.Add(new ThemeItem { 
+            Id = "Void", DisplayName = "Purple Void", 
+            Background = GetBrush(10, 5, 20), EditorBackground = GetBrush(15, 10, 30), 
+            TitleBarBackground = GetBrush(20, 15, 40), StatusBarBackground = GetBrush(25, 15, 80),
+            Foreground = GetBrush(180, 170, 220), TabBackground = GetBrush(20, 15, 40),
+            SelectedTabBackground = GetBrush(40, 30, 70)
+        });
+        Themes.Add(new ThemeItem { 
+            Id = "VioletSorrow", DisplayName = "Violet Sorrow", 
+            Background = GetBrush(18, 10, 35), EditorBackground = GetBrush(22, 12, 42), 
+            TitleBarBackground = GetBrush(28, 18, 52), StatusBarBackground = GetBrush(65, 30, 120),
+            Foreground = GetBrush(185, 170, 215), TabBackground = GetBrush(32, 20, 58),
+            SelectedTabBackground = GetBrush(75, 50, 115)
+        });
+    }
+
+    private void InitializeBracketThemes()
+    {
+        // Add all themes as bracket theme options
+        foreach (var theme in Themes)
+        {
+            var syntaxColors = GetFullSyntaxColors(theme.Id);
+            BracketThemes.Add(new BracketThemeItem {
+                Id = theme.Id,
+                DisplayName = theme.DisplayName,
+                PreviewColor1 = GetBracketPreviewColor(theme.Id, 0),
+                PreviewColor2 = GetBracketPreviewColor(theme.Id, 1),
+                PreviewColor3 = GetBracketPreviewColor(theme.Id, 2),
+                KeywordColor = GetBrushFromHex(syntaxColors.keyword),
+                CommentColor = GetBrushFromHex(syntaxColors.comment),
+                StringColor = GetBrushFromHex(syntaxColors.stringColor),
+                NumberColor = GetBrushFromHex(syntaxColors.number),
+                PropertyColor = GetBrushFromHex(syntaxColors.propertyColor)
+            });
+        }
+        
+        // Add a High Contrast option specifically for brackets
+        var hcColors = GetFullSyntaxColors("HighContrast");
+        BracketThemes.Add(new BracketThemeItem {
+            Id = "HighContrast", DisplayName = "High Contrast",
+            PreviewColor1 = GetBrush(255, 255, 0), PreviewColor2 = GetBrush(0, 255, 0), PreviewColor3 = GetBrush(255, 0, 0),
+            KeywordColor = GetBrushFromHex(hcColors.keyword),
+            CommentColor = GetBrushFromHex(hcColors.comment),
+            StringColor = GetBrushFromHex(hcColors.stringColor),
+            NumberColor = GetBrushFromHex(hcColors.number),
+            PropertyColor = GetBrushFromHex(hcColors.propertyColor)
+        });
+
+        // Add VS Code as a standalone syntax theme
+        var vscodeColors = GetFullSyntaxColors("VSCode");
+        BracketThemes.Add(new BracketThemeItem {
+            Id = "VSCode", DisplayName = "VS Code",
+            PreviewColor1 = GetBrush(255, 215, 0), PreviewColor2 = GetBrush(218, 112, 214), PreviewColor3 = GetBrush(23, 159, 255),
+            KeywordColor = GetBrushFromHex(vscodeColors.keyword),
+            CommentColor = GetBrushFromHex(vscodeColors.comment),
+            StringColor = GetBrushFromHex(vscodeColors.stringColor),
+            NumberColor = GetBrushFromHex(vscodeColors.number),
+            PropertyColor = GetBrushFromHex(vscodeColors.propertyColor)
+        });
+    }
+
+    private (string keyword, string comment, string stringColor, string number, string propertyColor) GetFullSyntaxColors(string themeId)
+    {
+        return themeId switch
+        {
+            "DarkBlue" => ("#5DADE2", "#52BE80", "#F39C12", "#AED6F1", "#5DADE2"),
+            "DarkRed" => ("#EC7063", "#82E0AA", "#F8C471", "#F1948A", "#EC7063"),
+            "LightPink" => ("#7D3C98", "#1E8449", "#BA4A00", "#6C3483", "#7D3C98"),
+            "PastelBlue" => ("#2874A6", "#117A65", "#D68910", "#1F618D", "#2874A6"),
+            "ForestGreen" => ("#85C1E9", "#52BE80", "#F39C12", "#AED6F1", "#85C1E9"),
+            "AMOLED" => ("#5DADE2", "#52BE80", "#F39C12", "#AED6F1", "#5DADE2"),
+            "Void" => ("#BB8FCE", "#82E0AA", "#F8C471", "#D7BDE2", "#BB8FCE"),
+            "VioletSorrow" => ("#9B7EDE", "#7EC8A3", "#E8A87C", "#C8A2E0", "#9B7EDE"),
+            "HighContrast" => ("#FFFF00", "#00FF00", "#FF00FF", "#00FFFF", "#FFFF00"),
+            "VSCode" => ("#569CD6", "#6A9955", "#CE9178", "#B5CEA8", "#9CDCFE"),
+            _ => ("#569CD6", "#6A9955", "#CE9178", "#B5CEA8", "#569CD6")
+        };
+    }
+
+    private System.Windows.Media.SolidColorBrush GetBrushFromHex(string hex)
+    {
+        try {
+            return (System.Windows.Media.SolidColorBrush)new System.Windows.Media.BrushConverter().ConvertFrom(hex);
+        } catch {
+            return System.Windows.Media.Brushes.Gray;
+        }
+    }
+
+    private System.Windows.Media.SolidColorBrush GetBracketPreviewColor(string themeId, int index)
+    {
+        // Hardcoded preview colors for the listbox swatches based on the renderer logic
+        return themeId switch
+        {
+            "DarkBlue" => index == 0 ? GetBrush(255, 215, 0) : index == 1 ? GetBrush(218, 112, 214) : GetBrush(0, 191, 255),
+            "DarkRed" => index == 0 ? GetBrush(255, 215, 0) : index == 1 ? GetBrush(255, 105, 180) : GetBrush(255, 140, 0),
+            "LightPink" => index == 0 ? GetBrush(75, 0, 130) : index == 1 ? GetBrush(138, 43, 226) : GetBrush(148, 0, 211),
+            "PastelBlue" => index == 0 ? GetBrush(184, 134, 11) : index == 1 ? GetBrush(139, 0, 139) : GetBrush(0, 100, 0),
+            "ForestGreen" => index == 0 ? GetBrush(255, 215, 0) : index == 1 ? GetBrush(64, 224, 208) : GetBrush(173, 255, 47),
+            "AMOLED" => index == 0 ? GetBrush(255, 215, 0) : index == 1 ? GetBrush(0, 255, 255) : GetBrush(255, 0, 255),
+            "Void" => index == 0 ? GetBrush(255, 215, 0) : index == 1 ? GetBrush(186, 85, 211) : GetBrush(138, 43, 226),
+            "VioletSorrow" => index == 0 ? GetBrush(147, 112, 219) : index == 1 ? GetBrush(138, 43, 226) : GetBrush(186, 85, 211),
+            _ => index == 0 ? GetBrush(255, 215, 0) : index == 1 ? GetBrush(218, 112, 214) : GetBrush(135, 206, 250) // Default/Classic
+        };
+    }
+
+    private System.Windows.Media.SolidColorBrush GetBrush(byte r, byte g, byte b)
+    {
+        return new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(r, g, b));
     }
     
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -62,7 +262,48 @@ public partial class ThemesWindow : Window
             }
             
             _currentTheme = theme;
-            UpdateThemeButtons(theme);
+            
+            // Select the current theme in the ListBox
+            var selectedTheme = Themes.FirstOrDefault(t => t.Id == theme);
+            if (selectedTheme != null)
+            {
+                ThemesListBox.SelectedItem = selectedTheme;
+            }
+            
+            // Load bracket theme
+            string bracketTheme = "Classic";
+            if (File.Exists(prefsFile))
+            {
+                var content = File.ReadAllText(prefsFile);
+                if (content.Contains("BracketTheme="))
+                {
+                    var lines = content.Split('\n');
+                    foreach (var line in lines)
+                    {
+                        if (line.Trim().StartsWith("BracketTheme="))
+                        {
+                            bracketTheme = line.Substring(13).Trim();
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            var selectedBracketTheme = BracketThemes.FirstOrDefault(t => t.Id == bracketTheme);
+            if (selectedBracketTheme != null)
+            {
+                BracketThemesListBox.SelectedItem = selectedBracketTheme;
+            }
+            
+            // Override toggle
+            bool overrideBrackets = false;
+            if (File.Exists(prefsFile))
+            {
+                var content = File.ReadAllText(prefsFile);
+                overrideBrackets = content.Contains("OverrideBracketTheme=True");
+            }
+            OverrideBracketsCheckBox.IsChecked = overrideBrackets;
+            
             UpdateCurrentThemeText();
         }
         catch (Exception ex)
@@ -71,94 +312,67 @@ public partial class ThemesWindow : Window
         }
     }
     
-    private void UpdateThemeButtons(string theme)
+    private void OnThemeSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        var whiteBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.White);
-        var transparentBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Transparent);
-        
-        // Reset all buttons to their theme colors with no border
-        Theme1Button.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(60, 60, 60));
-        Theme1Button.BorderBrush = transparentBrush;
-        Theme1Button.BorderThickness = new Thickness(0);
-        
-        Theme2Button.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 58, 95));
-        Theme2Button.BorderBrush = transparentBrush;
-        Theme2Button.BorderThickness = new Thickness(0);
-        
-        Theme3Button.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(95, 30, 30));
-        Theme3Button.BorderBrush = transparentBrush;
-        Theme3Button.BorderThickness = new Thickness(0);
-        
-        Theme4Button.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(232, 180, 212));
-        Theme4Button.BorderBrush = transparentBrush;
-        Theme4Button.BorderThickness = new Thickness(0);
-        
-        Theme5Button.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(210, 240, 255));
-        Theme5Button.BorderBrush = transparentBrush;
-        Theme5Button.BorderThickness = new Thickness(0);
-        
-        Theme6Button.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(45, 95, 63));
-        Theme6Button.BorderBrush = transparentBrush;
-        Theme6Button.BorderThickness = new Thickness(0);
-        
-        Theme7Button.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 0, 0));
-        Theme7Button.BorderBrush = transparentBrush;
-        Theme7Button.BorderThickness = new Thickness(0);
-        
-        Theme8Button.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(26, 15, 46));
-        Theme8Button.BorderBrush = transparentBrush;
-        Theme8Button.BorderThickness = new Thickness(0);
-        
-        Theme9Button.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(46, 26, 71));
-        Theme9Button.BorderBrush = transparentBrush;
-        Theme9Button.BorderThickness = new Thickness(0);
-        
-        // Add white outline to selected theme
-        if (theme == "Default")
+        if (ThemesListBox.SelectedItem is ThemeItem selectedTheme)
         {
-            Theme1Button.BorderBrush = whiteBrush;
-            Theme1Button.BorderThickness = new Thickness(3);
+            _currentTheme = selectedTheme.Id;
+            UpdatePalettePreview(selectedTheme);
+            UpdateCurrentThemeText();
+            
+            // If override is off, sync bracket selection
+            if (OverrideBracketsCheckBox.IsChecked != true)
+            {
+                var matchingBracketTheme = BracketThemes.FirstOrDefault(t => t.Id == selectedTheme.Id);
+                if (matchingBracketTheme != null)
+                {
+                    BracketThemesListBox.SelectedItem = matchingBracketTheme;
+                }
+            }
         }
-        else if (theme == "DarkBlue")
+    }
+
+    private void OnOverrideChecked(object sender, RoutedEventArgs e)
+    {
+        if (OverrideBracketsCheckBox.IsChecked != true)
         {
-            Theme2Button.BorderBrush = whiteBrush;
-            Theme2Button.BorderThickness = new Thickness(3);
+            // Sync immediately when unchecking
+            if (ThemesListBox.SelectedItem is ThemeItem selectedTheme)
+            {
+                var matchingBracketTheme = BracketThemes.FirstOrDefault(t => t.Id == selectedTheme.Id);
+                if (matchingBracketTheme != null)
+                {
+                    BracketThemesListBox.SelectedItem = matchingBracketTheme;
+                }
+            }
         }
-        else if (theme == "DarkRed")
+    }
+
+    private void OnBracketThemeSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Preview is handled by XAML binding to SelectedItem
+    }
+
+    private void UpdatePalettePreview(ThemeItem theme)
+    {
+        var palette = new System.Collections.Generic.List<ColorPreviewItem>
         {
-            Theme3Button.BorderBrush = whiteBrush;
-            Theme3Button.BorderThickness = new Thickness(3);
-        }
-        else if (theme == "LightPink")
-        {
-            Theme4Button.BorderBrush = whiteBrush;
-            Theme4Button.BorderThickness = new Thickness(3);
-        }
-        else if (theme == "PastelBlue")
-        {
-            Theme5Button.BorderBrush = whiteBrush;
-            Theme5Button.BorderThickness = new Thickness(3);
-        }
-        else if (theme == "ForestGreen")
-        {
-            Theme6Button.BorderBrush = whiteBrush;
-            Theme6Button.BorderThickness = new Thickness(3);
-        }
-        else if (theme == "AMOLED")
-        {
-            Theme7Button.BorderBrush = whiteBrush;
-            Theme7Button.BorderThickness = new Thickness(3);
-        }
-        else if (theme == "Void")
-        {
-            Theme8Button.BorderBrush = whiteBrush;
-            Theme8Button.BorderThickness = new Thickness(3);
-        }
-        else if (theme == "VioletSorrow")
-        {
-            Theme9Button.BorderBrush = whiteBrush;
-            Theme9Button.BorderThickness = new Thickness(3);
-        }
+            new ColorPreviewItem { Label = "Window Background", Color = theme.Background },
+            new ColorPreviewItem { Label = "Editor Background", Color = theme.EditorBackground },
+            new ColorPreviewItem { Label = "Title Bar", Color = theme.TitleBarBackground },
+            new ColorPreviewItem { Label = "Status Bar", Color = theme.StatusBarBackground },
+            new ColorPreviewItem { Label = "Foreground Text", Color = theme.Foreground },
+            new ColorPreviewItem { Label = "Tab Background", Color = theme.TabBackground },
+            new ColorPreviewItem { Label = "Selected Tab", Color = theme.SelectedTabBackground }
+        };
+        
+        ColorPaletteList.ItemsSource = palette;
+    }
+
+    public class ColorPreviewItem
+    {
+        public string Label { get; set; } = "";
+        public System.Windows.Media.SolidColorBrush Color { get; set; } = System.Windows.Media.Brushes.Transparent;
     }
     
     private void UpdateCurrentThemeText()
@@ -180,88 +394,9 @@ public partial class ThemesWindow : Window
         CurrentThemeText.Text = $"Current Theme: {displayName}";
     }
     
-    private void OnTheme1(object sender, RoutedEventArgs e)
-    {
-        _currentTheme = "Default";
-        SaveThemePreference("Default");
-        UpdateThemeButtons("Default");
-        UpdateCurrentThemeText();
-        ApplyTheme("Default");
-    }
+    // Old handlers removed
     
-    private void OnTheme2(object sender, RoutedEventArgs e)
-    {
-        _currentTheme = "DarkBlue";
-        SaveThemePreference("DarkBlue");
-        UpdateThemeButtons("DarkBlue");
-        UpdateCurrentThemeText();
-        ApplyTheme("DarkBlue");
-    }
-    
-    private void OnTheme3(object sender, RoutedEventArgs e)
-    {
-        _currentTheme = "DarkRed";
-        SaveThemePreference("DarkRed");
-        UpdateThemeButtons("DarkRed");
-        UpdateCurrentThemeText();
-        ApplyTheme("DarkRed");
-    }
-    
-    private void OnTheme4(object sender, RoutedEventArgs e)
-    {
-        _currentTheme = "LightPink";
-        SaveThemePreference("LightPink");
-        UpdateThemeButtons("LightPink");
-        UpdateCurrentThemeText();
-        ApplyTheme("LightPink");
-    }
-    
-    private void OnTheme5(object sender, RoutedEventArgs e)
-    {
-        _currentTheme = "PastelBlue";
-        SaveThemePreference("PastelBlue");
-        UpdateThemeButtons("PastelBlue");
-        UpdateCurrentThemeText();
-        ApplyTheme("PastelBlue");
-    }
-    
-    private void OnTheme6(object sender, RoutedEventArgs e)
-    {
-        _currentTheme = "ForestGreen";
-        SaveThemePreference("ForestGreen");
-        UpdateThemeButtons("ForestGreen");
-        UpdateCurrentThemeText();
-        ApplyTheme("ForestGreen");
-    }
-    
-    private void OnTheme7(object sender, RoutedEventArgs e)
-    {
-        _currentTheme = "AMOLED";
-        SaveThemePreference("AMOLED");
-        UpdateThemeButtons("AMOLED");
-        UpdateCurrentThemeText();
-        ApplyTheme("AMOLED");
-    }
-    
-    private void OnTheme8(object sender, RoutedEventArgs e)
-    {
-        _currentTheme = "Void";
-        SaveThemePreference("Void");
-        UpdateThemeButtons("Void");
-        UpdateCurrentThemeText();
-        ApplyTheme("Void");
-    }
-    
-    private void OnTheme9(object sender, RoutedEventArgs e)
-    {
-        _currentTheme = "VioletSorrow";
-        SaveThemePreference("VioletSorrow");
-        UpdateThemeButtons("VioletSorrow");
-        UpdateCurrentThemeText();
-        ApplyTheme("VioletSorrow");
-    }
-    
-    private void SaveThemePreference(string theme)
+    private void SavePreferences(string theme, string bracketTheme, bool overrideBrackets)
     {
         try
         {
@@ -273,7 +408,9 @@ public partial class ThemesWindow : Window
                 var existingLines = File.ReadAllLines(prefsFile);
                 foreach (var line in existingLines)
                 {
-                    if (!line.StartsWith("Theme="))
+                    if (!line.Trim().StartsWith("Theme=") && 
+                        !line.Trim().StartsWith("BracketTheme=") && 
+                        !line.Trim().StartsWith("OverrideBracketTheme="))
                     {
                         lines.Add(line);
                     }
@@ -281,6 +418,8 @@ public partial class ThemesWindow : Window
             }
             
             lines.Add($"Theme={theme}");
+            lines.Add($"BracketTheme={bracketTheme}");
+            lines.Add($"OverrideBracketTheme={overrideBrackets}");
             
             var directory = Path.GetDirectoryName(prefsFile);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
@@ -289,11 +428,11 @@ public partial class ThemesWindow : Window
             }
             
             File.WriteAllLines(prefsFile, lines);
-            Logger.Info($"Saved theme preference: {theme}");
+            Logger.Info($"Saved preferences: Theme={theme}, BracketTheme={bracketTheme}, Override={overrideBrackets}");
         }
         catch (Exception ex)
         {
-            Logger.Error("Failed to save theme preference", ex);
+            Logger.Error("Failed to save preferences", ex);
         }
     }
     
@@ -330,15 +469,25 @@ public partial class ThemesWindow : Window
     {
         try
         {
-            var mainWindow = Application.Current.MainWindow as MainWindow;
-            if (mainWindow != null)
+            if (ThemesListBox.SelectedItem is ThemeItem selectedTheme && 
+                BracketThemesListBox.SelectedItem is BracketThemeItem selectedBracketTheme)
             {
-                // Reload theme on main window
-                var theme = _currentTheme;
-                mainWindow.LoadTheme();
+                bool overrideBrackets = OverrideBracketsCheckBox.IsChecked == true;
+                SavePreferences(selectedTheme.Id, selectedBracketTheme.Id, overrideBrackets);
+                ApplyTheme(selectedTheme.Id);
                 
-                Logger.Info($"Applied theme: {theme}");
-                MessageBox.Show("Theme applied successfully!", "Theme Applied", MessageBoxButton.OK, MessageBoxImage.Information);
+                // Refresh this window's theme immediately
+                ApplyWindowTheme(selectedTheme.Id);
+                UpdatePalettePreview(selectedTheme);
+                UpdateCurrentThemeText();
+                
+                var mainWindow = Application.Current.MainWindow as MainWindow;
+                if (mainWindow != null)
+                {
+                    mainWindow.LoadTheme();
+                    Logger.Info($"Applied preferences: Theme={selectedTheme.Id}, BracketTheme={selectedBracketTheme.Id}, Override={overrideBrackets}");
+                    MessageBox.Show("Settings applied successfully!", "Applied", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
             }
         }
         catch (Exception ex)
@@ -357,62 +506,12 @@ public partial class ThemesWindow : Window
     {
         try
         {
-            System.Windows.Media.SolidColorBrush bgColor, titleBarBg, textColor;
-            
-            if (theme == "DarkBlue")
-            {
-                bgColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(20, 30, 45));
-                titleBarBg = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(25, 35, 50));
-                textColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(220, 230, 240));
-            }
-            else if (theme == "DarkRed")
-            {
-                bgColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(45, 20, 25));
-                titleBarBg = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(50, 25, 30));
-                textColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(240, 220, 225));
-            }
-            else if (theme == "LightPink")
-            {
-                bgColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(210, 165, 190));
-                titleBarBg = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(180, 130, 160));
-                textColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 15, 25)); // Darker text for light theme
-            }
-            else if (theme == "PastelBlue")
-            {
-                bgColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(210, 240, 255));
-                titleBarBg = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(255, 240, 250));
-                textColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(40, 25, 60)); // Darker text for light theme
-            }
-            else if (theme == "ForestGreen")
-            {
-                bgColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(25, 45, 30));
-                titleBarBg = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 50, 35));
-                textColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 230, 210));
-            }
-            else if (theme == "AMOLED")
-            {
-                bgColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 0, 0));
-                titleBarBg = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(10, 10, 10));
-                textColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(180, 180, 180));
-            }
-            else if (theme == "Void")
-            {
-                bgColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(15, 10, 30));
-                titleBarBg = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(20, 15, 40));
-                textColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(180, 170, 220));
-            }
-            else if (theme == "VioletSorrow")
-            {
-                bgColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(22, 12, 42));
-                titleBarBg = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(28, 18, 52));
-                textColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(185, 170, 215));
-            }
-            else // Default
-            {
-                bgColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30));
-                titleBarBg = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(37, 37, 38));
-                textColor = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(212, 212, 212));
-            }
+            var themeItem = Themes.FirstOrDefault(t => t.Id == theme) ?? Themes.FirstOrDefault(t => t.Id == "Default");
+            if (themeItem == null) return;
+
+            var bgColor = themeItem.EditorBackground; // Using EditorBackground as per user request (was darker than intended)
+            var titleBarBg = themeItem.TitleBarBackground;
+            var textColor = themeItem.Foreground;
             
             this.Background = bgColor;
             
@@ -421,6 +520,28 @@ public partial class ThemesWindow : Window
             if (titleBar != null)
             {
                 titleBar.Background = titleBarBg;
+            }
+
+            // Update ListBox and Preview Panel backgrounds to follow theme
+            var listBox = this.FindName("ThemesListBox") as System.Windows.Controls.ListBox;
+            if (listBox != null)
+            {
+                listBox.Background = bgColor;
+                listBox.BorderBrush = titleBarBg;
+            }
+
+            var syntaxListBox = this.FindName("BracketThemesListBox") as System.Windows.Controls.ListBox;
+            if (syntaxListBox != null)
+            {
+                syntaxListBox.Background = bgColor;
+                syntaxListBox.BorderBrush = titleBarBg;
+            }
+
+            var previewPanelBorder = this.FindName("PreviewPanelBorder") as System.Windows.Controls.Border;
+            if (previewPanelBorder != null)
+            {
+                previewPanelBorder.Background = bgColor;
+                previewPanelBorder.BorderBrush = titleBarBg;
             }
             
             // Update all TextBlocks

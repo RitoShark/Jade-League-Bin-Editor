@@ -27,9 +27,9 @@ public class BracketColorizer : DocumentColorizingTransformer
         }).ToArray();
     }
     
-    private Color[] GetBracketColorsForTheme(string theme)
+    private Color[] GetBracketColorsForTheme(string bracketTheme)
     {
-        return theme switch
+        return bracketTheme switch
         {
             "DarkBlue" => new[]
             {
@@ -79,7 +79,7 @@ public class BracketColorizer : DocumentColorizingTransformer
                 Color.FromRgb(138, 43, 226),  // Blue Violet
                 Color.FromRgb(186, 85, 211)   // Medium Orchid
             },
-            _ => new[] // Default
+            _ => new[] // Default / Classic
             {
                 Color.FromRgb(255, 215, 0),   // Gold
                 Color.FromRgb(218, 112, 214), // Orchid

@@ -10,7 +10,7 @@ public static class ThemeSyntaxHighlighting
 {
     public static IHighlightingDefinition GetHighlightingForTheme(string theme)
     {
-        var (keyword, comment, stringColor, number) = GetThemeColors(theme);
+        var (keyword, comment, stringColor, number, propertyColor) = GetThemeColors(theme);
         
         var xshd = $@"<?xml version=""1.0""?>
 <SyntaxDefinition name=""BinFile"" xmlns=""http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008"">
@@ -18,6 +18,7 @@ public static class ThemeSyntaxHighlighting
     <Color name=""String"" foreground=""{stringColor}"" />
     <Color name=""Keyword"" foreground=""{keyword}"" fontWeight=""bold"" />
     <Color name=""Number"" foreground=""{number}"" />
+    <Color name=""Property"" foreground=""{propertyColor}"" />
     
     <RuleSet>
         <Span color=""Comment"" begin=""#"" />
@@ -25,6 +26,10 @@ public static class ThemeSyntaxHighlighting
             <Begin>&quot;</Begin>
             <End>&quot;</End>
         </Span>
+        
+        <Rule color=""Property"">
+            \b[\w\d_]+(?=\s*:)
+        </Rule>
         
         <Keywords color=""Keyword"">
             <Word>string</Word>
@@ -69,19 +74,21 @@ public static class ThemeSyntaxHighlighting
         }
     }
     
-    private static (string keyword, string comment, string stringColor, string number) GetThemeColors(string theme)
+    private static (string keyword, string comment, string stringColor, string number, string propertyColor) GetThemeColors(string theme)
     {
         return theme switch
         {
-            "DarkBlue" => ("#5DADE2", "#52BE80", "#F39C12", "#AED6F1"),
-            "DarkRed" => ("#EC7063", "#82E0AA", "#F8C471", "#F1948A"),
-            "LightPink" => ("#7D3C98", "#1E8449", "#BA4A00", "#6C3483"),
-            "PastelBlue" => ("#2874A6", "#117A65", "#D68910", "#1F618D"),
-            "ForestGreen" => ("#85C1E9", "#52BE80", "#F39C12", "#AED6F1"),
-            "AMOLED" => ("#5DADE2", "#52BE80", "#F39C12", "#AED6F1"),
-            "Void" => ("#BB8FCE", "#82E0AA", "#F8C471", "#D7BDE2"),
-            "VioletSorrow" => ("#9B7EDE", "#7EC8A3", "#E8A87C", "#C8A2E0"),
-            _ => ("#569CD6", "#6A9955", "#CE9178", "#B5CEA8") // Default VS Code colors
+            "DarkBlue" => ("#5DADE2", "#52BE80", "#F39C12", "#AED6F1", "#5DADE2"),
+            "DarkRed" => ("#EC7063", "#82E0AA", "#F8C471", "#F1948A", "#EC7063"),
+            "LightPink" => ("#7D3C98", "#1E8449", "#BA4A00", "#6C3483", "#7D3C98"),
+            "PastelBlue" => ("#2874A6", "#117A65", "#D68910", "#1F618D", "#2874A6"),
+            "ForestGreen" => ("#85C1E9", "#52BE80", "#F39C12", "#AED6F1", "#85C1E9"),
+            "AMOLED" => ("#5DADE2", "#52BE80", "#F39C12", "#AED6F1", "#5DADE2"),
+            "Void" => ("#BB8FCE", "#82E0AA", "#F8C471", "#D7BDE2", "#BB8FCE"),
+            "VioletSorrow" => ("#9B7EDE", "#7EC8A3", "#E8A87C", "#C8A2E0", "#9B7EDE"),
+            "HighContrast" => ("#FFFF00", "#00FF00", "#FF00FF", "#00FFFF", "#FFFF00"),
+            "VSCode" => ("#569CD6", "#6A9955", "#CE9178", "#B5CEA8", "#9CDCFE"),
+            _ => ("#569CD6", "#6A9955", "#CE9178", "#B5CEA8", "#569CD6") // Default VS Code colors
         };
     }
 }

@@ -2,7 +2,9 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Jade.Services;
 
 namespace Jade.Windows;
@@ -32,11 +34,16 @@ public partial class SettingsWindow : Window
         LoadAutoDownloadPreference();
         
         // Load preload hash preference
-        // Load preload hash preference
         LoadPreloadHashPreference();
         
         // Load binary format preference
         LoadBinaryFormatPreference();
+        
+        // Load minimize to tray preference
+        LoadMinimizeToTrayPreference();
+        
+        // Load run at startup preference
+        LoadRunAtStartupPreference();
         
         // Check file association status
         UpdateFileAssociationStatus();
@@ -714,14 +721,203 @@ public partial class SettingsWindow : Window
         }
     }
     
-    private void OnToggleBinaryFormat(object sender, RoutedEventArgs e)
+    public async void OnToggleBinaryFormat(object sender, RoutedEventArgs e)
     {
-        var currentContent = BinaryFormatToggleButton.Content.ToString();
-        bool isEnabled = currentContent.Contains("Enabled");
-        bool newState = !isEnabled;
-        
-        SaveBinaryFormatPreference(newState);
-        UpdateBinaryFormatButton(newState);
+        // The existing LoadBinaryFormatPreference() is private void and updates the button directly.
+        // To make it async and return a bool, we need a new helper method or modify the existing one.
+        // For simplicity and to match the pattern in the instruction, let's assume a helper that reads the current state.
+        bool current = false;
+        try
+        {
+            var prefsFile = GetPreferencesFilePath();
+            if (File.Exists(prefsFile))
+            {
+                var content = await File.ReadAllTextAsync(prefsFile);
+                if (content.Contains("UseBinaryHashFormat="))
+                {
+                    current = content.Contains("UseBinaryHashFormat=True");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to read current binary format preference for toggle", ex);
+        }
+
+        bool newVal = !current;
+        SaveBinaryFormatPreference(newVal);
+        UpdateBinaryFormatButton(newVal);
+    }
+
+    private async Task<bool> LoadMinimizeToTrayPreference()
+    {
+        try
+        {
+            string prefsFile = GetPreferencesFilePath();
+            if (File.Exists(prefsFile))
+            {
+                var lines = await File.ReadAllLinesAsync(prefsFile);
+                foreach (var line in lines)
+                {
+                    if (line.StartsWith("MinimizeToTray="))
+                    {
+                        bool val = line.Substring(15).Trim() == "True";
+                        UpdateMinimizeToTrayButton(val);
+                        return val;
+                    }
+                }
+            }
+        }
+        catch { }
+        UpdateMinimizeToTrayButton(false);
+        return false;
+    }
+
+    private void UpdateMinimizeToTrayButton(bool enabled)
+    {
+        MinimizeToTrayToggleButton.Content = $"Minimize to Tray: {(enabled ? "Enabled" : "Disabled")}";
+        MinimizeToTrayToggleButton.Background = enabled ? 
+            new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(45, 122, 45)) : 
+            new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(122, 45, 45));
+            
+        // Disable startup button if tray is disabled
+        if (RunAtStartupToggleButton != null)
+        {
+            RunAtStartupToggleButton.IsEnabled = enabled;
+            if (!enabled)
+            {
+                UpdateRunAtStartupButton(false);
+                SaveRunAtStartupPreference(false);
+            }
+        }
+    }
+
+    private async void SaveMinimizeToTrayPreference(bool enabled)
+    {
+        try
+        {
+            string prefsFile = GetPreferencesFilePath();
+            var lines = File.Exists(prefsFile) ? (await File.ReadAllLinesAsync(prefsFile)).ToList() : new List<string>();
+            
+            bool found = false;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                if (lines[i].StartsWith("MinimizeToTray="))
+                {
+                    lines[i] = "MinimizeToTray=" + (enabled ? "True" : "False");
+                    found = true;
+                }
+            }
+            
+            if (!found) lines.Add("MinimizeToTray=" + (enabled ? "True" : "False"));
+            
+            await File.WriteAllLinesAsync(prefsFile, lines);
+        }
+        catch { }
+    }
+
+    public async void OnToggleMinimizeToTray(object sender, RoutedEventArgs e)
+    {
+        bool current = await LoadMinimizeToTrayPreference();
+        bool newVal = !current;
+        SaveMinimizeToTrayPreference(newVal);
+        UpdateMinimizeToTrayButton(newVal);
+    }
+
+    private async Task<bool> LoadRunAtStartupPreference()
+    {
+        try
+        {
+            string prefsFile = GetPreferencesFilePath();
+            if (File.Exists(prefsFile))
+            {
+                var lines = await File.ReadAllLinesAsync(prefsFile);
+                foreach (var line in lines)
+                {
+                    if (line.StartsWith("RunAtStartup="))
+                    {
+                        bool val = line.Substring(13).Trim() == "True";
+                        UpdateRunAtStartupButton(val);
+                        return val;
+                    }
+                }
+            }
+        }
+        catch { }
+        UpdateRunAtStartupButton(false);
+        return false;
+    }
+
+    private void UpdateRunAtStartupButton(bool enabled)
+    {
+        RunAtStartupToggleButton.Content = $"Run at Startup: {(enabled ? "Enabled" : "Disabled")}";
+        RunAtStartupToggleButton.Background = enabled ? 
+            new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(45, 122, 45)) : 
+            new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(122, 45, 45));
+    }
+
+    private async void SaveRunAtStartupPreference(bool enabled)
+    {
+        try
+        {
+            string prefsFile = GetPreferencesFilePath();
+            var lines = File.Exists(prefsFile) ? (await File.ReadAllLinesAsync(prefsFile)).ToList() : new List<string>();
+            
+            bool found = false;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                if (lines[i].StartsWith("RunAtStartup="))
+                {
+                    lines[i] = "RunAtStartup=" + (enabled ? "True" : "False");
+                    found = true;
+                }
+            }
+            
+            if (!found) lines.Add("RunAtStartup=" + (enabled ? "True" : "False"));
+            
+            await File.WriteAllLinesAsync(prefsFile, lines);
+            
+            // Apply to Windows Registry
+            UpdateWindowsStartupRegistry(enabled);
+        }
+        catch { }
+    }
+
+    private void UpdateWindowsStartupRegistry(bool enabled)
+    {
+        try
+        {
+            const string runKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(runKey, true);
+            if (key != null)
+            {
+                if (enabled)
+                {
+                    string exePath = Process.GetCurrentProcess().MainModule?.FileName ?? "";
+                    if (!string.IsNullOrEmpty(exePath))
+                    {
+                        // Add --minimized flag so it starts in tray
+                        key.SetValue("JadeBinEditor", $"\"{exePath}\" --minimized");
+                    }
+                }
+                else
+                {
+                    key.DeleteValue("JadeBinEditor", false);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to update Windows startup registry", ex);
+        }
+    }
+
+    public async void OnToggleRunAtStartup(object sender, RoutedEventArgs e)
+    {
+        bool current = await LoadRunAtStartupPreference();
+        bool newVal = !current;
+        SaveRunAtStartupPreference(newVal);
+        UpdateRunAtStartupButton(newVal);
     }
     
     // File Association Registration Methods
@@ -997,12 +1193,40 @@ public partial class SettingsWindow : Window
                 titleBar.Background = titleBarBg;
             }
             
+            // Update boxes (HashFilesBox, TempFilesBox, AppBehaviorBox)
+            var boxes = new[] { "HashFilesBox", "TempFilesBox", "AppBehaviorBox" };
+            foreach (var boxName in boxes)
+            {
+                if (this.FindName(boxName) is System.Windows.Controls.Border box)
+                {
+                    box.Background = titleBarBg; // Use title bar color for boxes (consistent with ThemesWindow)
+                    box.BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(40, 255, 255, 255)); // Subtle light border
+                }
+            }
+            
             // Update all TextBlocks
             UpdateTextBlockColors(this, textColor);
+            
+            // Update all separators
+            UpdateSeparatorColors(this, new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(30, 255, 255, 255)));
         }
         catch (Exception ex)
         {
             Logger.Error("Failed to apply window theme", ex);
+        }
+    }
+    
+    private void UpdateSeparatorColors(System.Windows.DependencyObject parent, System.Windows.Media.SolidColorBrush color)
+    {
+        int childCount = System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent);
+        for (int i = 0; i < childCount; i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is System.Windows.Controls.Separator separator)
+            {
+                separator.Background = color;
+            }
+            UpdateSeparatorColors(child, color);
         }
     }
     

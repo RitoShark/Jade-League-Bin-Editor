@@ -1,20 +1,21 @@
 <Window x:Class="Jade.Windows.ThemesWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Jade Themes" Height="400" Width="600"
-        Background="#1E1E1E"
-        WindowStartupLocation="CenterOwner"
+        Title="Jade Themes" Height="700" Width="1000"
+        Background="Transparent"
+        WindowStartupLocation="CenterScreen"
         WindowStyle="None"
         AllowsTransparency="True"
         ResizeMode="CanResize">
     
     <Window.Resources>
-        <Style TargetType="Button">
+        <!-- Dark Styles -->
+        <Style x:Key="ModernButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="#007ACC"/>
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="15,8"/>
-            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontSize" Value="15"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
@@ -22,10 +23,64 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
-        
-        <Style TargetType="TextBlock">
+
+        <Style TargetType="ListBox">
+            <Setter Property="Background" Value="#252526"/>
+            <Setter Property="BorderBrush" Value="#3E3E42"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="2"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBox">
+                        <Border x:Name="Bd" 
+                                Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}" 
+                                SnapsToDevicePixels="true">
+                            <ScrollViewer Focusable="false" Padding="{TemplateBinding Padding}">
+                                <ItemsPresenter SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                            </ScrollViewer>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Margin" Value="0,1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}" CornerRadius="2">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#37373D"/>
+                                <Setter TargetName="ItemBorder" Property="BorderBrush" Value="#007ACC"/>
+                                <Setter TargetName="ItemBorder" Property="BorderThickness" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#2A2D2E"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="TextBlock" x:Key="NormalText">
             <Setter Property="Foreground" Value="#CCCCCC"/>
-            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontSize" Value="15"/>
         </Style>
     </Window.Resources>
     
@@ -40,56 +95,143 @@
             <Border x:Name="TitleBar" Grid.Row="0" Background="#252526" Height="30" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
                     <Image Source="/jade.ico" Width="16" Height="16" Margin="0,0,8,0"/>
-                    <TextBlock Text="Jade Themes" Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+                    <TextBlock Text="Jade Themes" Foreground="#CCCCCC" FontSize="13" VerticalAlignment="Center"/>
                 </StackPanel>
             </Border>
             
             <!-- Content -->
-            <Grid Grid.Row="1" Margin="20">
+            <Grid Grid.Row="1" Margin="25">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="220"/>
+                    <ColumnDefinition Width="20"/>
+                    <ColumnDefinition Width="220"/>
+                    <ColumnDefinition Width="25"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="20"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="15"/>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 
-                <!-- Title -->
-                <StackPanel Grid.Row="0">
-                    <TextBlock Text="Themes" FontSize="20" FontWeight="Bold" Foreground="White"/>
-                    <TextBlock x:Name="CurrentThemeText" Text="Current Theme: Dark Emptiness" FontSize="14" Foreground="#CCCCCC" Margin="0,5,0,0"/>
+                <!-- Header -->
+                <StackPanel Grid.Row="0" Grid.ColumnSpan="3">
+                    <TextBlock Text="Themes" FontSize="32" FontWeight="Bold" Foreground="White" Margin="0,0,0,5"/>
+                    <TextBlock x:Name="CurrentThemeText" Text="Current Theme: Dark Emptiness" FontSize="16" Foreground="#888888" Margin="0,0,0,15"/>
                 </StackPanel>
-        
-                <!-- Theme Section -->
-                <TextBlock Grid.Row="2" Text="Color Theme" FontWeight="SemiBold" Foreground="White"/>
-                
-                <StackPanel Grid.Row="3" Margin="0,10,0,0">
-                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,10">
-                        Choose your preferred color theme for the editor.
-                    </TextBlock>
+
+                <!-- UI Theme Selection -->
+                <Grid Grid.Row="2" Grid.Column="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="UI Theme" Foreground="#888888" FontSize="14" Margin="0,0,0,8"/>
+                    <ListBox x:Name="ThemesListBox" Grid.Row="1" ItemsSource="{Binding Themes}" SelectionChanged="OnThemeSelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" Foreground="#CCCCCC" FontSize="13"/>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
+                                        <Border Width="10" Height="10" Background="{Binding Background}" CornerRadius="2" Margin="1,0" BorderBrush="#3E3E42" BorderThickness="1"/>
+                                        <Border Width="10" Height="10" Background="{Binding StatusBarBackground}" CornerRadius="2" Margin="1,0" BorderBrush="#3E3E42" BorderThickness="1"/>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+
+                <!-- Bracket Theme Selection -->
+                <Grid Grid.Row="2" Grid.Column="2">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Syntax Coloring" Foreground="#888888" FontSize="14" Margin="0,0,0,8"/>
+                    <CheckBox x:Name="OverrideBracketsCheckBox" Grid.Row="1" Content="Override Theme Highlighting" 
+                              Foreground="#AAAAAA" Margin="0,0,0,10"
+                              Checked="OnOverrideChecked" Unchecked="OnOverrideChecked"/>
                     
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                        <Button x:Name="Theme1Button" Content="Dark Emptiness" Click="OnTheme1" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#3C3C3C" BorderThickness="0"/>
-                        <Button x:Name="Theme2Button" Content="Blue Guilt" Click="OnTheme2" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#1E3A5F" BorderThickness="0"/>
-                        <Button x:Name="Theme3Button" Content="Red Regret" Click="OnTheme3" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#5F1E1E" BorderThickness="0"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                        <Button x:Name="Theme4Button" Content="Pink Remembrance" Click="OnTheme4" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#E8B4D4" Foreground="Black" BorderThickness="0"/>
-                        <Button x:Name="Theme5Button" Content="Primo" Click="OnTheme5" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#D2F0FF" Foreground="Black" BorderThickness="0"/>
-                        <Button x:Name="Theme6Button" Content="Green Nostalgia" Click="OnTheme6" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#2D5F3F" BorderThickness="0"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                        <Button x:Name="Theme7Button" Content="AMOLED" Click="OnTheme7" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#000000" Foreground="White" BorderThickness="0"/>
-                        <Button x:Name="Theme8Button" Content="Purple Void" Click="OnTheme8" HorizontalAlignment="Left" Margin="0,0,10,0" Background="#1A0F2E" Foreground="White" BorderThickness="0"/>
-                        <Button x:Name="Theme9Button" Content="Violet Sorrow" Click="OnTheme9" HorizontalAlignment="Left" Background="#2E1A47" Foreground="White" BorderThickness="0"/>
-                    </StackPanel>
-                </StackPanel>
+                    <ListBox x:Name="BracketThemesListBox" Grid.Row="2" ItemsSource="{Binding BracketThemes}" 
+                             IsEnabled="{Binding ElementName=OverrideBracketsCheckBox, Path=IsChecked}"
+                             SelectionChanged="OnBracketThemeSelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" Foreground="#CCCCCC" FontSize="13"/>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
+                                        <Border Width="10" Height="10" Background="{Binding PreviewColor1}" CornerRadius="2" Margin="1,0" BorderBrush="#3E3E42" BorderThickness="1"/>
+                                        <Border Width="10" Height="10" Background="{Binding PreviewColor2}" CornerRadius="2" Margin="1,0" BorderBrush="#3E3E42" BorderThickness="1"/>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+
+                <!-- Preview Panel -->
+                <Border x:Name="PreviewPanelBorder" Grid.Row="2" Grid.Column="4" Background="#252526" BorderBrush="#3E3E42" BorderThickness="1" CornerRadius="4">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <Border Padding="20">
+                            <StackPanel x:Name="PreviewPanel">
+                            <TextBlock Text="Live Preview" FontWeight="SemiBold" Foreground="White" FontSize="18" Margin="0,0,0,20"/>
+                            
+                            <ItemsControl x:Name="ColorPaletteList">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,20,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="10"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Label}" Foreground="#AAAAAA" FontSize="13" VerticalAlignment="Center"/>
+                                            <Border Grid.Column="2" Width="30" Height="15" Background="{Binding Color}" CornerRadius="3" BorderBrush="#3E3E42" BorderThickness="1"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+    
+                            <Separator Background="#3E3E42" Margin="0,15"/>
+                            
+                            <TextBlock Text="Syntax Preview" Foreground="#AAAAAA" FontSize="14" Margin="0,5,0,10"/>
+                            <Border x:Name="SampleTextBorder" Padding="15" Background="{Binding ElementName=ThemesListBox, Path=SelectedItem.EditorBackground}" CornerRadius="3">
+                                <StackPanel>
+                                    <TextBlock Text="Bracket hierarchy preview:" 
+                                               Foreground="{Binding ElementName=ThemesListBox, Path=SelectedItem.Foreground}"
+                                               FontSize="15"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,10"/>
+                                    <TextBlock FontSize="15" TextWrapping="Wrap" FontFamily="Consolas">
+                                        <Run Text="{}{" Foreground="{Binding ElementName=BracketThemesListBox, Path=SelectedItem.PreviewColor1}"/><Run Text="&#x0a;  " /><Run Text="# This is a comment" Foreground="{Binding ElementName=BracketThemesListBox, Path=SelectedItem.CommentColor}" /><Run Text="&#x0a;  " /><Run Text="skinScale: f32" Foreground="{Binding ElementName=BracketThemesListBox, Path=SelectedItem.PropertyColor}" /><Run Text=": " Foreground="{Binding ElementName=ThemesListBox, Path=SelectedItem.Foreground}" /><Run Text="= " Foreground="{Binding ElementName=ThemesListBox, Path=SelectedItem.Foreground}" /><Run Text="1.0" Foreground="{Binding ElementName=BracketThemesListBox, Path=SelectedItem.NumberColor}" /><Run Text="&#x0a;  [" Foreground="{Binding ElementName=BracketThemesListBox, Path=SelectedItem.PreviewColor2}"/><Run Text="&#x0a;    i32 " Foreground="{Binding ElementName=BracketThemesListBox, Path=SelectedItem.KeywordColor}" /><Run Text="(" Foreground="{Binding ElementName=BracketThemesListBox, Path=SelectedItem.PreviewColor3}"/><Run Text="&quot;value&quot;" Foreground="{Binding ElementName=BracketThemesListBox, Path=SelectedItem.StringColor}"/><Run Text=")" Foreground="{Binding ElementName=BracketThemesListBox, Path=SelectedItem.PreviewColor3}"/><Run Text="&#x0a;  ]" Foreground="{Binding ElementName=BracketThemesListBox, Path=SelectedItem.PreviewColor2}"/><Run Text="&#x0a;}" Foreground="{Binding ElementName=BracketThemesListBox, Path=SelectedItem.PreviewColor1}"/>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+                            </StackPanel>
+                        </Border>
+                    </ScrollViewer>
+                </Border>
                 
                 <!-- Action Buttons -->
-                <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
-                    <Button Content="Reload UI" Click="OnApplyTheme" Margin="0,0,10,0" Background="#2D7A2D"/>
-                    <Button Content="Close" Click="OnClose"/>
+                <StackPanel Grid.Row="3" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,25,0,0">
+                    <Button Content="Reload UI" Click="OnApplyTheme" Margin="0,0,15,0" Style="{StaticResource ModernButtonStyle}" Background="#2D7A2D"/>
+                    <Button Content="Close" Click="OnClose" Style="{StaticResource ModernButtonStyle}" Background="#3E3E42"/>
                 </StackPanel>
             </Grid>
         </Grid>

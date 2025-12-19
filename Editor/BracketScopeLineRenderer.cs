@@ -47,9 +47,9 @@ public class BracketScopeLineRenderer : IBackgroundRenderer
         _markerBrush.Freeze();
     }
     
-    private Color GetMarkerColorForTheme(string theme)
+    private Color GetMarkerColorForTheme(string bracketTheme)
     {
-        return theme switch
+        return bracketTheme switch
         {
             "DarkBlue" => Color.FromArgb(100, 100, 150, 200),
             "DarkRed" => Color.FromArgb(100, 200, 100, 120),
@@ -59,6 +59,7 @@ public class BracketScopeLineRenderer : IBackgroundRenderer
             "AMOLED" => Color.FromArgb(120, 200, 200, 200),
             "Void" => Color.FromArgb(100, 150, 120, 200),
             "VioletSorrow" => Color.FromArgb(100, 147, 112, 219),
+            "HighContrast" => Color.FromArgb(140, 255, 255, 255),
             _ => Color.FromArgb(100, 150, 150, 150)
         };
     }

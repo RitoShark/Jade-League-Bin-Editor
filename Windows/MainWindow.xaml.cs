@@ -149,6 +149,19 @@ public partial class MainWindow : Window
             Loaded += (s, e) =>
             {
                 Logger.Info("MainWindow loaded");
+                
+                // Initialize Tray Service
+                TrayService.Initialize();
+
+                // Check for minimized startup flag
+                string[] args = Environment.GetCommandLineArgs();
+                if (args.Contains("--minimized"))
+                {
+                    Logger.Info("Started minimized to tray");
+                    this.Hide();
+                    TrayService.SetVisible(true);
+                }
+
                 UpdateWelcomeScreenVisibility();
                 UpdateZoomIndicator();
                 
@@ -228,6 +241,41 @@ public partial class MainWindow : Window
         return "Default";
     }
 
+    private string GetCurrentBracketThemeName()
+    {
+        try
+        {
+            var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var prefsFile = Path.Combine(appDataPath, "RitoShark", "Jade", "preferences.txt");
+            
+            if (File.Exists(prefsFile))
+            {
+                var content = File.ReadAllText(prefsFile);
+                
+                // If override is NOT checked, use current UI theme
+                if (!content.Contains("OverrideBracketTheme=True"))
+                {
+                    return GetCurrentThemeName();
+                }
+
+                if (content.Contains("BracketTheme="))
+                {
+                    var lines = content.Split('\n');
+                    foreach (var line in lines)
+                    {
+                        if (line.Trim().StartsWith("BracketTheme="))
+                        {
+                            return line.Substring(13).Trim();
+                        }
+                    }
+                }
+            }
+        }
+        catch { }
+        
+        return GetCurrentThemeName();
+    }
+
     private Color GetLineNumberColorForTheme(string theme)
     {
         return theme switch
@@ -265,6 +313,7 @@ public partial class MainWindow : Window
         var editorFg = GetCurrentEditorForeground();
         var tabBg = GetCurrentTabBackground();
         var currentTheme = GetCurrentThemeName();
+        var bracketTheme = GetCurrentBracketThemeName();
         
         var tab = new EditorTab
         {
@@ -285,7 +334,7 @@ public partial class MainWindow : Window
             Padding = new Thickness(10),
             WordWrap = false,
             Document = new ICSharpCode.AvalonEdit.Document.TextDocument(content ?? ""),
-            SyntaxHighlighting = ThemeSyntaxHighlighting.GetHighlightingForTheme(currentTheme)
+            SyntaxHighlighting = ThemeSyntaxHighlighting.GetHighlightingForTheme(bracketTheme)
         };
         
         // 1. Limit Undo Stack to reduce memory usage on large files
@@ -296,14 +345,14 @@ public partial class MainWindow : Window
         editor.LineNumbersForeground = new SolidColorBrush(lineNumberColor);
 
         // Add bracket colorizer
-        editor.TextArea.TextView.LineTransformers.Add(new Jade.Editor.BracketColorizer(currentTheme));
+        editor.TextArea.TextView.LineTransformers.Add(new Jade.Editor.BracketColorizer(bracketTheme));
 
         // Add bracket matching highlighter
-        var bracketHighlighter = new Jade.Editor.BracketHighlightRenderer(editor.TextArea.TextView, currentTheme);
+        var bracketHighlighter = new Jade.Editor.BracketHighlightRenderer(editor.TextArea.TextView, bracketTheme);
         editor.TextArea.TextView.BackgroundRenderers.Add(bracketHighlighter);
         
         // Add bracket scope line renderer (vertical lines connecting brackets)
-        var scopeLineRenderer = new Jade.Editor.BracketScopeLineRenderer(editor.TextArea.TextView, currentTheme);
+        var scopeLineRenderer = new Jade.Editor.BracketScopeLineRenderer(editor.TextArea.TextView, bracketTheme);
         editor.TextArea.TextView.BackgroundRenderers.Add(scopeLineRenderer);
         
         // Add minimap background (subtle different color on right edge)
@@ -561,15 +610,18 @@ public partial class MainWindow : Window
             editor.Background = editorBg;
             editor.Foreground = textColor;
             
-            // Reload syntax highlighting for current theme
-            var currentTheme = GetCurrentThemeName();
-            editor.SyntaxHighlighting = ThemeSyntaxHighlighting.GetHighlightingForTheme(currentTheme);
+            // Reload syntax highlighting for current theme (BracketTheme covers both syntax and brackets)
+            var bracketTheme = GetCurrentBracketThemeName();
+            editor.SyntaxHighlighting = ThemeSyntaxHighlighting.GetHighlightingForTheme(bracketTheme);
             
             // Update line number colors
+            var currentTheme = GetCurrentThemeName();
             var lineNumberColor = GetLineNumberColorForTheme(currentTheme);
             editor.LineNumbersForeground = new SolidColorBrush(lineNumberColor);
+
+            // Update bracket renderers and colorizers with new theme
             
-            // Update bracket renderers with new theme (don't touch LineTransformers - that breaks syntax highlighting)
+            // 1. Update Background Renderers
             var renderers = editor.TextArea.TextView.BackgroundRenderers;
             for (int i = renderers.Count - 1; i >= 0; i--)
             {
@@ -580,12 +632,22 @@ public partial class MainWindow : Window
                 }
             }
             
-            // Re-add bracket renderers with new theme
-            var bracketHighlighter = new Jade.Editor.BracketHighlightRenderer(editor.TextArea.TextView, currentTheme);
+            var bracketHighlighter = new Jade.Editor.BracketHighlightRenderer(editor.TextArea.TextView, bracketTheme);
             editor.TextArea.TextView.BackgroundRenderers.Add(bracketHighlighter);
             
-            var scopeLineRenderer = new Jade.Editor.BracketScopeLineRenderer(editor.TextArea.TextView, currentTheme);
+            var scopeLineRenderer = new Jade.Editor.BracketScopeLineRenderer(editor.TextArea.TextView, bracketTheme);
             editor.TextArea.TextView.BackgroundRenderers.Add(scopeLineRenderer);
+
+            // 2. Update Line Transformers (Bracket Colors)
+            var transformers = editor.TextArea.TextView.LineTransformers;
+            for (int i = transformers.Count - 1; i >= 0; i--)
+            {
+                if (transformers[i] is Jade.Editor.BracketColorizer)
+                {
+                    transformers.RemoveAt(i);
+                }
+            }
+            editor.TextArea.TextView.LineTransformers.Add(new Jade.Editor.BracketColorizer(bracketTheme));
             
             // Force redraw
             editor.TextArea.TextView.Redraw();
@@ -966,6 +1028,44 @@ public partial class MainWindow : Window
                 }
             }, System.Windows.Threading.DispatcherPriority.Input);
         }
+    }
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        if (ShouldMinimizeToTray())
+        {
+            e.Cancel = true;
+            this.Hide();
+            TrayService.SetVisible(true);
+            Logger.Info("Window minimized to tray instead of closing");
+        }
+        else
+        {
+            TrayService.Cleanup();
+            base.OnClosing(e);
+        }
+    }
+
+    private bool ShouldMinimizeToTray()
+    {
+        try
+        {
+            string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string prefsFile = Path.Combine(appDataPath, "RitoShark", "Jade", "preferences.txt");
+            if (File.Exists(prefsFile))
+            {
+                string content = File.ReadAllText(prefsFile);
+                return content.Contains("MinimizeToTray=True");
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    private void OnExit(object sender, RoutedEventArgs e)
+    {
+        TrayService.Cleanup();
+        Application.Current.Shutdown();
     }
 
     private void OnUndo(object sender, RoutedEventArgs e)
@@ -1352,11 +1452,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnExit(object sender, RoutedEventArgs e)
-    {
-        Logger.Info("Application closing");
-        Close();
-    }
 
     // Custom Title Bar Handlers
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

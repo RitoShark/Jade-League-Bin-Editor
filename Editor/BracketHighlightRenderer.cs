@@ -55,9 +55,9 @@ public class BracketHighlightRenderer : IBackgroundRenderer
         _borderPen.Freeze();
     }
     
-    private (Color background, Color border) GetHighlightColorsForTheme(string theme)
+    private (Color background, Color border) GetHighlightColorsForTheme(string bracketTheme)
     {
-        return theme switch
+        return bracketTheme switch
         {
             "DarkBlue" => (Color.FromArgb(50, 100, 150, 200), Color.FromArgb(150, 100, 150, 200)),
             "DarkRed" => (Color.FromArgb(50, 200, 100, 120), Color.FromArgb(150, 200, 100, 120)),
@@ -67,6 +67,7 @@ public class BracketHighlightRenderer : IBackgroundRenderer
             "AMOLED" => (Color.FromArgb(60, 200, 200, 200), Color.FromArgb(180, 200, 200, 200)),
             "Void" => (Color.FromArgb(50, 150, 120, 200), Color.FromArgb(150, 150, 120, 200)),
             "VioletSorrow" => (Color.FromArgb(50, 147, 112, 219), Color.FromArgb(150, 147, 112, 219)),
+            "HighContrast" => (Color.FromArgb(60, 255, 255, 255), Color.FromArgb(200, 255, 255, 255)),
             _ => (Color.FromArgb(50, 150, 150, 150), Color.FromArgb(150, 150, 150, 150)) // Default
         };
     }
