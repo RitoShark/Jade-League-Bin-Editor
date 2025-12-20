@@ -48,6 +48,8 @@ public partial class MainWindow : Window
     private System.Windows.Media.Color _currentSearchHighlightColor = System.Windows.Media.Color.FromArgb(60, 255, 215, 0);
     private PerformanceCounter? _ramCounter;
     private System.Windows.Threading.DispatcherTimer? _perfTimer;
+    private List<string> _recentFiles = new List<string>();
+    private const int MaxRecentFiles = 10;
 
     public MainWindow()
     {
@@ -202,6 +204,7 @@ public partial class MainWindow : Window
             Logger.Info("MainWindow initialized successfully");
             
             InitializePerformanceMonitoring();
+            LoadRecentFiles();
         }
         catch (Exception ex)
         {
@@ -865,6 +868,7 @@ public partial class MainWindow : Window
                 FileTypeText.Text = Path.GetExtension(dialog.FileName).ToUpper();
                 StatusText.Text = "File loaded";
                 
+                AddToRecentFiles(dialog.FileName);
                 Logger.Info("File loaded successfully");
             }
         }
@@ -897,6 +901,7 @@ public partial class MainWindow : Window
             FileTypeText.Text = Path.GetExtension(filePath).ToUpper();
             StatusText.Text = "File loaded";
             
+            AddToRecentFiles(filePath);
             Logger.Info($"File loaded from path: {filePath}");
         }
         catch (Exception ex)
@@ -935,7 +940,129 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() == true)
         {
             await SaveFileContent(tab, dialog.FileName);
+            AddToRecentFiles(dialog.FileName);
         }
+    }
+    
+    private void LoadRecentFiles()
+    {
+        try
+        {
+            var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var jadeDir = Path.Combine(appDataPath, "RitoShark", "Jade");
+            var prefsFile = Path.Combine(jadeDir, "preferences.txt");
+
+            if (File.Exists(prefsFile))
+            {
+                var lines = File.ReadAllLines(prefsFile);
+                var recentLine = lines.FirstOrDefault(l => l.StartsWith("RecentFiles="));
+                if (recentLine != null)
+                {
+                    var paths = recentLine.Substring("RecentFiles=".Length).Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                    _recentFiles.Clear();
+                    foreach (var path in paths)
+                    {
+                        if (File.Exists(path))
+                        {
+                            _recentFiles.Add(path);
+                        }
+                    }
+                }
+            }
+            UpdateRecentFilesMenu();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to load recent files", ex);
+        }
+    }
+
+    private void SaveRecentFiles()
+    {
+        try
+        {
+            var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var jadeDir = Path.Combine(appDataPath, "RitoShark", "Jade");
+            var prefsFile = Path.Combine(jadeDir, "preferences.txt");
+
+            var lines = File.Exists(prefsFile) ? File.ReadAllLines(prefsFile).ToList() : new List<string>();
+            var recentValue = string.Join(",", _recentFiles);
+
+            bool found = false;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                if (lines[i].StartsWith("RecentFiles="))
+                {
+                    lines[i] = $"RecentFiles={recentValue}";
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) lines.Add($"RecentFiles={recentValue}");
+
+            File.WriteAllLines(prefsFile, lines);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to save recent files", ex);
+        }
+    }
+
+    private void AddToRecentFiles(string path)
+    {
+        try
+        {
+            _recentFiles.Remove(path);
+            _recentFiles.Insert(0, path);
+
+            while (_recentFiles.Count > MaxRecentFiles)
+            {
+                _recentFiles.RemoveAt(_recentFiles.Count - 1);
+            }
+
+            SaveRecentFiles();
+            UpdateRecentFilesMenu();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to add recent file", ex);
+        }
+    }
+
+    private void UpdateRecentFilesMenu()
+    {
+        if (RecentFilesMenu == null) return;
+
+        RecentFilesMenu.Items.Clear();
+
+        if (_recentFiles.Count == 0)
+        {
+            var noItems = new MenuItem { Header = "No Recent Files", IsEnabled = false };
+            RecentFilesMenu.Items.Add(noItems);
+            return;
+        }
+
+        foreach (var path in _recentFiles)
+        {
+            var item = new MenuItem
+            {
+                Header = Path.GetFileName(path),
+                ToolTip = path
+            };
+            item.Click += (s, e) => { _ = OpenFileFromPathAsync(path); };
+            RecentFilesMenu.Items.Add(item);
+        }
+
+        RecentFilesMenu.Items.Add(new Separator());
+        var clearItem = new MenuItem { Header = "Clear Recent Files" };
+        clearItem.Click += (s, e) =>
+        {
+            _recentFiles.Clear();
+            SaveRecentFiles();
+            UpdateRecentFilesMenu();
+        };
+        RecentFilesMenu.Items.Add(clearItem);
     }
     
     private async Task SaveFileContent(EditorTab tab, string filePath)
@@ -3245,6 +3372,7 @@ public partial class MainWindow : Window
                         FileTypeText.Text = extension.ToUpper();
                         StatusText.Text = $"Loaded: {Path.GetFileName(filePath)}";
                         
+                        AddToRecentFiles(filePath);
                         Logger.Info($"File loaded successfully: {Path.GetFileName(filePath)}");
                     }
                 }

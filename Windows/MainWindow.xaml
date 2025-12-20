@@ -353,6 +353,8 @@
         <Menu x:Name="MenuBar" Grid.Row="1" Background="#252526" Padding="4,2">
                 <MenuItem Header="File">
                     <MenuItem Header="Open..." Click="OnOpenFile" InputGestureText="Ctrl+O"/>
+                    <MenuItem x:Name="RecentFilesMenu" Header="Recent Files"/>
+                    <Separator Background="#3E3E42"/>
                     <MenuItem Header="Save" Click="OnSaveFile" InputGestureText="Ctrl+S"/>
                     <MenuItem Header="Save As..." Click="OnSaveFileAs" InputGestureText="Ctrl+Shift+S"/>
                     <Separator Background="#3E3E42"/>
