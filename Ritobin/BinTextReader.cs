@@ -894,6 +894,7 @@ public class BinTextReader
     private BinVec2? ReadVec2()
     {
         if (!ExpectSymbol('{')) return null;
+        NextNewline();
         
         bool end = ReadSymbol('}');
         if (end)
@@ -936,6 +937,7 @@ public class BinTextReader
     private BinVec3? ReadVec3()
     {
         if (!ExpectSymbol('{')) return null;
+        NextNewline();
         
         bool end = ReadSymbol('}');
         if (end)
@@ -992,6 +994,7 @@ public class BinTextReader
     private BinVec4? ReadVec4()
     {
         if (!ExpectSymbol('{')) return null;
+        NextNewline();
         
         bool end = ReadSymbol('}');
         if (end)
@@ -1062,6 +1065,7 @@ public class BinTextReader
     private BinMtx44? ReadMtx44()
     {
         if (!ExpectSymbol('{')) return null;
+        NextNewline();
         
         bool end = ReadSymbol('}');
         if (end)
@@ -1107,6 +1111,7 @@ public class BinTextReader
     private BinRgba? ReadRgba()
     {
         if (!ExpectSymbol('{')) return null;
+        NextNewline();
         
         bool end = ReadSymbol('}');
         if (end)
