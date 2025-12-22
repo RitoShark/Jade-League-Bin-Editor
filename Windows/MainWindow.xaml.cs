@@ -876,6 +876,9 @@ public partial class MainWindow : Window
                 
                 AddToRecentFiles(dialog.FileName);
                 Logger.Info("File loaded successfully");
+                
+                // Open linked bin files if preference is enabled
+                await OpenLinkedBinFilesAsync(dialog.FileName, content);
             }
         }
         catch (Exception ex)
@@ -909,12 +912,161 @@ public partial class MainWindow : Window
             
             AddToRecentFiles(filePath);
             Logger.Info($"File loaded from path: {filePath}");
+            
+            // Open linked bin files if preference is enabled
+            await OpenLinkedBinFilesAsync(filePath, content);
         }
         catch (Exception ex)
         {
             Logger.Error($"Error opening file from path: {filePath}", ex);
             MessageBox.Show($"Error loading file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             StatusText.Text = "Error loading file";
+        }
+    }
+
+    /// <summary>
+    /// Opens linked bin files if the preference is enabled.
+    /// Searches for linked files in the DATA folder relative to the opened file.
+    /// </summary>
+    private async Task OpenLinkedBinFilesAsync(string mainFilePath, string content)
+    {
+        try
+        {
+            // Check if importing linked bins is enabled
+            var importLinked = ThemeHelper.ReadPreference("ImportLinkedBins", "False");
+            if (!importLinked.Equals("True", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+            
+            // Only process .bin files (or converted .py content from bin)
+            var extension = Path.GetExtension(mainFilePath).ToLower();
+            if (extension != ".bin" && extension != ".py")
+            {
+                return;
+            }
+            
+            // Check if recursive loading is enabled
+            var recursiveEnabled = ThemeHelper.ReadPreference("RecursiveLinkedBins", "False")
+                .Equals("True", StringComparison.OrdinalIgnoreCase);
+            
+            // Track all opened file paths (normalized) to prevent duplicates
+            var openedFilePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            
+            // Add all currently open tabs to the set
+            foreach (var tab in _tabs)
+            {
+                if (!string.IsNullOrEmpty(tab.FilePath))
+                {
+                    openedFilePaths.Add(Path.GetFullPath(tab.FilePath));
+                }
+            }
+            
+            // Get the base directory for searching
+            var baseDirectory = Path.GetDirectoryName(mainFilePath);
+            if (string.IsNullOrEmpty(baseDirectory))
+            {
+                return;
+            }
+            
+            // Queue of files to process (for recursive loading)
+            var filesToProcess = new Queue<(string content, string basePath)>();
+            filesToProcess.Enqueue((content, baseDirectory));
+            
+            var totalOpenedCount = 0;
+            var maxRecursionDepth = 3; // Limit recursion to prevent infinite loops
+            var currentDepth = 0;
+            var filesAtCurrentDepth = 1;
+            var filesAtNextDepth = 0;
+            
+            while (filesToProcess.Count > 0 && (currentDepth == 0 || recursiveEnabled))
+            {
+                var (fileContent, searchBasePath) = filesToProcess.Dequeue();
+                filesAtCurrentDepth--;
+                
+                // Parse linked files from content
+                var linkedFiles = LinkedBinParser.ParseLinkedFiles(fileContent);
+                if (linkedFiles.Count == 0)
+                {
+                    continue;
+                }
+                
+                Logger.Info($"Found {linkedFiles.Count} linked bin files at depth {currentDepth}");
+                
+                foreach (var linkedFileName in linkedFiles)
+                {
+                    // Search for the file in DATA folder
+                    var foundPath = LinkedBinParser.FindBinFileInDataFolder(searchBasePath, linkedFileName);
+                    if (foundPath == null)
+                    {
+                        Logger.Info($"Linked bin file not found: {linkedFileName}");
+                        continue;
+                    }
+                    
+                    var normalizedPath = Path.GetFullPath(foundPath);
+                    
+                    // Skip if this file is already open or was already processed
+                    if (openedFilePaths.Contains(normalizedPath))
+                    {
+                        Logger.Info($"Skipping already open file: {linkedFileName}");
+                        continue;
+                    }
+                    
+                    // Mark as opened to prevent duplicates
+                    openedFilePaths.Add(normalizedPath);
+                    
+                    Logger.Info($"Opening linked bin file: {foundPath}");
+                    StatusText.Text = $"Loading linked: {linkedFileName}...";
+                    
+                    try
+                    {
+                        var linkedContent = await LoadFileContentAsync(foundPath);
+                        await Task.Delay(5); // Brief delay for UI responsiveness
+                        CreateNewTab(foundPath, linkedContent);
+                        totalOpenedCount++;
+                        
+                        // If recursive is enabled, queue this file's content for processing
+                        if (recursiveEnabled && currentDepth < maxRecursionDepth)
+                        {
+                            var linkedBasePath = Path.GetDirectoryName(foundPath);
+                            if (!string.IsNullOrEmpty(linkedBasePath))
+                            {
+                                filesToProcess.Enqueue((linkedContent, linkedBasePath));
+                                filesAtNextDepth++;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error($"Failed to open linked file: {foundPath}", ex);
+                    }
+                }
+                
+                // Track recursion depth
+                if (filesAtCurrentDepth == 0 && filesAtNextDepth > 0)
+                {
+                    currentDepth++;
+                    filesAtCurrentDepth = filesAtNextDepth;
+                    filesAtNextDepth = 0;
+                    Logger.Info($"Moving to recursion depth {currentDepth}");
+                }
+                
+                // Stop if we've completed the first level and recursive is disabled
+                if (!recursiveEnabled && currentDepth > 0)
+                {
+                    break;
+                }
+            }
+            
+            if (totalOpenedCount > 0)
+            {
+                StatusText.Text = $"Loaded {totalOpenedCount} linked file(s)";
+                Logger.Info($"Successfully opened {totalOpenedCount} linked bin files");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Error opening linked bin files", ex);
         }
     }
 
@@ -3147,6 +3299,9 @@ public partial class MainWindow : Window
                         
                         AddToRecentFiles(filePath);
                         Logger.Info($"File loaded successfully: {Path.GetFileName(filePath)}");
+                        
+                        // Open linked bin files if preference is enabled
+                        await OpenLinkedBinFilesAsync(filePath, content);
                     }
                 }
             }

@@ -13,6 +13,57 @@ public partial class PreferencesWindow : Window
     {
         InitializeComponent();
         ApplyWindowTheme(GetCurrentTheme());
+        LoadPreferences();
+    }
+
+    private void LoadPreferences()
+    {
+        try
+        {
+            var importLinked = ThemeHelper.ReadPreference("ImportLinkedBins", "False");
+            ImportLinkedBinsCheckBox.IsChecked = importLinked.Equals("True", StringComparison.OrdinalIgnoreCase);
+            
+            var recursiveLinked = ThemeHelper.ReadPreference("RecursiveLinkedBins", "False");
+            RecursiveLinkedBinsCheckBox.IsChecked = recursiveLinked.Equals("True", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to load preferences", ex);
+        }
+    }
+
+    private void OnImportLinkedBinsChanged(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var isChecked = ImportLinkedBinsCheckBox.IsChecked ?? false;
+            ThemeHelper.WritePreference("ImportLinkedBins", isChecked.ToString());
+            Logger.Info($"ImportLinkedBins preference set to: {isChecked}");
+            
+            // If unchecked, also uncheck the recursive option
+            if (!isChecked && RecursiveLinkedBinsCheckBox.IsChecked == true)
+            {
+                RecursiveLinkedBinsCheckBox.IsChecked = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to save ImportLinkedBins preference", ex);
+        }
+    }
+
+    private void OnRecursiveLinkedBinsChanged(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var isChecked = RecursiveLinkedBinsCheckBox.IsChecked ?? false;
+            ThemeHelper.WritePreference("RecursiveLinkedBins", isChecked.ToString());
+            Logger.Info($"RecursiveLinkedBins preference set to: {isChecked}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to save RecursiveLinkedBins preference", ex);
+        }
     }
 
     private string GetCurrentTheme()
@@ -114,7 +165,13 @@ public partial class PreferencesWindow : Window
             TitleBar.Background = titleBarBg;
             
             // Update borders/boxes if any (we have one in Row 2)
-            UpdateContainerColors(this, titleBarBg);
+            // Update borders/boxes
+            if (ContentBorder != null)
+            {
+                ContentBorder.Background = titleBarBg;
+                ContentBorder.BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255));
+            }
+            // UpdateContainerColors(this, titleBarBg); // Removed effectively
             
             // Update all TextBlocks
             UpdateTextBlockColors(this, textColor);
@@ -171,6 +228,10 @@ public partial class PreferencesWindow : Window
                 {
                     // Keep it
                 }
+            }
+            else if (child is CheckBox checkBox)
+            {
+                checkBox.Foreground = fg;
             }
             UpdateItemStyles(child, bg, fg);
         }

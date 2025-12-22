@@ -42,15 +42,46 @@
                 <!-- Title -->
                 <StackPanel Grid.Row="0">
                     <TextBlock Text="Preferences" FontSize="32" FontWeight="Bold" Foreground="White" Margin="0,0,0,5"/>
-                    <TextBlock Text="Configure your experience (Placeholder)" FontSize="16" Foreground="#888888"/>
+                    <TextBlock Text="Configure your experience" FontSize="16" Foreground="#888888"/>
                 </StackPanel>
 
-                <!-- Placeholder Content -->
-                <Border Grid.Row="2" Background="#252526" BorderBrush="#3E3E42" BorderThickness="1" CornerRadius="{DynamicResource GlobalCornerRadius}" Padding="20">
-                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                        <TextBlock Text="&#xE115;" FontFamily="Segoe MDL2 Assets" FontSize="48" Margin="0,0,0,10" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Preference settings will be added here soon." FontSize="18" Foreground="#888888" TextAlignment="Center"/>
-                    </StackPanel>
+                <!-- Preference Options -->
+                <Border x:Name="ContentBorder" Grid.Row="2" Background="#252526" BorderBrush="#3E3E42" BorderThickness="1" CornerRadius="{DynamicResource GlobalCornerRadius}" Padding="20">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <!-- Import Linked Bin Files Option -->
+                            <StackPanel Margin="0,0,0,20">
+                                <CheckBox x:Name="ImportLinkedBinsCheckBox" 
+                                          Content="Import Linked Bin Files" 
+                                          FontSize="16" 
+                                          Foreground="#CCCCCC"
+                                          Checked="OnImportLinkedBinsChanged"
+                                          Unchecked="OnImportLinkedBinsChanged"/>
+                                <TextBlock Text="When enabled, opening a bin file will automatically open all linked bin files found in the DATA folder." 
+                                           TextWrapping="Wrap" 
+                                           Foreground="#888888" 
+                                           FontSize="12" 
+                                           Margin="20,5,0,0"/>
+                                
+                                <!-- Sub-option: Recursive loading -->
+                                <CheckBox x:Name="RecursiveLinkedBinsCheckBox" 
+                                          Content="Also load files linked inside imported files" 
+                                          FontSize="14" 
+                                          Foreground="#AAAAAA"
+                                          Margin="30,10,0,0"
+                                          IsEnabled="{Binding IsChecked, ElementName=ImportLinkedBinsCheckBox}"
+                                          Checked="OnRecursiveLinkedBinsChanged"
+                                          Unchecked="OnRecursiveLinkedBinsChanged"/>
+                                <TextBlock Text="Recursively opens linked files from within the imported linked files (may open many tabs)." 
+                                           TextWrapping="Wrap" 
+                                           Foreground="#666666" 
+                                           FontSize="11" 
+                                           Margin="50,3,0,0"/>
+                            </StackPanel>
+                            
+
+                        </StackPanel>
+                    </ScrollViewer>
                 </Border>
         
                 <!-- Action Buttons -->
