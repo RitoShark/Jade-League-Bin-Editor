@@ -415,29 +415,104 @@
                         Background="#1E1E1E"
                         BorderThickness="0"
                         Visibility="Collapsed"
-                        SelectionChanged="OnTabSelectionChanged">
-            <TabControl.Resources>
+                        SelectionChanged="OnTabSelectionChanged"
+                        PreviewMouseWheel="OnTabControlMouseWheel">
+            <TabControl.Style>
                 <Style TargetType="TabControl">
                     <Setter Property="Background" Value="#1E1E1E"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="TabControl">
+                                <Grid KeyboardNavigation.TabNavigation="Local">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+                                    
+                                    <Grid Grid.Row="0" Background="{TemplateBinding Background}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        
+                                        <ScrollViewer x:Name="PART_TabScrollViewer" Grid.Column="0" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+                                            <TabPanel IsItemsHost="True" Background="Transparent" Margin="0,0,10,0"/>
+                                        </ScrollViewer>
+                                        
+                                        <Button x:Name="PART_CloseAllButton" 
+                                                Grid.Column="1"
+                                                Content="Close All"
+                                                Margin="5,5,10,0"
+                                                Padding="8,4"
+                                                VerticalAlignment="Top"
+                                                HorizontalContentAlignment="Center"
+                                                VerticalContentAlignment="Center"
+                                                Background="Transparent"
+                                                Foreground="{TemplateBinding Foreground}"
+                                                BorderThickness="1"
+                                                FontSize="12"
+                                                Visibility="Collapsed"
+                                                Click="OnCloseAllTabs">
+                                            <Button.Style>
+                                                <Style TargetType="Button">
+                                                    <Setter Property="Template">
+                                                        <Setter.Value>
+                                                            <ControlTemplate TargetType="Button">
+                                                                <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{DynamicResource GlobalCornerRadius}">
+                                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                                </Border>
+                                                            </ControlTemplate>
+                                                        </Setter.Value>
+                                                    </Setter>
+                                                    <Style.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter Property="Background" Value="#3E3E42"/>
+                                                            <Setter Property="Foreground" Value="White"/>
+                                                        </Trigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                        </Button>
+                                    </Grid>
+
+                                    <Border Grid.Row="1" Background="{TemplateBinding Background}" BorderThickness="0">
+                                        <ContentPresenter ContentSource="SelectedContent"/>
+                                    </Border>
+                                </Grid>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
                 </Style>
+            </TabControl.Style>
+            <TabControl.Resources>
                 <Style TargetType="TabItem">
                     <Setter Property="Background" Value="#252526"/>
                     <Setter Property="Foreground" Value="#CCCCCC"/>
                     <Setter Property="BorderThickness" Value="0"/>
                     <Setter Property="Padding" Value="12,6"/>
                     <Setter Property="FontSize" Value="13"/>
+                    <Setter Property="Width" Value="140"/>
                     <Setter Property="Template">
                         <Setter.Value>
                             <ControlTemplate TargetType="TabItem">
                                 <Border x:Name="Border" Background="{TemplateBinding Background}" 
                                         BorderThickness="0" Padding="{TemplateBinding Padding}"
                                         CornerRadius="{DynamicResource GlobalCornerRadius}">
-                                    <StackPanel Orientation="Horizontal">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
                                         <TextBlock Text="{TemplateBinding Header}" 
+                                                   Grid.Column="0"
                                                    Foreground="{TemplateBinding Foreground}"
-                                                   VerticalAlignment="Center"/>
+                                                   VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   TextWrapping="NoWrap"
+                                                   Margin="0,0,4,0"/>
                                         <Button Content="✕" 
-                                                Margin="8,0,0,0"
+                                                Grid.Column="1"
+                                                Margin="0"
                                                 Background="Transparent"
                                                 Foreground="#CCCCCC"
                                                 BorderThickness="0"
@@ -445,7 +520,7 @@
                                                 FontSize="12"
                                                 Click="OnCloseTab"
                                                 Tag="{Binding RelativeSource={RelativeSource TemplatedParent}}"/>
-                                    </StackPanel>
+                                    </Grid>
                                 </Border>
                                 <ControlTemplate.Triggers>
                                     <Trigger Property="IsSelected" Value="True">
@@ -461,6 +536,8 @@
                 </Style>
             </TabControl.Resources>
             </TabControl>
+
+
         </Grid>
 
         <!-- Status Bar -->

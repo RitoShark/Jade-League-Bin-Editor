@@ -34,6 +34,7 @@ public class EditorTab
     public Jade.Editor.ErrorUnderlineRenderer? ErrorUnderlineRenderer { get; set; }
     public Jade.Editor.MinimapBackgroundRenderer? MinimapRenderer { get; set; }
     public System.Windows.Threading.DispatcherTimer? ValidationTimer { get; set; }
+    public System.Windows.Threading.DispatcherTimer? FoldingTimer { get; set; }
 }
 
 public partial class MainWindow : Window
@@ -50,6 +51,8 @@ public partial class MainWindow : Window
     private System.Windows.Threading.DispatcherTimer? _perfTimer;
     private List<string> _recentFiles = new List<string>();
     private const int MaxRecentFiles = 10;
+    
+    private Button? CloseAllButton => EditorTabControl?.Template?.FindName("PART_CloseAllButton", EditorTabControl) as Button;
 
     public MainWindow()
     {
@@ -313,11 +316,13 @@ public partial class MainWindow : Window
         {
             WelcomeScreen.Visibility = Visibility.Visible;
             EditorTabControl.Visibility = Visibility.Collapsed;
+            if (CloseAllButton != null) CloseAllButton.Visibility = Visibility.Collapsed;
         }
         else
         {
             WelcomeScreen.Visibility = Visibility.Collapsed;
             EditorTabControl.Visibility = Visibility.Visible;
+            if (CloseAllButton != null) CloseAllButton.Visibility = Visibility.Visible;
         }
     }
 
@@ -584,6 +589,7 @@ public partial class MainWindow : Window
             foldingTimer.Stop();
             foldingStrategy.UpdateFoldings(foldingManager, editor.Document);
         };
+        tab.FoldingTimer = foldingTimer;
         
         editor.TextArea.SelectionChanged += (s, e) => UpdateCaretPosition();
         editor.TextChanged += (s, e) => 
@@ -605,6 +611,7 @@ public partial class MainWindow : Window
         var tabItem = new TabItem
         {
             Header = filePath != null ? Path.GetFileName(filePath) : "Untitled",
+            ToolTip = filePath ?? "Untitled",
             Content = editor,
             Background = tabBg
         };
@@ -1936,52 +1943,121 @@ public partial class MainWindow : Window
     {
         if (sender is Button button && button.Tag is TabItem tabItem)
         {
-            var index = EditorTabControl.Items.IndexOf(tabItem);
-            if (index >= 0 && index < _tabs.Count)
+            CloseTabInternal(tabItem, true);
+            UpdateWelcomeScreenVisibility();
+        }
+    }
+
+    private async void OnCloseAllTabs(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // Visual feedback
+            if (CloseAllButton != null)
             {
-                var tab = _tabs[index];
-                
-                // Aggressive memory cleanup
-                if (tab.Editor != null)
-                {
-                    // Clear all editor content
-                    tab.Editor.Text = string.Empty;
-                    tab.Editor.Document.Text = string.Empty;
-                    
-                    // Clear undo/redo stacks
-                    tab.Editor.Document.UndoStack.ClearAll();
-                    
-                    // Remove event handlers to break references
-                    tab.Editor.TextChanged -= null;
-                    
-                    // Clear any syntax highlighting
-                    tab.Editor.SyntaxHighlighting = null;
-                }
-                
-                // Clear TabItem content
-                if (tabItem.Content is Grid grid)
-                {
-                    grid.Children.Clear();
-                }
-                tabItem.Content = null;
-                
-                // Remove from collections
-                _tabs.RemoveAt(index);
-                EditorTabControl.Items.Remove(tabItem);
-                
-                // Null out the tab reference
-                tab.Editor = null!;
-                tab.FilePath = null;
-                
-                // Aggressive garbage collection with heap compaction
+                CloseAllButton.Content = "Closing...";
+                CloseAllButton.IsEnabled = false;
+            }
+            
+            // Allow UI to update
+            await System.Threading.Tasks.Task.Delay(10);
+            
+            var tabsToClose = EditorTabControl.Items.Cast<TabItem>().ToList();
+            
+            foreach (var tabItem in tabsToClose)
+            {
+                CloseTabInternal(tabItem, false);
+            }
+            
+            UpdateWelcomeScreenVisibility();
+            
+            // Full aggressive cleanup at the end, exactly mirroring the original single-tab behavior
+            GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            
+            Logger.Info($"Closed {tabsToClose.Count} tabs and cleaned memory efficiently");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Error closing all tabs", ex);
+        }
+        finally
+        {
+            // Reset button state
+            if (CloseAllButton != null)
+            {
+                CloseAllButton.Content = "Close All";
+                CloseAllButton.IsEnabled = true;
+            }
+        }
+    }
+
+    private void CloseTabInternal(TabItem tabItem, bool cleanupMemory = true)
+    {
+        var index = EditorTabControl.Items.IndexOf(tabItem);
+        if (index >= 0 && index < _tabs.Count)
+        {
+            var tab = _tabs[index];
+            
+            // 1. Stop Timers
+            if (tab.ValidationTimer != null)
+            {
+                tab.ValidationTimer.Stop();
+                tab.ValidationTimer = null;
+            }
+            if (tab.FoldingTimer != null)
+            {
+                tab.FoldingTimer.Stop();
+                tab.FoldingTimer = null;
+            }
+
+            // 2. Cleanup Folding
+            if (tab.FoldingManager != null)
+            {
+                ICSharpCode.AvalonEdit.Folding.FoldingManager.Uninstall(tab.FoldingManager);
+                tab.FoldingManager = null;
+            }
+            
+            // 3. Cleanup Editor
+            if (tab.Editor != null)
+            {
+                tab.Editor.TextChanged -= null; 
+                tab.Editor.Document.Text = string.Empty;
+                tab.Editor.Document.UndoStack.ClearAll();
+                tab.Editor.TextArea.TextView.BackgroundRenderers.Clear();
+                tab.Editor.TextArea.TextView.LineTransformers.Clear();
+                tab.Editor.SyntaxHighlighting = null;
+            }
+            
+            // 4. Cleanup Tab properties
+            tab.SearchRenderer = null;
+            tab.ErrorHighlightRenderer = null;
+            tab.ErrorUnderlineRenderer = null;
+            tab.MinimapRenderer = null;
+            
+            // 5. Visual Cleanup
+            if (tabItem.Content is Grid grid)
+            {
+                grid.Children.Clear();
+            }
+            tabItem.Content = null;
+            
+            // 6. Remove from collections
+            _tabs.RemoveAt(index);
+            EditorTabControl.Items.Remove(tabItem);
+            
+            // 7. Final Nuke
+            tab.Editor = null!;
+            tab.FilePath = null;
+
+            if (cleanupMemory)
+            {
                 GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
                 GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
                 GC.WaitForPendingFinalizers();
                 GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-                
-                UpdateWelcomeScreenVisibility();
-                
-                Logger.Info($"Closed tab and freed memory aggressively");
             }
         }
     }
@@ -2009,6 +2085,19 @@ public partial class MainWindow : Window
         else
         {
             if (FileTypeText != null) FileTypeText.Text = "";
+        }
+    }
+
+    private void OnTabControlMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        var scrollViewer = EditorTabControl?.Template?.FindName("PART_TabScrollViewer", EditorTabControl) as ScrollViewer;
+        if (scrollViewer != null)
+        {
+            if (e.Delta < 0)
+                scrollViewer.ScrollToHorizontalOffset(scrollViewer.HorizontalOffset + 30);
+            else
+                scrollViewer.ScrollToHorizontalOffset(scrollViewer.HorizontalOffset - 30);
+            e.Handled = true;
         }
     }
 
@@ -2841,6 +2930,7 @@ public partial class MainWindow : Window
             tabItemStyle.Setters.Add(new Setter(TabItem.BorderThicknessProperty, new Thickness(0, 0, 0, 0)));
             tabItemStyle.Setters.Add(new Setter(TabItem.PaddingProperty, new Thickness(12, 6, 12, 6)));
             tabItemStyle.Setters.Add(new Setter(TabItem.FontSizeProperty, 13.0));
+            tabItemStyle.Setters.Add(new Setter(TabItem.WidthProperty, 140.0));
             
             // Create control template
             var template = new ControlTemplate(typeof(TabItem));
@@ -2850,18 +2940,27 @@ public partial class MainWindow : Window
             borderFactory.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent) });
             borderFactory.SetValue(Border.BorderThicknessProperty, new Thickness(0, 0, 0, 0));
             borderFactory.SetBinding(Border.PaddingProperty, new System.Windows.Data.Binding("Padding") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent) });
+            borderFactory.SetResourceReference(Border.CornerRadiusProperty, "GlobalCornerRadius");
             
-            var stackPanelFactory = new FrameworkElementFactory(typeof(StackPanel));
-            stackPanelFactory.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+            var gridFactory = new FrameworkElementFactory(typeof(Grid));
+            var col1 = new FrameworkElementFactory(typeof(ColumnDefinition));
+            col1.SetValue(ColumnDefinition.WidthProperty, new GridLength(1, GridUnitType.Star));
+            var col2 = new FrameworkElementFactory(typeof(ColumnDefinition));
+            col2.SetValue(ColumnDefinition.WidthProperty, GridLength.Auto);
+            gridFactory.AppendChild(col1);
+            gridFactory.AppendChild(col2);
             
             var textBlockFactory = new FrameworkElementFactory(typeof(TextBlock));
             textBlockFactory.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Header") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent) });
             textBlockFactory.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding("Foreground") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent) });
             textBlockFactory.SetValue(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center);
+            textBlockFactory.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+            textBlockFactory.SetValue(TextBlock.TextWrappingProperty, TextWrapping.NoWrap);
+            textBlockFactory.SetValue(TextBlock.MarginProperty, new Thickness(0, 0, 4, 0));
+            textBlockFactory.SetValue(Grid.ColumnProperty, 0);
             
             var buttonFactory = new FrameworkElementFactory(typeof(Button));
             buttonFactory.SetValue(Button.ContentProperty, "✕");
-            buttonFactory.SetValue(Button.MarginProperty, new Thickness(8, 0, 0, 0));
             buttonFactory.SetValue(Button.BackgroundProperty, Brushes.Transparent);
             buttonFactory.SetValue(Button.ForegroundProperty, new SolidColorBrush(Color.FromRgb(204, 204, 204)));
             buttonFactory.SetValue(Button.BorderThicknessProperty, new Thickness(0, 0, 0, 0));
@@ -2869,32 +2968,29 @@ public partial class MainWindow : Window
             buttonFactory.SetValue(Button.FontSizeProperty, 12.0);
             buttonFactory.AddHandler(Button.ClickEvent, new RoutedEventHandler(OnCloseTab));
             buttonFactory.SetBinding(Button.TagProperty, new System.Windows.Data.Binding() { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent) });
+            buttonFactory.SetValue(Grid.ColumnProperty, 1);
             
-            stackPanelFactory.AppendChild(textBlockFactory);
-            stackPanelFactory.AppendChild(buttonFactory);
-            borderFactory.AppendChild(stackPanelFactory);
+            gridFactory.AppendChild(textBlockFactory);
+            gridFactory.AppendChild(buttonFactory);
+            borderFactory.AppendChild(gridFactory);
             template.VisualTree = borderFactory;
             
-            // Add triggers - order matters! More specific triggers should come last
-            // Hover trigger (only when NOT selected)
+            // Triggers
             var hoverTrigger = new MultiTrigger();
             hoverTrigger.Conditions.Add(new Condition(TabItem.IsMouseOverProperty, true));
             hoverTrigger.Conditions.Add(new Condition(TabItem.IsSelectedProperty, false));
             hoverTrigger.Setters.Add(new Setter(TabItem.BackgroundProperty, hoverTabBg, "Border"));
             template.Triggers.Add(hoverTrigger);
             
-            // Selected trigger (should override hover)
             var selectedTrigger = new Trigger { Property = TabItem.IsSelectedProperty, Value = true };
             selectedTrigger.Setters.Add(new Setter(TabItem.BackgroundProperty, selectedTabBg, "Border"));
             template.Triggers.Add(selectedTrigger);
             
             tabItemStyle.Setters.Add(new Setter(TabItem.TemplateProperty, template));
             
-            // Apply the style to TabControl resources
+            // Apply style
             if (EditorTabControl.Resources.Contains(typeof(TabItem)))
-            {
                 EditorTabControl.Resources.Remove(typeof(TabItem));
-            }
             EditorTabControl.Resources.Add(typeof(TabItem), tabItemStyle);
         }
         catch (Exception ex)
@@ -3374,6 +3470,7 @@ public partial class MainWindow : Window
         if (EditorTabControl != null)
         {
             EditorTabControl.Background = bgColor;
+            EditorTabControl.Foreground = textColor;
             UpdateTabItemStyles(tabBg, selectedTabBg, hoverTabBg, textColor);
             foreach (TabItem tab in EditorTabControl.Items)
             {
@@ -3382,6 +3479,12 @@ public partial class MainWindow : Window
             }
         }
         UpdateScrollBarStyles(scrollTrackBg, scrollThumbBg, scrollThumbHoverBg);
+        
+        if (CloseAllButton != null)
+        {
+            CloseAllButton.Background = tabBg;
+            CloseAllButton.BorderBrush = new SolidColorBrush(Color.FromArgb(80, 128, 128, 128));
+        }
     }
 
     private SolidColorBrush GetBrighterBrush(SolidColorBrush brush, double factor)
