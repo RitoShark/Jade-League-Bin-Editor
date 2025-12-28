@@ -313,6 +313,10 @@ public partial class MainWindow : Window
         {
             WelcomeScreen.Visibility = Visibility.Collapsed;
             EditorTabControl.Visibility = Visibility.Visible;
+            
+            // Ensure template is applied before accessing CloseAllButton
+            EditorTabControl.ApplyTemplate();
+            
             // Show Close All button whenever there's at least one tab
             if (CloseAllButton != null) CloseAllButton.Visibility = Visibility.Visible;
         }
