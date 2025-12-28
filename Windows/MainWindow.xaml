@@ -6,7 +6,7 @@
         WindowStartupLocation="CenterScreen"
         WindowStyle="SingleBorderWindow"
         ResizeMode="CanResize"
-        WindowState="Maximized"
+        WindowState="Normal"
         Icon="/jade.ico">
     
     <WindowChrome.WindowChrome>
@@ -433,21 +433,21 @@
                                         </Grid.ColumnDefinitions>
                                         
                                         <ScrollViewer x:Name="PART_TabScrollViewer" Grid.Column="0" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
-                                            <TabPanel IsItemsHost="True" Background="Transparent" Margin="0,0,10,0"/>
+                                            <TabPanel IsItemsHost="True" Background="Transparent" Margin="0"/>
                                         </ScrollViewer>
                                         
                                         <Button x:Name="PART_CloseAllButton" 
                                                 Grid.Column="1"
                                                 Content="Close All"
-                                                Margin="5,5,10,0"
-                                                Padding="8,4"
-                                                VerticalAlignment="Top"
+                                                Margin="0,0,0,0"
+                                                Padding="12,6"
+                                                VerticalAlignment="Stretch"
                                                 HorizontalContentAlignment="Center"
                                                 VerticalContentAlignment="Center"
-                                                Background="Transparent"
-                                                Foreground="{TemplateBinding Foreground}"
-                                                BorderThickness="1"
-                                                FontSize="12"
+                                                Background="{DynamicResource TabBackgroundBrush}"
+                                                Foreground="{DynamicResource PrimaryTextBrush}"
+                                                BorderThickness="0"
+                                                FontSize="13"
                                                 Visibility="Collapsed"
                                                 Click="OnCloseAllTabs">
                                             <Button.Style>
@@ -455,18 +455,25 @@
                                                     <Setter Property="Template">
                                                         <Setter.Value>
                                                             <ControlTemplate TargetType="Button">
-                                                                <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{DynamicResource GlobalCornerRadius}">
+                                                                <Border x:Name="border"
+                                                                        Background="{TemplateBinding Background}" 
+                                                                        BorderThickness="0" 
+                                                                        Padding="{TemplateBinding Padding}"
+                                                                        CornerRadius="{DynamicResource GlobalCornerRadius}"
+                                                                        SnapsToDevicePixels="True">
                                                                     <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                                 </Border>
+                                                                <ControlTemplate.Triggers>
+                                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                                        <Setter TargetName="border" Property="Background" Value="{DynamicResource ButtonHoverBrush}"/>
+                                                                    </Trigger>
+                                                                    <Trigger Property="IsPressed" Value="True">
+                                                                        <Setter TargetName="border" Property="Background" Value="{DynamicResource WindowBackgroundBrush}"/>
+                                                                    </Trigger>
+                                                                </ControlTemplate.Triggers>
                                                             </ControlTemplate>
                                                         </Setter.Value>
                                                     </Setter>
-                                                    <Style.Triggers>
-                                                        <Trigger Property="IsMouseOver" Value="True">
-                                                            <Setter Property="Background" Value="{DynamicResource ButtonHoverBrush}"/>
-                                                            <Setter Property="Foreground" Value="White"/>
-                                                        </Trigger>
-                                                    </Style.Triggers>
                                                 </Style>
                                             </Button.Style>
                                         </Button>

@@ -155,6 +155,9 @@ public partial class MainWindow : Window
             {
                 Logger.Info("MainWindow loaded");
                 
+                // Restore window state from previous session
+                RestoreWindowState();
+                
                 // Initialize Tray Service
                 TrayService.Initialize();
 
@@ -179,18 +182,6 @@ public partial class MainWindow : Window
 
                 UpdateWelcomeScreenVisibility();
                 UpdateZoomIndicator();
-                
-                // Apply margin on load since window starts maximized
-                if (WindowState == WindowState.Maximized)
-                {
-                    // Only 1px at bottom for taskbar gap
-                    RootGrid.Margin = new Thickness(0, 0, 0, 1);
-                    if (MaximizeButton != null) MaximizeButton.Content = "\uE923";
-                }
-                else
-                {
-                     if (MaximizeButton != null) MaximizeButton.Content = "\uE922";
-                }
                 
                 // Initialize status bar state
                 UpdateErrorCount();
@@ -322,6 +313,7 @@ public partial class MainWindow : Window
         {
             WelcomeScreen.Visibility = Visibility.Collapsed;
             EditorTabControl.Visibility = Visibility.Visible;
+            // Show Close All button whenever there's at least one tab
             if (CloseAllButton != null) CloseAllButton.Visibility = Visibility.Visible;
         }
     }
@@ -1264,6 +1256,8 @@ public partial class MainWindow : Window
         }
         else
         {
+            // Save window state before closing
+            SaveWindowState();
             TrayService.Cleanup();
             base.OnClosing(e);
         }
@@ -2734,5 +2728,120 @@ public partial class MainWindow : Window
         }
         catch { }
         return defaultValue;
+    }
+
+    private void SaveWindowState()
+    {
+        try
+        {
+            var prefsFile = GetPreferencesFilePath();
+            var lines = new List<string>();
+            
+            // Read existing preferences
+            if (File.Exists(prefsFile))
+            {
+                lines = File.ReadAllLines(prefsFile).ToList();
+            }
+            
+            // Remove old window state entries
+            lines.RemoveAll(l => l.StartsWith("WindowState=") || 
+                                l.StartsWith("WindowLeft=") || 
+                                l.StartsWith("WindowTop=") || 
+                                l.StartsWith("WindowWidth=") || 
+                                l.StartsWith("WindowHeight="));
+            
+            // Save current window state (only if not minimized)
+            if (WindowState != WindowState.Minimized)
+            {
+                lines.Add($"WindowState={WindowState}");
+                
+                // Save position and size only if not maximized
+                if (WindowState == WindowState.Normal)
+                {
+                    lines.Add($"WindowLeft={Left}");
+                    lines.Add($"WindowTop={Top}");
+                    lines.Add($"WindowWidth={Width}");
+                    lines.Add($"WindowHeight={Height}");
+                }
+            }
+            
+            File.WriteAllLines(prefsFile, lines);
+            Logger.Info($"Saved window state: {WindowState}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to save window state", ex);
+        }
+    }
+
+    private void RestoreWindowState()
+    {
+        try
+        {
+            var prefsFile = GetPreferencesFilePath();
+            if (!File.Exists(prefsFile))
+                return;
+            
+            var lines = File.ReadAllLines(prefsFile);
+            string? savedState = null;
+            double? left = null, top = null, width = null, height = null;
+            
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("WindowState="))
+                    savedState = line.Substring(12).Trim();
+                else if (line.StartsWith("WindowLeft=") && double.TryParse(line.Substring(11).Trim(), out var l))
+                    left = l;
+                else if (line.StartsWith("WindowTop=") && double.TryParse(line.Substring(10).Trim(), out var t))
+                    top = t;
+                else if (line.StartsWith("WindowWidth=") && double.TryParse(line.Substring(12).Trim(), out var w))
+                    width = w;
+                else if (line.StartsWith("WindowHeight=") && double.TryParse(line.Substring(13).Trim(), out var h))
+                    height = h;
+            }
+            
+            // Restore position and size if available (for Normal state)
+            if (left.HasValue && top.HasValue && width.HasValue && height.HasValue)
+            {
+                // Ensure window is visible on screen
+                var screenWidth = SystemParameters.VirtualScreenWidth;
+                var screenHeight = SystemParameters.VirtualScreenHeight;
+                
+                if (left.Value >= 0 && left.Value < screenWidth &&
+                    top.Value >= 0 && top.Value < screenHeight &&
+                    width.Value > 100 && width.Value <= screenWidth &&
+                    height.Value > 100 && height.Value <= screenHeight)
+                {
+                    Left = left.Value;
+                    Top = top.Value;
+                    Width = width.Value;
+                    Height = height.Value;
+                }
+            }
+            
+            // Restore window state - defer maximization to prevent off-screen issues
+            if (savedState == "Maximized")
+            {
+                // Start in Normal state, then maximize after window is fully loaded
+                // This prevents off-screen issues with custom WindowChrome
+                WindowState = WindowState.Normal;
+                
+                // Defer maximization until after the window is fully rendered
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    WindowState = WindowState.Maximized;
+                    Logger.Info("Restored window state: Maximized (deferred)");
+                }), System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+            else
+            {
+                WindowState = WindowState.Normal;
+                Logger.Info($"Restored window state: Normal ({Width}x{Height})");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to restore window state", ex);
+        }
     }
 }
