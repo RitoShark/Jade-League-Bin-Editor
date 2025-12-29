@@ -20,12 +20,6 @@ public class HashDownloader
         "hashes.lcu.txt"
     };
     
-    private static readonly string[] GAME_HASH_PART_URLS = new[]
-    {
-        "https://raw.githubusercontent.com/CommunityDragon/Data/master/hashes/lol/hashes.game.txt.0",
-        "https://raw.githubusercontent.com/CommunityDragon/Data/master/hashes/lol/hashes.game.txt.1"
-    };
-    
     private const string BASE_URL = "https://raw.githubusercontent.com/CommunityDragon/Data/master/hashes/lol/";
     
     public static string GetHashDirectory()
@@ -44,7 +38,7 @@ public class HashDownloader
     public static (bool AllPresent, List<string> Missing, string Format) CheckHashes()
     {
         var hashDir = GetHashDirectory();
-        var required = HASH_FILES.Concat(new[] { "hashes.game.txt" }).ToList();
+        var required = HASH_FILES.ToList();
         var missing = new List<string>();
         int txtCount = 0;
         int binCount = 0;
@@ -85,7 +79,7 @@ public class HashDownloader
         
         try
         {
-            var totalFiles = HASH_FILES.Length + 1; // +1 for game.txt
+            var totalFiles = HASH_FILES.Length;
             var currentFile = 0;
             
             // Download required hash files
@@ -113,60 +107,6 @@ public class HashDownloader
                     Logger.Error($"Failed to download {filename}", ex);
                     errors.Add($"{filename}: {ex.Message}");
                 }
-            }
-            
-            // Download hashes.game.txt - try single file first, then split files
-            currentFile++;
-            progress?.Report(("Downloading hashes.game.txt...", currentFile, totalFiles));
-            
-            var gameHashPath = Path.Combine(hashDir, "hashes.game.txt");
-            
-            try
-            {
-                // Try downloading as a single file first
-                var singleFileUrl = BASE_URL + "hashes.game.txt";
-                try
-                {
-                    var singleResponse = await _httpClient.GetAsync(singleFileUrl);
-                    if (singleResponse.IsSuccessStatusCode)
-                    {
-                        var content = await singleResponse.Content.ReadAsByteArrayAsync();
-                        await File.WriteAllBytesAsync(gameHashPath, content);
-                        downloaded.Add("hashes.game.txt");
-                    }
-                    else
-                    {
-                        throw new Exception("Single file not found, trying split files");
-                    }
-                }
-                catch
-                {
-                    // If single file fails, try split files
-                    progress?.Report(("Downloading hashes.game.txt (part 1/2)...", currentFile, totalFiles));
-                    
-                    var part0Response = await _httpClient.GetAsync(GAME_HASH_PART_URLS[0]);
-                    part0Response.EnsureSuccessStatusCode();
-                    var part0Data = await part0Response.Content.ReadAsByteArrayAsync();
-                    
-                    progress?.Report(("Downloading hashes.game.txt (part 2/2)...", currentFile, totalFiles));
-                    
-                    var part1Response = await _httpClient.GetAsync(GAME_HASH_PART_URLS[1]);
-                    part1Response.EnsureSuccessStatusCode();
-                    var part1Data = await part1Response.Content.ReadAsByteArrayAsync();
-                    
-                    // Combine parts
-                    var combinedData = new byte[part0Data.Length + part1Data.Length];
-                    Buffer.BlockCopy(part0Data, 0, combinedData, 0, part0Data.Length);
-                    Buffer.BlockCopy(part1Data, 0, combinedData, part0Data.Length, part1Data.Length);
-                    
-                    await File.WriteAllBytesAsync(gameHashPath, combinedData);
-                    downloaded.Add("hashes.game.txt");
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Error("Failed to download hashes.game.txt", ex);
-                errors.Add($"hashes.game.txt: {ex.Message}");
             }
             
             // Check if binary format is enabled
