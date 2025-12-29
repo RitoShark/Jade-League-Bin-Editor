@@ -98,6 +98,17 @@ public partial class MainWindow : Window
                 if (Directory.Exists(hashDir))
                 {
                     BinConverter.StartPreloading(hashDir);
+                    
+                    // Add a continuation to force GC on the UI thread once background loading is finished.
+                    // This ensures the 450MB peak drops to 270MB immediately without user interaction.
+                    Task.Run(async () => {
+                        while (!HashManager.IsLoaded) await Task.Delay(500);
+                        await Dispatcher.InvokeAsync(() => {
+                            HashManager.ForceCollection();
+                            Logger.Info("HashManager: Post-load cleanup triggered on UI thread.");
+                        });
+                    });
+                    
                     Logger.Info("Started preloading hash files in background (setting enabled)");
                 }
             }
