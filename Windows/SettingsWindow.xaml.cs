@@ -513,7 +513,7 @@ public partial class SettingsWindow : Window
             
             MessageBox.Show(
                 newState 
-                    ? "Hash preloading enabled. Hashes will load at startup for instant bin conversion.\n\nIdle RAM usage: HIGH (~500MB)\n\nRestart the app to apply the changes."
+                    ? "Hash preloading enabled. Hashes will load at startup for instant bin conversion.\n\nIdle RAM usage: LOW (~90MB)\n\nRestart the app to apply the changes."
                     : "Hash preloading disabled. Hashes will load/unload per file converted which will be slower.\n\nIdle RAM usage: VERY LOW (~40MB)\n\nRestart the app to apply the changes.",
                 "Preload Hashes Setting Changed",
                 MessageBoxButton.OK,
