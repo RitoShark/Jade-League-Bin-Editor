@@ -24,6 +24,9 @@ public partial class PreferencesWindow : Window
             
             var recursiveLinked = ThemeHelper.ReadPreference("RecursiveLinkedBins", "False");
             RecursiveLinkedBinsCheckBox.IsChecked = recursiveLinked.Equals("True", StringComparison.OrdinalIgnoreCase);
+
+            var stickyScroll = ThemeHelper.ReadPreference("StickyScroll", "False");
+            StickyScrollCheckBox.IsChecked = stickyScroll.Equals("True", StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception ex)
         {
@@ -62,6 +65,29 @@ public partial class PreferencesWindow : Window
         catch (Exception ex)
         {
             Logger.Error("Failed to save RecursiveLinkedBins preference", ex);
+        }
+    }
+
+    private void OnStickyScrollChanged(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var isChecked = StickyScrollCheckBox.IsChecked ?? false;
+            ThemeHelper.WritePreference("StickyScroll", isChecked.ToString());
+            Logger.Info($"StickyScroll preference set to: {isChecked}");
+            
+            // Notify MainWindow if it's open (it should be)
+            foreach (Window window in Application.Current.Windows)
+            {
+                if (window is MainWindow main)
+                {
+                    main.UpdateStickyScrollVisibility();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Failed to save StickyScroll preference", ex);
         }
     }
 

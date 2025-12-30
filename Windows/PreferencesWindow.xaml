@@ -78,6 +78,21 @@
                                            FontSize="11" 
                                            Margin="50,3,0,0"/>
                             </StackPanel>
+
+                            <!-- Sticky Scroll Option -->
+                            <StackPanel Margin="0,0,0,20">
+                                <CheckBox x:Name="StickyScrollCheckBox" 
+                                          Content="Enable Sticky Scroll" 
+                                          FontSize="16" 
+                                          Foreground="{DynamicResource PrimaryTextBrush}"
+                                          Checked="OnStickyScrollChanged"
+                                          Unchecked="OnStickyScrollChanged"/>
+                                <TextBlock Text="Sticks the current parent context (braces) to the top of the editor while scrolling, similar to VS Code." 
+                                           TextWrapping="Wrap" 
+                                           Foreground="{DynamicResource MutedTextBrush}" 
+                                           FontSize="12" 
+                                           Margin="20,5,0,0"/>
+                            </StackPanel>
                             
 
                         </StackPanel>
