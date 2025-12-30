@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
+using Jade.Services;
 
 namespace Jade.Ritobin;
 
@@ -15,7 +17,7 @@ public static class BinConverter
         _preloadTask = HashManager.LoadAsync(hashDir);
     }
     
-    public static string ConvertBinToText(string binPath, string? hashDir = null, bool keepHashesLoaded = true)
+    public static string ConvertBinToText(string binPath, string? hashDir = null, bool keepHashesLoaded = true, bool skipGC = false)
     {
         var totalSw = Stopwatch.StartNew();
         var sw = Stopwatch.StartNew();
@@ -83,13 +85,61 @@ public static class BinConverter
         
         Console.WriteLine($"[BinConverter] TOTAL: {totalSw.ElapsedMilliseconds}ms");
         
-        // Force immediate collection of Bin object to free memory
-        // The Bin object can be ~500MB and should be freed immediately after conversion
+        if (!skipGC)
+        {
+            // Force immediate collection of Bin object to free memory
+            // The Bin object can be ~500MB and should be freed immediately after conversion
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
+        
+        return result;
+    }
+    
+    public static List<(string Path, string Content)> BatchConvertBinToText(IEnumerable<string> binPaths, string? hashDir = null, bool keepHashesLoaded = true)
+    {
+        var results = new List<(string Path, string Content)>();
+        
+        // Wait for preload to finish if it's running
+        if (_preloadTask != null && !_preloadTask.IsCompleted)
+        {
+            _preloadTask.Wait();
+        }
+        
+        bool wasLoaded = HashManager.IsLoaded;
+        if (hashDir != null && !wasLoaded)
+        {
+            HashManager.Load(hashDir);
+        }
+
+        foreach (var path in binPaths)
+        {
+            try 
+            {
+                // We pass skipGC = true here so we only collect once at the end of the batch
+                var content = ConvertBinToText(path, null, true, true);
+                results.Add((path, content));
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Batch conversion failed for {path}", ex);
+                results.Add((path, $"# Error converting file: {ex.Message}"));
+            }
+        }
+
+        // Unload hashes if user doesn't want to keep them loaded
+        if (!keepHashesLoaded && HashManager.IsLoaded)
+        {
+            HashManager.Unload();
+        }
+
+        // Final GC after the entire batch is processed
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
-        
-        return result;
+
+        return results;
     }
     
     public static byte[]? ConvertTextToBin(string textContent, out string? error, string? hashDir = null)

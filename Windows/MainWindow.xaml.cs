@@ -909,86 +909,63 @@ public partial class MainWindow : Window
             var totalOpenedCount = 0;
             var maxRecursionDepth = 3; // Limit recursion to prevent infinite loops
             var currentDepth = 0;
-            var filesAtCurrentDepth = 1;
-            var filesAtNextDepth = 0;
             
-            while (filesToProcess.Count > 0 && (currentDepth == 0 || recursiveEnabled))
+            while (filesToProcess.Count > 0 && (currentDepth <= maxRecursionDepth))
             {
-                var (fileContent, searchBasePath) = filesToProcess.Dequeue();
-                filesAtCurrentDepth--;
-                
-                // Parse linked files from content
-                var linkedFiles = LinkedBinParser.ParseLinkedFiles(fileContent);
-                if (linkedFiles.Count == 0)
+                var currentLevelFiles = new List<(string content, string basePath)>();
+                while (filesToProcess.Count > 0)
                 {
-                    continue;
+                    currentLevelFiles.Add(filesToProcess.Dequeue());
                 }
-                
-                Logger.Info($"Found {linkedFiles.Count} linked bin files at depth {currentDepth}");
-                
-                foreach (var linkedFileName in linkedFiles)
+
+                var pathsToBatch = new List<string>();
+                foreach (var (fileContent, searchBasePath) in currentLevelFiles)
                 {
-                    // Search for the file in DATA folder
-                    var foundPath = LinkedBinParser.FindBinFileInDataFolder(searchBasePath, linkedFileName);
-                    if (foundPath == null)
+                    var linkedFiles = LinkedBinParser.ParseLinkedFiles(fileContent);
+                    foreach (var linkedFileName in linkedFiles)
                     {
-                        Logger.Info($"Linked bin file not found: {linkedFileName}");
-                        continue;
+                        var foundPath = LinkedBinParser.FindBinFileInDataFolder(searchBasePath, linkedFileName);
+                        if (foundPath != null)
+                        {
+                            var normalizedPath = Path.GetFullPath(foundPath);
+                            if (!openedFilePaths.Contains(normalizedPath))
+                            {
+                                openedFilePaths.Add(normalizedPath);
+                                pathsToBatch.Add(foundPath);
+                            }
+                        }
                     }
+                }
+
+                if (pathsToBatch.Count > 0)
+                {
+                    Logger.Info($"Batch opening {pathsToBatch.Count} linked bin files at depth {currentDepth}");
+                    StatusText.Text = $"Loading {pathsToBatch.Count} linked files...";
                     
-                    var normalizedPath = Path.GetFullPath(foundPath);
+                    var results = await BatchLoadFileContentAsync(pathsToBatch);
                     
-                    // Skip if this file is already open or was already processed
-                    if (openedFilePaths.Contains(normalizedPath))
+                    foreach (var (foundPath, linkedContent) in results)
                     {
-                        Logger.Info($"Skipping already open file: {linkedFileName}");
-                        continue;
-                    }
-                    
-                    // Mark as opened to prevent duplicates
-                    openedFilePaths.Add(normalizedPath);
-                    
-                    Logger.Info($"Opening linked bin file: {foundPath}");
-                    StatusText.Text = $"Loading linked: {linkedFileName}...";
-                    
-                    try
-                    {
-                        var linkedContent = await LoadFileContentAsync(foundPath);
-                        await Task.Delay(5); // Brief delay for UI responsiveness
                         CreateNewTab(foundPath, linkedContent);
                         totalOpenedCount++;
                         
-                        // If recursive is enabled, queue this file's content for processing
+                        // If recursive is enabled, queue this file's content for next depth
                         if (recursiveEnabled && currentDepth < maxRecursionDepth)
                         {
                             var linkedBasePath = Path.GetDirectoryName(foundPath);
                             if (!string.IsNullOrEmpty(linkedBasePath))
                             {
                                 filesToProcess.Enqueue((linkedContent, linkedBasePath));
-                                filesAtNextDepth++;
                             }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        Logger.Error($"Failed to open linked file: {foundPath}", ex);
-                    }
+                    
+                    // Brief delay for UI responsiveness after level is loaded
+                    await Task.Delay(10);
                 }
-                
-                // Track recursion depth
-                if (filesAtCurrentDepth == 0 && filesAtNextDepth > 0)
-                {
-                    currentDepth++;
-                    filesAtCurrentDepth = filesAtNextDepth;
-                    filesAtNextDepth = 0;
-                    Logger.Info($"Moving to recursion depth {currentDepth}");
-                }
-                
-                // Stop if we've completed the first level and recursive is disabled
-                if (!recursiveEnabled && currentDepth > 0)
-                {
-                    break;
-                }
+
+                currentDepth++;
+                if (!recursiveEnabled) break;
             }
             
             if (totalOpenedCount > 0)
@@ -2049,6 +2026,64 @@ public partial class MainWindow : Window
                 Logger.Error($"Failed to load file: {filePath}", ex);
                 return $"# Error loading file: {ex.Message}";
             }
+        });
+    }
+
+    private async Task<List<(string Path, string Content)>> BatchLoadFileContentAsync(List<string> filePaths)
+    {
+        return await Task.Run(() =>
+        {
+            var results = new List<(string Path, string Content)>();
+            var binsToBatch = new List<string>();
+            
+            foreach (var path in filePaths)
+            {
+                try
+                {
+                    var extension = Path.GetExtension(path).ToLower();
+                    if (extension == ".bin")
+                    {
+                        // Check if .py exists, if so load it directly and don't batch
+                        var pyPath = Path.ChangeExtension(path, ".py");
+                        if (File.Exists(pyPath))
+                        {
+                            results.Add((path, File.ReadAllText(pyPath)));
+                        }
+                        else
+                        {
+                            binsToBatch.Add(path);
+                        }
+                    }
+                    else
+                    {
+                        results.Add((path, File.ReadAllText(path)));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Failed to prepare file for batch load: {path}", ex);
+                    results.Add((path, $"# Error loading file: {ex.Message}"));
+                }
+            }
+            
+            if (binsToBatch.Count > 0)
+            {
+                var jadeDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RitoShark", "Jade");
+                var hashDir = Path.Combine(jadeDir, "hashes");
+                
+                var settingsFile = Path.Combine(jadeDir, "preferences.txt");
+                bool keepHashesLoaded = false;
+                if (File.Exists(settingsFile))
+                {
+                    var content = File.ReadAllText(settingsFile);
+                    keepHashesLoaded = content.Contains("PreloadHashes=True");
+                }
+                
+                var converted = BinConverter.BatchConvertBinToText(binsToBatch, hashDir, keepHashesLoaded);
+                results.AddRange(converted);
+            }
+            
+            return results;
         });
     }
 
