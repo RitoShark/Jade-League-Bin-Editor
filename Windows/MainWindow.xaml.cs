@@ -33,6 +33,7 @@ public class EditorTab
     public Jade.Editor.ErrorHighlightRenderer? ErrorHighlightRenderer { get; set; }
     public Jade.Editor.ErrorUnderlineRenderer? ErrorUnderlineRenderer { get; set; }
     public Jade.Editor.MinimapBackgroundRenderer? MinimapRenderer { get; set; }
+    public Jade.Editor.StickyScrollControl? StickyScroll { get; set; }
     public System.Windows.Threading.DispatcherTimer? ValidationTimer { get; set; }
     public System.Windows.Threading.DispatcherTimer? FoldingTimer { get; set; }
 }
@@ -592,13 +593,17 @@ public partial class MainWindow : Window
             foldingStrategy.UpdateFoldings(foldingManager, editor.Document);
         }
 
+        // Create Sticky Scroll
+        var stickyScroll = new Jade.Editor.StickyScrollControl();
+        stickyScroll.Initialize(editor, foldingManager);
+
         tab.Editor = editor;
         tab.SearchRenderer = searchRenderer;
         tab.FoldingManager = foldingManager;
         tab.ErrorHighlightRenderer = errorHighlightRenderer;
-        tab.ErrorHighlightRenderer = errorHighlightRenderer;
         tab.ErrorUnderlineRenderer = errorUnderlineRenderer;
         tab.MinimapRenderer = minimapBackground;
+        tab.StickyScroll = stickyScroll;
         
         // Create validation timer with 500ms debounce
         var validationTimer = new System.Windows.Threading.DispatcherTimer
@@ -641,13 +646,21 @@ public partial class MainWindow : Window
 
         _tabs.Add(tab);
 
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        Grid.SetRow(stickyScroll, 0);
+        Grid.SetRow(editor, 1);
+
+        grid.Children.Add(stickyScroll);
+        grid.Children.Add(editor);
+
         var tabItem = new TabItem
         {
             Header = filePath != null ? Path.GetFileName(filePath) : "Untitled",
             ToolTip = filePath ?? "Untitled",
-            Content = editor,
-            // Background = tabBg // Removed
-
+            Content = grid
         };
 
         EditorTabControl.Items.Add(tabItem);
@@ -657,6 +670,14 @@ public partial class MainWindow : Window
         UpdateLineCount();
         UpdateCaretPosition();
         ValidateCurrentTab(tab);
+    }
+
+    public void UpdateStickyScrollVisibility(bool force = false)
+    {
+        foreach (var tab in _tabs)
+        {
+            tab.StickyScroll?.UpdateStickyLines(force);
+        }
     }
     
     // Removed UpdateTabEditorColors as it is now handled directly in ApplyTheme using resources
@@ -2223,6 +2244,8 @@ public partial class MainWindow : Window
             {
                  tab.SearchRenderer?.SetHighlightColor(_currentSearchHighlightColor);
             }
+
+            UpdateStickyScrollVisibility(true);
 
             Logger.Info($"Applied theme via ThemeManager: {theme}");
             Logger.Info($"Applied theme via ThemeManager: {theme}");
