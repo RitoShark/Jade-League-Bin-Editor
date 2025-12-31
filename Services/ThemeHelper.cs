@@ -130,4 +130,27 @@ public static class ThemeHelper
         // This eliminates duplication and makes it easier to update colors in one place
         return Jade.Windows.ThemesWindow.GetFullSyntaxColors(themeId);
     }
+
+    public static Color[] GetBracketColors(string themeId)
+    {
+        // Hardcoded bracket colors for each theme, matching the preview swatches in ThemesWindow
+        return themeId switch
+        {
+            "DarkBlue" => new[] { Color.FromRgb(255, 215, 0), Color.FromRgb(218, 112, 214), Color.FromRgb(0, 191, 255) },
+            "DarkRed" => new[] { Color.FromRgb(255, 215, 0), Color.FromRgb(255, 105, 180), Color.FromRgb(255, 140, 0) },
+            "LightPink" => new[] { Color.FromRgb(75, 0, 130), Color.FromRgb(138, 43, 226), Color.FromRgb(148, 0, 211) },
+            "PastelBlue" => new[] { Color.FromRgb(184, 134, 11), Color.FromRgb(139, 0, 139), Color.FromRgb(0, 100, 0) },
+            "ForestGreen" => new[] { Color.FromRgb(255, 215, 0), Color.FromRgb(64, 224, 208), Color.FromRgb(173, 255, 47) },
+            "AMOLED" => new[] { Color.FromRgb(255, 215, 0), Color.FromRgb(0, 255, 255), Color.FromRgb(255, 0, 255) },
+            "Void" => new[] { Color.FromRgb(255, 215, 0), Color.FromRgb(186, 85, 211), Color.FromRgb(138, 43, 226) },
+            "VioletSorrow" => new[] { Color.FromRgb(147, 112, 219), Color.FromRgb(138, 43, 226), Color.FromRgb(186, 85, 211) },
+            "HighContrast" => new[] { Color.FromRgb(255, 255, 0), Color.FromRgb(0, 255, 0), Color.FromRgb(255, 0, 0) },
+            "OrangeBurnout" => new[] { Color.FromRgb(255, 140, 0), Color.FromRgb(218, 165, 32), Color.FromRgb(255, 69, 0) },
+            "PurpleGrief" => new[] { Color.FromRgb(190, 159, 225), Color.FromRgb(225, 190, 231), Color.FromRgb(149, 117, 205) },
+            "VSCode" => new[] { Color.FromRgb(255, 215, 0), Color.FromRgb(218, 112, 214), Color.FromRgb(23, 159, 255) },
+            "StandardFlint" => new[] { Color.FromRgb(255, 215, 0), Color.FromRgb(218, 112, 214), Color.FromRgb(23, 159, 255) },
+            _ => new[] { Color.FromRgb(255, 215, 0), Color.FromRgb(218, 112, 214), Color.FromRgb(135, 206, 250) } // Default/Classic
+        };
+    }
 }
+

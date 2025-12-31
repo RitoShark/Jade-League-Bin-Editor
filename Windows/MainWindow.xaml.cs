@@ -393,11 +393,7 @@ public partial class MainWindow : Window
         // LineNumbersForeground set via SetResourceReference above
 
         // Add bracket colorizer
-        var b1 = GetColorFromResource(app, "BracketColor1", Colors.Gold);
-        var b2 = GetColorFromResource(app, "BracketColor2", Colors.Magenta);
-        var b3 = GetColorFromResource(app, "BracketColor3", Colors.Cyan);
-        
-        var bracketColors = new[] { b1, b2, b3 };
+        var bracketColors = Jade.Services.ThemeHelper.GetBracketColors(bracketTheme);
         editor.TextArea.TextView.LineTransformers.Add(new Jade.Editor.BracketColorizer(bracketColors));
 
         // Add bracket matching highlighter
@@ -2204,11 +2200,7 @@ public partial class MainWindow : Window
                     }
                     
                     // Update bracket colors
-                    var b1 = GetColorFromResource(app, "BracketColor1", Colors.Gold);
-                    var b2 = GetColorFromResource(app, "BracketColor2", Colors.Magenta);
-                    var b3 = GetColorFromResource(app, "BracketColor3", Colors.Cyan);
-                    
-                    var bracketColors = new[] { b1, b2, b3 };
+                    var bracketColors = Jade.Services.ThemeHelper.GetBracketColors(bracketTheme);
 
                     
                     // Re-apply bracket colorizer

@@ -162,12 +162,13 @@ public partial class ThemesWindow : Window
         foreach (var theme in Themes)
         {
             var syntaxColors = GetFullSyntaxColors(theme.Id);
+            var bColors = Jade.Services.ThemeHelper.GetBracketColors(theme.Id);
             BracketThemes.Add(new BracketThemeItem {
                 Id = theme.Id,
                 DisplayName = theme.DisplayName,
-                PreviewColor1 = GetBracketPreviewColor(theme.Id, 0),
-                PreviewColor2 = GetBracketPreviewColor(theme.Id, 1),
-                PreviewColor3 = GetBracketPreviewColor(theme.Id, 2),
+                PreviewColor1 = new System.Windows.Media.SolidColorBrush(bColors[0]),
+                PreviewColor2 = new System.Windows.Media.SolidColorBrush(bColors[1]),
+                PreviewColor3 = new System.Windows.Media.SolidColorBrush(bColors[2]),
                 KeywordColor = GetBrushFromHex(syntaxColors.keyword),
                 CommentColor = GetBrushFromHex(syntaxColors.comment),
                 StringColor = GetBrushFromHex(syntaxColors.stringColor),
@@ -178,9 +179,12 @@ public partial class ThemesWindow : Window
         
         // Add a High Contrast option specifically for brackets
         var hcColors = GetFullSyntaxColors("HighContrast");
+        var hcBColors = Jade.Services.ThemeHelper.GetBracketColors("HighContrast");
         BracketThemes.Add(new BracketThemeItem {
             Id = "HighContrast", DisplayName = "High Contrast",
-            PreviewColor1 = GetBrush(255, 255, 0), PreviewColor2 = GetBrush(0, 255, 0), PreviewColor3 = GetBrush(255, 0, 0),
+            PreviewColor1 = new System.Windows.Media.SolidColorBrush(hcBColors[0]), 
+            PreviewColor2 = new System.Windows.Media.SolidColorBrush(hcBColors[1]), 
+            PreviewColor3 = new System.Windows.Media.SolidColorBrush(hcBColors[2]),
             KeywordColor = GetBrushFromHex(hcColors.keyword),
             CommentColor = GetBrushFromHex(hcColors.comment),
             StringColor = GetBrushFromHex(hcColors.stringColor),
@@ -190,9 +194,12 @@ public partial class ThemesWindow : Window
 
         // Add VS Code as a standalone syntax theme
         var vscodeColors = GetFullSyntaxColors("VSCode");
+        var vscodeBColors = Jade.Services.ThemeHelper.GetBracketColors("VSCode");
         BracketThemes.Add(new BracketThemeItem {
             Id = "VSCode", DisplayName = "VS Code",
-            PreviewColor1 = GetBrush(255, 215, 0), PreviewColor2 = GetBrush(218, 112, 214), PreviewColor3 = GetBrush(23, 159, 255),
+            PreviewColor1 = new System.Windows.Media.SolidColorBrush(vscodeBColors[0]), 
+            PreviewColor2 = new System.Windows.Media.SolidColorBrush(vscodeBColors[1]), 
+            PreviewColor3 = new System.Windows.Media.SolidColorBrush(vscodeBColors[2]),
             KeywordColor = GetBrushFromHex(vscodeColors.keyword),
             CommentColor = GetBrushFromHex(vscodeColors.comment),
             StringColor = GetBrushFromHex(vscodeColors.stringColor),
@@ -202,9 +209,12 @@ public partial class ThemesWindow : Window
 
         // Add Standard Flint as a standalone syntax theme (matches Monaco ritobin theme)
         var flintColors = GetFullSyntaxColors("StandardFlint");
+        var flintBColors = Jade.Services.ThemeHelper.GetBracketColors("StandardFlint");
         BracketThemes.Add(new BracketThemeItem {
             Id = "StandardFlint", DisplayName = "Standard Flint",
-            PreviewColor1 = GetBrush(255, 215, 0), PreviewColor2 = GetBrush(218, 112, 214), PreviewColor3 = GetBrush(23, 159, 255),
+            PreviewColor1 = new System.Windows.Media.SolidColorBrush(flintBColors[0]), 
+            PreviewColor2 = new System.Windows.Media.SolidColorBrush(flintBColors[1]), 
+            PreviewColor3 = new System.Windows.Media.SolidColorBrush(flintBColors[2]),
             KeywordColor = GetBrushFromHex(flintColors.keyword),
             CommentColor = GetBrushFromHex(flintColors.comment),
             StringColor = GetBrushFromHex(flintColors.stringColor),
@@ -246,24 +256,6 @@ public partial class ThemesWindow : Window
         }
     }
 
-    private System.Windows.Media.SolidColorBrush GetBracketPreviewColor(string themeId, int index)
-    {
-        // Hardcoded preview colors for the listbox swatches based on the renderer logic
-        return themeId switch
-        {
-            "DarkBlue" => index == 0 ? GetBrush(255, 215, 0) : index == 1 ? GetBrush(218, 112, 214) : GetBrush(0, 191, 255),
-            "DarkRed" => index == 0 ? GetBrush(255, 215, 0) : index == 1 ? GetBrush(255, 105, 180) : GetBrush(255, 140, 0),
-            "LightPink" => index == 0 ? GetBrush(75, 0, 130) : index == 1 ? GetBrush(138, 43, 226) : GetBrush(148, 0, 211),
-            "PastelBlue" => index == 0 ? GetBrush(184, 134, 11) : index == 1 ? GetBrush(139, 0, 139) : GetBrush(0, 100, 0),
-            "ForestGreen" => index == 0 ? GetBrush(255, 215, 0) : index == 1 ? GetBrush(64, 224, 208) : GetBrush(173, 255, 47),
-            "AMOLED" => index == 0 ? GetBrush(255, 215, 0) : index == 1 ? GetBrush(0, 255, 255) : GetBrush(255, 0, 255),
-            "Void" => index == 0 ? GetBrush(255, 215, 0) : index == 1 ? GetBrush(186, 85, 211) : GetBrush(138, 43, 226),
-            "VioletSorrow" => index == 0 ? GetBrush(147, 112, 219) : index == 1 ? GetBrush(138, 43, 226) : GetBrush(186, 85, 211),
-            "OrangeBurnout" => index == 0 ? GetBrush(255, 140, 0) : index == 1 ? GetBrush(218, 165, 32) : GetBrush(255, 69, 0),
-            "PurpleGrief" => index == 0 ? GetBrush(190, 159, 225) : index == 1 ? GetBrush(225, 190, 231) : GetBrush(149, 117, 205),
-            _ => index == 0 ? GetBrush(255, 215, 0) : index == 1 ? GetBrush(218, 112, 214) : GetBrush(135, 206, 250) // Default/Classic
-        };
-    }
 
     private System.Windows.Media.SolidColorBrush GetBrush(byte r, byte g, byte b)
     {
