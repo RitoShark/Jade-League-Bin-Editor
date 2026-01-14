@@ -31,6 +31,9 @@ dist-ssr
 !README.md
 !LICENSE.md
 
+# Reference files
+toolkitREADME.md
+
 # Config and TODO files
 config/
 TODO.md
