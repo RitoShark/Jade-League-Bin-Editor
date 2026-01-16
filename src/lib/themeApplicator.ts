@@ -15,6 +15,39 @@ interface CustomThemeColors {
 }
 
 /**
+ * Lighten or darken a hex color
+ */
+function adjustColor(hex: string, amount: number): string {
+    // Remove # if present
+    hex = hex.replace('#', '');
+    
+    // Parse the color
+    const num = parseInt(hex, 16);
+    let r = (num >> 16) + amount;
+    let g = ((num >> 8) & 0x00FF) + amount;
+    let b = (num & 0x0000FF) + amount;
+    
+    // Clamp values
+    r = Math.max(0, Math.min(255, r));
+    g = Math.max(0, Math.min(255, g));
+    b = Math.max(0, Math.min(255, b));
+    
+    return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}
+
+/**
+ * Calculate scrollbar colors based on theme
+ */
+function calculateScrollbarColors(selectedTab: string, editorBg: string): { thumb: string; thumbHover: string } {
+    // Use selectedTab as the base for scrollbar thumb
+    // Make hover state slightly lighter
+    return {
+        thumb: selectedTab,
+        thumbHover: adjustColor(selectedTab, 30)
+    };
+}
+
+/**
  * Apply a theme to the application by updating CSS custom properties
  */
 export function applyTheme(themeId: string, customColors?: CustomThemeColors) {
@@ -30,6 +63,11 @@ export function applyTheme(themeId: string, customColors?: CustomThemeColors) {
         root.style.setProperty('--tab-bg', customColors.tabBg);
         root.style.setProperty('--selected-tab-bg', customColors.selectedTab);
 
+        // Calculate and apply scrollbar colors
+        const scrollbarColors = calculateScrollbarColors(customColors.selectedTab, customColors.editorBg);
+        root.style.setProperty('--scrollbar-thumb', scrollbarColors.thumb);
+        root.style.setProperty('--scrollbar-thumb-hover', scrollbarColors.thumbHover);
+
         // Update Monaco editor background
         updateMonacoBackground(customColors.editorBg);
     } else {
@@ -43,6 +81,11 @@ export function applyTheme(themeId: string, customColors?: CustomThemeColors) {
             root.style.setProperty('--text-color', theme.text);
             root.style.setProperty('--tab-bg', theme.tabBg);
             root.style.setProperty('--selected-tab-bg', theme.selectedTab);
+
+            // Calculate and apply scrollbar colors
+            const scrollbarColors = calculateScrollbarColors(theme.selectedTab, theme.editorBg);
+            root.style.setProperty('--scrollbar-thumb', scrollbarColors.thumb);
+            root.style.setProperty('--scrollbar-thumb-hover', scrollbarColors.thumbHover);
 
             // Update Monaco editor background
             updateMonacoBackground(theme.editorBg);

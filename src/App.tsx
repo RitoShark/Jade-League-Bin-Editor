@@ -17,6 +17,8 @@ import ThemesDialog from "./components/ThemesDialog";
 import SettingsDialog from "./components/SettingsDialog";
 import PreferencesDialog from "./components/PreferencesDialog";
 import GeneralEditPanel from "./components/GeneralEditPanel";
+import ParticleEditorPanel from "./components/ParticleEditorPanel";
+import ParticleEditorDialog from "./components/ParticleEditorDialog";
 import { findAndOpenLinkedBins, LinkedBinResult } from "./lib/linkedBinParser";
 import "./App.css";
 
@@ -41,6 +43,8 @@ function App() {
   const [findWidgetOpen, setFindWidgetOpen] = useState(false);
   const [replaceWidgetOpen, setReplaceWidgetOpen] = useState(false);
   const [generalEditPanelOpen, setGeneralEditPanelOpen] = useState(false);
+  const [particlePanelOpen, setParticlePanelOpen] = useState(false);
+  const [particleDialogOpen, setParticleDialogOpen] = useState(false);
   const [monacoInstance, setMonacoInstance] = useState<Monaco | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
   const [lineCount, setLineCount] = useState(0);
@@ -60,6 +64,10 @@ function App() {
 
   // Get the active tab
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
+  
+  // Ref to track active tab for keyboard shortcuts
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
 
   // Load custom icon and window state on mount
   useEffect(() => {
@@ -81,13 +89,38 @@ function App() {
 
     window.addEventListener('icon-changed', handleIconChange);
 
-    // Keyboard shortcut for General Edit panel (Ctrl+G) and Escape to close
+    // Keyboard shortcut for General Edit panel (Ctrl+O), Particle panel (Ctrl+Shift+P) and Escape to close
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === 'g') {
+      // Helper to check if current file is a bin file (using ref for up-to-date value)
+      const isBinFile = (): boolean => {
+        const tab = activeTabRef.current;
+        if (!tab) return false;
+        return tab.fileName.toLowerCase().endsWith('.bin');
+      };
+      
+      if (e.ctrlKey && e.key === 'o') {
         e.preventDefault();
         setGeneralEditPanelOpen(prev => !prev);
+      } else if (e.ctrlKey && e.shiftKey && e.key === 'P') {
+        e.preventDefault();
+        // Only open particle dialog if bin file is loaded
+        if (isBinFile()) {
+          setParticlePanelOpen(false);
+          setParticleDialogOpen(prev => !prev);
+        }
+      } else if (e.ctrlKey && e.key === 'p' && !e.shiftKey) {
+        e.preventDefault();
+        // Only open particle panel if bin file is loaded
+        if (isBinFile()) {
+          setFindWidgetOpen(false);
+          setReplaceWidgetOpen(false);
+          setGeneralEditPanelOpen(false);
+          setParticlePanelOpen(prev => !prev);
+        }
       } else if (e.key === 'Escape') {
         setGeneralEditPanelOpen(false);
+        setParticlePanelOpen(false);
+        setParticleDialogOpen(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -174,13 +207,22 @@ function App() {
       const maximized = await window.isMaximized();
       const fullscreen = await window.isFullscreen();
       
+      // Minimum window size constants (matching backend)
+      const MIN_WIDTH = 800;
+      const MIN_HEIGHT = 600;
+      
       // Update tracked normal dimensions only when not maximized/fullscreen
       if (!maximized && !fullscreen) {
         const size = await window.innerSize();
         const position = await window.outerPosition();
+        
+        // Enforce minimum size constraints
+        const width = Math.max(size.width, MIN_WIDTH);
+        const height = Math.max(size.height, MIN_HEIGHT);
+        
         normalWindowSize.current = {
-          width: size.width,
-          height: size.height,
+          width,
+          height,
           x: position.x,
           y: position.y
         };
@@ -214,11 +256,16 @@ function App() {
 
       console.log('Loading window state for tracking:', state);
 
+      // Minimum window size constants (matching backend)
+      const MIN_WIDTH = 800;
+      const MIN_HEIGHT = 600;
+
       if (state) {
         // Store the normal dimensions for tracking (Rust already restored the window)
+        // Enforce minimum size constraints
         normalWindowSize.current = {
-          width: state.width,
-          height: state.height,
+          width: Math.max(state.width, MIN_WIDTH),
+          height: Math.max(state.height, MIN_HEIGHT),
           x: state.x,
           y: state.y
         };
@@ -233,8 +280,8 @@ function App() {
         const size = await window.innerSize();
         const position = await window.outerPosition();
         normalWindowSize.current = {
-          width: size.width,
-          height: size.height,
+          width: Math.max(size.width, MIN_WIDTH),
+          height: Math.max(size.height, MIN_HEIGHT),
           x: position.x,
           y: position.y
         };
@@ -675,6 +722,7 @@ function App() {
       setFindWidgetOpen(false);
     } else {
       setGeneralEditPanelOpen(false);
+      setParticlePanelOpen(false);
       editorRef.current?.trigger('keyboard', 'actions.find', null);
       setFindWidgetOpen(true);
       setReplaceWidgetOpen(false);
@@ -687,6 +735,7 @@ function App() {
       setReplaceWidgetOpen(false);
     } else {
       setGeneralEditPanelOpen(false);
+      setParticlePanelOpen(false);
       editorRef.current?.trigger('keyboard', 'editor.action.startFindReplaceAction', null);
       setReplaceWidgetOpen(true);
       setFindWidgetOpen(false);
@@ -698,6 +747,7 @@ function App() {
   const handleGeneralEdit = () => {
     setFindWidgetOpen(false);
     setReplaceWidgetOpen(false);
+    setParticlePanelOpen(false);
     editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
     setGeneralEditPanelOpen(!generalEditPanelOpen);
   };
@@ -776,6 +826,42 @@ function App() {
   const handleSettings = () => setShowSettingsDialog(true);
   const handleAbout = () => setShowAboutDialog(true);
 
+  // Helper to check if current file is a bin file
+  const isBinFileOpen = (): boolean => {
+    if (!activeTab) return false;
+    const fileName = activeTab.fileName.toLowerCase();
+    return fileName.endsWith('.bin');
+  };
+
+  // Particle Editor handlers
+  const handleParticlePanel = () => {
+    // Only allow opening if a bin file is loaded
+    if (!isBinFileOpen()) return;
+    
+    setFindWidgetOpen(false);
+    setReplaceWidgetOpen(false);
+    setGeneralEditPanelOpen(false);
+    editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
+    setParticlePanelOpen(prev => !prev);
+  };
+  
+  const handleParticleEditor = () => {
+    // Only allow opening if a bin file is loaded
+    if (!isBinFileOpen()) return;
+    
+    setParticlePanelOpen(false);
+    setParticleDialogOpen(true);
+  };
+
+  // Scroll to line handler for particle editor
+  const handleScrollToLine = (line: number) => {
+    if (editorRef.current) {
+      editorRef.current.revealLineInCenter(line);
+      editorRef.current.setPosition({ lineNumber: line, column: 1 });
+      editorRef.current.focus();
+    }
+  };
+
   // Build status message
   const statusText = `${statusMessage}${activeTab?.isModified ? ' (Modified)' : ''}`;
 
@@ -791,12 +877,14 @@ function App() {
         onMinimize={handleMinimize}
         onMaximize={handleMaximize}
         onClose={handleClose}
+        onParticleEditor={handleParticleEditor}
       />
 
       <MenuBar
         findActive={findWidgetOpen}
         replaceActive={replaceWidgetOpen}
         generalEditActive={generalEditPanelOpen}
+        particlePanelActive={particlePanelOpen}
         onOpenFile={handleOpen}
         onSaveFile={handleSave}
         onSaveFileAs={handleSaveAs}
@@ -812,6 +900,7 @@ function App() {
         onCompareFiles={handleCompareFiles}
         onSelectAll={handleSelectAll}
         onGeneralEdit={handleGeneralEdit}
+        onParticlePanel={handleParticlePanel}
         onThemes={handleThemes}
         onSettings={handleSettings}
         onAbout={handleAbout}
@@ -865,6 +954,13 @@ function App() {
                 editorContent={activeTab.content}
                 onContentChange={handleGeneralEditContentChange}
               />
+              <ParticleEditorPanel
+                isOpen={particlePanelOpen}
+                onClose={() => setParticlePanelOpen(false)}
+                editorContent={activeTab.content}
+                onContentChange={handleGeneralEditContentChange}
+                onScrollToLine={handleScrollToLine}
+              />
             </>
           )}
         </div>
@@ -898,6 +994,16 @@ function App() {
         isOpen={showPreferencesDialog}
         onClose={() => setShowPreferencesDialog(false)}
       />
+
+      {activeTab && (
+        <ParticleEditorDialog
+          isOpen={particleDialogOpen}
+          onClose={() => setParticleDialogOpen(false)}
+          editorContent={activeTab.content}
+          onContentChange={handleGeneralEditContentChange}
+          onScrollToLine={handleScrollToLine}
+        />
+      )}
     </div>
   );
 }

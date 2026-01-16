@@ -30,9 +30,39 @@ pub fn run() {
                         Ok(Some(state)) => {
                             println!("[Setup] Restoring window state: {:?}", state);
                             
-                            // Set size and position
-                            let _ = window.set_size(tauri::LogicalSize::new(state.width, state.height));
-                            let _ = window.set_position(tauri::PhysicalPosition::new(state.x, state.y));
+                            // Ensure minimum window size (default is 800x600)
+                            const MIN_WIDTH: f64 = 800.0;
+                            const MIN_HEIGHT: f64 = 600.0;
+                            
+                            let width = if state.width < MIN_WIDTH {
+                                println!("[Setup] Window width {} is too small, using minimum {}", state.width, MIN_WIDTH);
+                                MIN_WIDTH
+                            } else {
+                                state.width
+                            };
+                            
+                            let height = if state.height < MIN_HEIGHT {
+                                println!("[Setup] Window height {} is too small, using minimum {}", state.height, MIN_HEIGHT);
+                                MIN_HEIGHT
+                            } else {
+                                state.height
+                            };
+                            
+                            // Validate window position - check if it's off-screen
+                            // Windows uses -32000 for minimized window positions
+                            let position_valid = state.x > -10000 && state.y > -10000 && state.x < 10000 && state.y < 10000;
+                            
+                            // Set size first
+                            let _ = window.set_size(tauri::LogicalSize::new(width, height));
+                            
+                            // Only set position if valid, otherwise let it center naturally
+                            if position_valid {
+                                let _ = window.set_position(tauri::PhysicalPosition::new(state.x, state.y));
+                            } else {
+                                println!("[Setup] Window position ({}, {}) is invalid (off-screen), using default positioning", state.x, state.y);
+                                // Center the window on screen
+                                let _ = window.center();
+                            }
                             
                             // Apply maximized or fullscreen
                             if state.fullscreen {
@@ -42,10 +72,13 @@ pub fn run() {
                             }
                         }
                         Ok(None) => {
-                            println!("[Setup] No saved window state found");
+                            println!("[Setup] No saved window state found, using defaults");
+                            // Center the window if no state exists
+                            let _ = window.center();
                         }
                         Err(e) => {
                             eprintln!("[Setup] Failed to restore window state: {}", e);
+                            let _ = window.center();
                         }
                     }
                 });

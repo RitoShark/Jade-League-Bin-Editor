@@ -11,6 +11,7 @@ interface TitleBarProps {
     onMinimize: () => void;
     onMaximize: () => void;
     onClose: () => void;
+    onParticleEditor?: () => void;
 }
 
 export default function TitleBar({
@@ -23,6 +24,7 @@ export default function TitleBar({
     onMinimize,
     onMaximize,
     onClose,
+    onParticleEditor,
 }: TitleBarProps) {
     const [currentIcon, setCurrentIcon] = useState(appIcon);
 
@@ -45,8 +47,12 @@ export default function TitleBar({
                 {/* Right: Toolbar */}
                 <div className="title-toolbar">
                     {/* Editing Tools */}
-                    <button className="toolbar-btn" title="Particle Editing Tools">
-                        ✨
+                    <button 
+                        className="toolbar-btn" 
+                        title="Particle Editor (Full Window)"
+                        onClick={() => onParticleEditor?.()}
+                    >
+                        🔮
                     </button>
 
                     <div className="toolbar-separator" />

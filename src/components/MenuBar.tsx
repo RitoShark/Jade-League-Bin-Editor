@@ -5,6 +5,7 @@ interface MenuBarProps {
     findActive?: boolean;
     replaceActive?: boolean;
     generalEditActive?: boolean;
+    particlePanelActive?: boolean;
     onOpenFile: () => void;
     onSaveFile: () => void;
     onSaveFileAs: () => void;
@@ -20,6 +21,7 @@ interface MenuBarProps {
     onCompareFiles: () => void;
     onSelectAll: () => void;
     onGeneralEdit: () => void;
+    onParticlePanel: () => void;
     onThemes: () => void;
     onSettings: () => void;
     onAbout: () => void;
@@ -31,6 +33,7 @@ export default function MenuBar({
     findActive = false,
     replaceActive = false,
     generalEditActive = false,
+    particlePanelActive = false,
     onOpenFile,
     onSaveFile,
     onSaveFileAs,
@@ -46,6 +49,7 @@ export default function MenuBar({
     onCompareFiles,
     onSelectAll,
     onGeneralEdit,
+    onParticlePanel,
     onThemes,
     onSettings,
     onAbout,
@@ -194,7 +198,11 @@ export default function MenuBar({
                     <div className="menu-dropdown">
                         <button className="menu-option" onClick={() => handleMenuClick(onGeneralEdit)}>
                             <span>General Editing...</span>
-                            <span className="shortcut">Ctrl+G</span>
+                            <span className="shortcut">Ctrl+O</span>
+                        </button>
+                        <button className="menu-option" onClick={() => handleMenuClick(onParticlePanel)}>
+                            <span>Particle Editing...</span>
+                            <span className="shortcut">Ctrl+P</span>
                         </button>
                         <div className="menu-separator" />
                         <button className="menu-option" onClick={() => handleMenuClick(onThemes)}>
@@ -231,10 +239,17 @@ export default function MenuBar({
             </button>
             <button
                 className={`menu-icon-btn ${generalEditActive ? 'active' : ''}`}
-                title="General Editing (Ctrl+G)"
+                title="General Editing (Ctrl+O)"
                 onClick={onGeneralEdit}
             >
                 ✏️
+            </button>
+            <button
+                className={`menu-icon-btn ${particlePanelActive ? 'active' : ''}`}
+                title="Particle Editing (Ctrl+P)"
+                onClick={onParticlePanel}
+            >
+                ✨
             </button>
         </div>
     );

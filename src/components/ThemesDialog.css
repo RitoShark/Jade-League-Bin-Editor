@@ -330,26 +330,36 @@
 .theme-list::-webkit-scrollbar,
 .custom-theme-editor::-webkit-scrollbar,
 .themes-dialog-content::-webkit-scrollbar {
-    width: 10px;
+    width: 8px;
 }
 
 .theme-list::-webkit-scrollbar-track,
 .custom-theme-editor::-webkit-scrollbar-track,
 .themes-dialog-content::-webkit-scrollbar-track {
-    background: #1E1E1E;
+    background: transparent;
 }
 
 .theme-list::-webkit-scrollbar-thumb,
 .custom-theme-editor::-webkit-scrollbar-thumb,
 .themes-dialog-content::-webkit-scrollbar-thumb {
-    background: #424242;
-    border-radius: 5px;
+    background-color: var(--scrollbar-thumb, #5a5a5a);
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
 }
 
 .theme-list::-webkit-scrollbar-thumb:hover,
 .custom-theme-editor::-webkit-scrollbar-thumb:hover,
 .themes-dialog-content::-webkit-scrollbar-thumb:hover {
-    background: #4E4E4E;
+    background-color: var(--scrollbar-thumb-hover, #7a7a7a);
+}
+
+/* Firefox scrollbar */
+.theme-list,
+.custom-theme-editor,
+.themes-dialog-content {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb, #5a5a5a) transparent;
 }
 
 /* Responsive adjustments */

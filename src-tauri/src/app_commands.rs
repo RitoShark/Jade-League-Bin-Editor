@@ -376,6 +376,34 @@ pub struct WindowState {
 pub async fn save_window_state(_app: tauri::AppHandle, state: WindowState) -> Result<(), String> {
     println!("[WindowState] Saving: {:?}", state);
     
+    // Ensure minimum window size (default is 800x600)
+    const MIN_WIDTH: f64 = 800.0;
+    const MIN_HEIGHT: f64 = 600.0;
+    
+    let mut validated_state = state.clone();
+    
+    if validated_state.width < MIN_WIDTH {
+        println!("[WindowState] Width {} is too small, enforcing minimum {}", validated_state.width, MIN_WIDTH);
+        validated_state.width = MIN_WIDTH;
+    }
+    
+    if validated_state.height < MIN_HEIGHT {
+        println!("[WindowState] Height {} is too small, enforcing minimum {}", validated_state.height, MIN_HEIGHT);
+        validated_state.height = MIN_HEIGHT;
+    }
+    
+    // Validate position - don't save if it's the minimized position or way off-screen
+    // Windows uses -32000 for minimized windows
+    let position_valid = validated_state.x > -10000 && validated_state.y > -10000 
+                        && validated_state.x < 10000 && validated_state.y < 10000;
+    
+    if !position_valid {
+        println!("[WindowState] Position ({}, {}) is invalid (likely minimized or off-screen), will not save this state", 
+                 validated_state.x, validated_state.y);
+        // Don't save invalid positions
+        return Ok(());
+    }
+    
     let config_dir = get_config_dir()?;
     let pref_file = config_dir.join("preferences.json");
     println!("[WindowState] Preferences file: {:?}", pref_file);
@@ -399,8 +427,8 @@ pub async fn save_window_state(_app: tauri::AppHandle, state: WindowState) -> Re
         serde_json::json!({})
     };
     
-    // Update window state
-    prefs[WINDOW_STATE_KEY] = serde_json::to_value(state.clone())
+    // Update window state with validated dimensions
+    prefs[WINDOW_STATE_KEY] = serde_json::to_value(validated_state.clone())
         .map_err(|e| format!("Failed to serialize window state: {}", e))?;
     
     // Write back atomically

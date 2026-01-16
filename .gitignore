@@ -44,6 +44,12 @@ JadeCS/
 # VS Code source (not needed)
 vscode-main/
 
+# Monaco source dump (not needed)
+monaco-editor-main/
+
+# Quartz source reference (not needed)
+Quartz-main/
+
 # All PowerShell scripts
 *.ps1
 
