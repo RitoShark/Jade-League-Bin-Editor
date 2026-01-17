@@ -12,7 +12,7 @@ interface VfxProperty<T> {
   constantValue: T;
   startLine: number;
   endLine: number;
-  rawBlock: string;
+  // rawBlock removed - was causing memory leak by storing duplicate strings
 }
 
 interface VfxEmitter {
@@ -26,7 +26,7 @@ interface VfxEmitter {
   particleLifetime?: VfxProperty<number>;
   particleLinger?: VfxProperty<number>;
   rate?: VfxProperty<number>;
-  rawContent: string;
+  // rawContent removed - was causing memory leak by storing duplicate strings
 }
 
 interface VfxSystem {
@@ -214,8 +214,7 @@ function parseEmitter(content: string, globalOffset: number): VfxEmitter {
   const emitter: VfxEmitter = {
     name,
     globalStartLine: globalOffset,
-    globalEndLine: globalOffset,
-    rawContent: content
+    globalEndLine: globalOffset
   };
 
   // Parse birthScale0: embed = ValueVector3 { constantValue: vec3 = { x, y, z } }
@@ -230,8 +229,7 @@ function parseEmitter(content: string, globalOffset: number): VfxEmitter {
           emitter.birthScale0 = {
             constantValue: { x: values[0], y: values[1], z: values[2] },
             startLine: globalOffset + i,
-            endLine: globalOffset + blockEnd,
-            rawBlock: blockContent
+            endLine: globalOffset + blockEnd
           };
         }
       }
@@ -251,8 +249,7 @@ function parseEmitter(content: string, globalOffset: number): VfxEmitter {
           emitter.scale0 = {
             constantValue: { x: values[0], y: values[1], z: values[2] },
             startLine: globalOffset + i,
-            endLine: globalOffset + blockEnd,
-            rawBlock: blockContent
+            endLine: globalOffset + blockEnd
           };
         }
       }
@@ -269,8 +266,7 @@ function parseEmitter(content: string, globalOffset: number): VfxEmitter {
         emitter.translationOverride = {
           constantValue: { x: values[0], y: values[1], z: values[2] },
           startLine: globalOffset + i,
-          endLine: globalOffset + i,
-          rawBlock: lines[i]
+          endLine: globalOffset + i
         };
       }
       break;
@@ -287,8 +283,7 @@ function parseEmitter(content: string, globalOffset: number): VfxEmitter {
         emitter.bindWeight = {
           constantValue: parseFloat(constMatch[1]),
           startLine: globalOffset + i,
-          endLine: globalOffset + blockEnd,
-          rawBlock: blockContent
+          endLine: globalOffset + blockEnd
         };
       }
       break;
@@ -305,8 +300,7 @@ function parseEmitter(content: string, globalOffset: number): VfxEmitter {
         emitter.particleLifetime = {
           constantValue: parseFloat(constMatch[1]),
           startLine: globalOffset + i,
-          endLine: globalOffset + blockEnd,
-          rawBlock: blockContent
+          endLine: globalOffset + blockEnd
         };
       }
       break;
@@ -320,8 +314,7 @@ function parseEmitter(content: string, globalOffset: number): VfxEmitter {
       emitter.particleLinger = {
         constantValue: parseFloat(match[1]),
         startLine: globalOffset + i,
-        endLine: globalOffset + i,
-        rawBlock: lines[i]
+        endLine: globalOffset + i
       };
       break;
     }
@@ -337,8 +330,7 @@ function parseEmitter(content: string, globalOffset: number): VfxEmitter {
         emitter.rate = {
           constantValue: parseFloat(constMatch[1]),
           startLine: globalOffset + i,
-          endLine: globalOffset + blockEnd,
-          rawBlock: blockContent
+          endLine: globalOffset + blockEnd
         };
       }
       break;
@@ -485,12 +477,34 @@ export default function ParticleEditorPanel({
     };
   }, []);
 
-  // Parse content when panel opens or content changes
+  // Ref to track the last parsed content hash to avoid unnecessary re-parses
+  const lastParsedContentRef = useRef<string>('');
+  const parseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Parse content when panel opens or content changes (DEBOUNCED to prevent memory leak)
   useEffect(() => {
-    if (isOpen && editorContent) {
+    if (!isOpen) return;
+    
+    // Clear any pending parse
+    if (parseTimeoutRef.current) {
+      clearTimeout(parseTimeoutRef.current);
+      parseTimeoutRef.current = null;
+    }
+
+    // Skip if content hasn't actually changed (quick check by length + first/last chars)
+    const contentKey = editorContent ? `${editorContent.length}-${editorContent.charCodeAt(0)}-${editorContent.charCodeAt(editorContent.length - 1)}` : '';
+    if (contentKey === lastParsedContentRef.current) {
+      return;
+    }
+
+    // Debounce parsing - wait 300ms after user stops typing
+    parseTimeoutRef.current = setTimeout(() => {
+      if (!editorContent) return;
+      
       try {
         const parsed = parseVfxContent(editorContent);
         setParsedData(parsed);
+        lastParsedContentRef.current = contentKey;
         
         // Keep current selection if possible
         if (selectedEmitterKey) {
@@ -515,7 +529,14 @@ export default function ParticleEditorPanel({
         }
         setParsedData(null);
       }
-    }
+    }, 300);
+
+    return () => {
+      if (parseTimeoutRef.current) {
+        clearTimeout(parseTimeoutRef.current);
+        parseTimeoutRef.current = null;
+      }
+    };
   }, [isOpen, editorContent, selectedEmitterKey]);
 
   // Navigation

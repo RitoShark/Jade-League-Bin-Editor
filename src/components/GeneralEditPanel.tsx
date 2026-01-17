@@ -166,13 +166,40 @@ export default function GeneralEditPanel({
     return '';
   }, [editorContent]);
 
-  // Load values when panel opens or content changes
+  // Ref for debouncing content parsing
+  const parseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastParsedContentRef = useRef<string>('');
+
+  // Load values when panel opens or content changes (DEBOUNCED to prevent memory leak)
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) return;
+    
+    // Clear any pending parse
+    if (parseTimeoutRef.current) {
+      clearTimeout(parseTimeoutRef.current);
+      parseTimeoutRef.current = null;
+    }
+
+    // Skip if content hasn't actually changed
+    const contentKey = editorContent ? `${editorContent.length}-${editorContent.charCodeAt(0) || 0}-${editorContent.charCodeAt(editorContent.length - 1) || 0}` : '';
+    if (contentKey === lastParsedContentRef.current) {
+      return;
+    }
+
+    // Debounce parsing - wait 300ms after content changes
+    parseTimeoutRef.current = setTimeout(() => {
       loadSkinScaleValue();
       checkMaterialOverride();
       setDefaultTexturePath(extractTexturePath());
-    }
+      lastParsedContentRef.current = contentKey;
+    }, 300);
+
+    return () => {
+      if (parseTimeoutRef.current) {
+        clearTimeout(parseTimeoutRef.current);
+        parseTimeoutRef.current = null;
+      }
+    };
   }, [isOpen, editorContent, loadSkinScaleValue, checkMaterialOverride, extractTexturePath]);
 
   // Handle percentage change

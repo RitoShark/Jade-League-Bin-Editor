@@ -61,8 +61,10 @@ function App() {
   });
 
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
-  // Ref to track Monaco editor disposables (event subscriptions) for cleanup
   const editorDisposablesRef = useRef<MonacoType.IDisposable[]>([]);
+  const mutationObserverRef = useRef<MutationObserver | null>(null);
+  const mutationSetupTimeoutRef = useRef<number | null>(null);
+  const undoCheckIntervalRef = useRef<number | null>(null);
 
   // Get the active tab
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
@@ -71,11 +73,7 @@ function App() {
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   
-  // Ref to track tabs for keyboard shortcuts
-  const tabsRef = useRef(tabs);
-  tabsRef.current = tabs;
-  
-  // Ref to track activeTabId for keyboard shortcuts
+  // Ref to track active tab ID for keyboard shortcuts
   const activeTabIdRef = useRef(activeTabId);
   activeTabIdRef.current = activeTabId;
 
@@ -104,7 +102,7 @@ function App() {
 
     window.addEventListener('icon-changed', handleIconChange);
 
-    // Keyboard shortcut for General Edit panel (Ctrl+O), Particle panel (Ctrl+Shift+P), Tab switching (Ctrl+Tab) and Escape to close
+    // Keyboard shortcut for General Edit panel (Ctrl+O), Particle panel (Ctrl+Shift+P), Tab switching (Ctrl+Tab/Ctrl+Shift+Tab) and Escape to close
     const handleKeyDown = (e: KeyboardEvent) => {
       // Helper to check if current file is a bin file (using ref for up-to-date value)
       const isBinFile = (): boolean => {
@@ -113,36 +111,49 @@ function App() {
         return tab.fileName.toLowerCase().endsWith('.bin');
       };
       
-      // Handle Ctrl+Tab to switch between tabs
-      if (e.ctrlKey && e.key === 'Tab' && !e.altKey) {
+      // Tab switching shortcuts
+      if (e.ctrlKey && e.key === 'Tab' && !e.shiftKey) {
         e.preventDefault();
-        const currentTabs = tabsRef.current;
-        const currentActiveTabId = activeTabIdRef.current;
-        
-        if (currentTabs.length <= 1) {
-          return; // No need to switch if there's only one or no tabs
+        // Save current view state before switching
+        if (editorRef.current && activeTabIdRef.current) {
+          const viewState = editorRef.current.saveViewState();
+          const content = editorRef.current.getValue();
+          viewStatesRef.current.set(activeTabIdRef.current, { viewState });
+          // Sync content to state
+          setTabs(prev => prev.map(t => 
+            t.id === activeTabIdRef.current ? { ...t, content } : t
+          ));
         }
-        
-        const currentIndex = currentTabs.findIndex(t => t.id === currentActiveTabId);
-        let nextIndex: number;
-        
-        if (e.shiftKey) {
-          // Ctrl+Shift+Tab: switch to previous tab (cycle backward)
-          nextIndex = currentIndex <= 0 ? currentTabs.length - 1 : currentIndex - 1;
-        } else {
-          // Ctrl+Tab: switch to next tab (cycle forward)
-          nextIndex = currentIndex >= currentTabs.length - 1 ? 0 : currentIndex + 1;
+        // Switch to next tab
+        setTabs(currentTabs => {
+          if (currentTabs.length <= 1) return currentTabs; // No need to switch if 0 or 1 tab
+          
+          const currentIndex = currentTabs.findIndex(t => t.id === activeTabIdRef.current);
+          const nextIndex = currentIndex < currentTabs.length - 1 ? currentIndex + 1 : 0;
+          setActiveTabId(currentTabs[nextIndex].id);
+          return currentTabs;
+        });
+      } else if (e.ctrlKey && e.shiftKey && e.key === 'Tab') {
+        e.preventDefault();
+        // Save current view state before switching
+        if (editorRef.current && activeTabIdRef.current) {
+          const viewState = editorRef.current.saveViewState();
+          const content = editorRef.current.getValue();
+          viewStatesRef.current.set(activeTabIdRef.current, { viewState });
+          // Sync content to state
+          setTabs(prev => prev.map(t => 
+            t.id === activeTabIdRef.current ? { ...t, content } : t
+          ));
         }
-        
-        const nextTab = currentTabs[nextIndex];
-        if (nextTab) {
-          // Save current editor view state before switching tabs
-          if (editorRef.current && currentActiveTabId) {
-            const viewState = editorRef.current.saveViewState();
-            viewStatesRef.current.set(currentActiveTabId, { viewState });
-          }
-          setActiveTabId(nextTab.id);
-        }
+        // Switch to previous tab
+        setTabs(currentTabs => {
+          if (currentTabs.length <= 1) return currentTabs; // No need to switch if 0 or 1 tab
+          
+          const currentIndex = currentTabs.findIndex(t => t.id === activeTabIdRef.current);
+          const prevIndex = currentIndex > 0 ? currentIndex - 1 : currentTabs.length - 1;
+          setActiveTabId(currentTabs[prevIndex].id);
+          return currentTabs;
+        });
       } else if (e.ctrlKey && e.key === 'o') {
         e.preventDefault();
         setGeneralEditPanelOpen(prev => !prev);
@@ -518,7 +529,7 @@ function App() {
       setStatusMessage(`Opening ${getFileName(filePath)}...`);
       statusMessageRef.current = `Opening ${getFileName(filePath)}...`;
       
-      const existingTab = tabs.find(t => t.path && t.path.toLowerCase() === filePath.toLowerCase());
+      const existingTab = tabs.find(t => t.filePath && t.filePath.toLowerCase() === filePath.toLowerCase());
       if (existingTab) {
         setActiveTabId(existingTab.id);
         setStatusMessage(`Switched to ${getFileName(filePath)}`);
@@ -563,7 +574,12 @@ function App() {
   const saveCurrentViewState = useCallback(() => {
     if (editorRef.current && activeTabId) {
       const viewState = editorRef.current.saveViewState();
+      const content = editorRef.current.getValue(); // Get current content
       viewStatesRef.current.set(activeTabId, { viewState });
+      // Sync content to state only when switching tabs (for inactive tabs)
+      setTabs(prev => prev.map(t => 
+        t.id === activeTabId ? { ...t, content } : t
+      ));
     }
   }, [activeTabId]);
 
@@ -597,11 +613,45 @@ function App() {
       }
     }
 
+    // If this was the active tab's model, clear undo stack before closing
+    if (editorRef.current && tabId === activeTabId) {
+      const model = editorRef.current.getModel();
+      if (model) {
+        // Push a stack element to clear undo groupings
+        model.pushStackElement();
+      }
+    }
+
     // Remove view state
     viewStatesRef.current.delete(tabId);
 
     setTabs(prevTabs => {
       const newTabs = prevTabs.filter(t => t.id !== tabId);
+      
+      // Dispose orphaned Monaco models for closed tabs
+      // Import monaco-editor to access getModels
+      import('monaco-editor').then(monaco => {
+        monaco.editor.getModels().forEach(model => {
+          const uri = model.uri.toString();
+          // Check if this model corresponds to a closed tab
+          const tabStillExists = newTabs.some(t => {
+            // Match by file path or tab ID
+            if (t.filePath) {
+              // Convert file path to URI format for comparison
+              const fileUri = `file:///${t.filePath.replace(/\\/g, '/')}`;
+              return uri === fileUri || uri.includes(t.filePath);
+            }
+            return false;
+          });
+          if (!tabStillExists) {
+            try {
+              model.dispose();
+            } catch (error) {
+              console.warn('Error disposing Monaco model:', error);
+            }
+          }
+        });
+      });
       
       // If closing the active tab, switch to another or clear active
       if (tabId === activeTabId) {
@@ -640,14 +690,6 @@ function App() {
     );
   }, []);
 
-  // Update tab content
-  const updateTabContent = useCallback((tabId: string, content: string, isModified: boolean = true) => {
-    setTabs(prevTabs =>
-      prevTabs.map(t =>
-        t.id === tabId ? { ...t, content, isModified } : t
-      )
-    );
-  }, []);
 
   // Add a new tab
   const addTab = useCallback((filePath: string | null, content: string): EditorTab => {
@@ -682,111 +724,173 @@ function App() {
   };
 
   const handleEditorMount = (editor: MonacoType.editor.IStandaloneCodeEditor) => {
-    // Clean up previous editor subscriptions before setting up new ones
+    // Clean up any previous subscriptions before creating new ones
     editorDisposablesRef.current.forEach(disposable => {
       try {
         disposable.dispose();
       } catch (error) {
-        console.warn('Error disposing editor subscription:', error);
+        console.warn('Error disposing previous subscription:', error);
       }
     });
     editorDisposablesRef.current = [];
+    
+    // Disconnect previous MutationObserver if it exists
+    if (mutationObserverRef.current) {
+      mutationObserverRef.current.disconnect();
+      mutationObserverRef.current = null;
+    }
+
+    // Clear any pending mutation setup timeout
+    if (mutationSetupTimeoutRef.current) {
+      clearTimeout(mutationSetupTimeoutRef.current);
+      mutationSetupTimeoutRef.current = null;
+    }
+
+    // Clear any existing undo check interval
+    if (undoCheckIntervalRef.current) {
+      clearInterval(undoCheckIntervalRef.current);
+      undoCheckIntervalRef.current = null;
+    }
 
     editorRef.current = editor;
 
-    // Update caret position on cursor change - store disposable for cleanup
-    const cursorDisposable = editor.onDidChangeCursorPosition((e) => {
-      setCaretPosition({ line: e.position.lineNumber, column: e.position.column });
-    });
-    editorDisposablesRef.current.push(cursorDisposable);
-
-    // Set initial line count when model loads
-    // Note: Line count updates are handled by handleEditorChange via onChange prop
-    // We don't subscribe to model.onDidChangeContent() to avoid memory leaks,
-    // as models persist across editor remounts and subscriptions would accumulate
+    // Configure model to limit undo stack memory
     const model = editor.getModel();
     if (model) {
       setLineCount(model.getLineCount());
+      // Set model options to help reduce memory usage
+      model.updateOptions({
+        tabSize: 2,
+        insertSpaces: true,
+      });
     }
+
+    // Update caret position on cursor change - DEBOUNCED to prevent re-render spam
+    const caretUpdateTimeoutRef = { current: null as ReturnType<typeof setTimeout> | null };
+    const cursorDisposable = editor.onDidChangeCursorPosition((e) => {
+      // Debounce cursor updates to 100ms to avoid re-rendering on every keystroke
+      if (caretUpdateTimeoutRef.current) {
+        clearTimeout(caretUpdateTimeoutRef.current);
+      }
+      caretUpdateTimeoutRef.current = setTimeout(() => {
+        setCaretPosition({ line: e.position.lineNumber, column: e.position.column });
+        caretUpdateTimeoutRef.current = null;
+      }, 100);
+    });
+    editorDisposablesRef.current.push(cursorDisposable);
+    editorDisposablesRef.current.push({ 
+      dispose: () => { 
+        if (caretUpdateTimeoutRef.current) clearTimeout(caretUpdateTimeoutRef.current); 
+      } 
+    });
 
     // Restore view state for active tab
     if (activeTabId) {
       setTimeout(() => restoreViewState(activeTabId), 0);
     }
+
+    // Periodic undo stack trimming to prevent memory bloat
+    // Monaco doesn't expose direct undo stack access, but we can segment it periodically
+    undoCheckIntervalRef.current = setInterval(() => {
+      const currentModel = editorRef.current?.getModel();
+      if (currentModel) {
+        // Push a stack element periodically to segment the undo stack
+        // This prevents undo operations from spanning too much content
+        currentModel.pushStackElement();
+      }
+    }, 30000) as unknown as number; // Every 30 seconds
+
+    // Watch for find widget visibility - STORE THE OBSERVER
+    mutationSetupTimeoutRef.current = setTimeout(() => {
+      const editorElement = editor.getDomNode();
+      if (editorElement) {
+        mutationObserverRef.current = new MutationObserver(() => {
+          const findWidget = editorElement.querySelector('.find-widget');
+          if (findWidget) {
+            const isHidden = findWidget.classList.contains('hidden') ||
+              findWidget.getAttribute('aria-hidden') === 'true' ||
+              (findWidget as HTMLElement).style.display === 'none';
+
+            const isVisible = !isHidden;
+            const isReplace = findWidget.classList.contains('replaceToggled');
+
+            if (isVisible) {
+              setFindWidgetOpen(!isReplace);
+              setReplaceWidgetOpen(isReplace);
+            } else {
+              setFindWidgetOpen(false);
+              setReplaceWidgetOpen(false);
+            }
+          } else {
+            setFindWidgetOpen(false);
+            setReplaceWidgetOpen(false);
+          }
+        });
+
+        mutationObserverRef.current.observe(editorElement, {
+          attributes: true,
+          childList: true,
+          subtree: true,
+          attributeFilter: ['class', 'style', 'aria-hidden']
+        });
+      }
+      mutationSetupTimeoutRef.current = null;
+    }, 500) as unknown as number;
   };
 
-  // Clean up editor subscriptions when tab changes or component unmounts
+  // Cleanup subscriptions when tab changes or component unmounts
   useEffect(() => {
-    // This effect runs when activeTabId changes (which triggers editor remount)
-    // and on component unmount
     return () => {
       // Clean up all editor subscriptions
       editorDisposablesRef.current.forEach(disposable => {
         try {
           disposable.dispose();
         } catch (error) {
-          console.warn('Error disposing editor subscription during cleanup:', error);
+          console.warn('Error disposing subscription on cleanup:', error);
         }
       });
       editorDisposablesRef.current = [];
-    };
-  }, [activeTabId]); // Clean up when tab changes (editor remounts)
+      
+      // Disconnect MutationObserver
+      if (mutationObserverRef.current) {
+        mutationObserverRef.current.disconnect();
+        mutationObserverRef.current = null;
+      }
 
-  // Watch for find widget visibility with proper cleanup
+      // Clear mutation setup timeout
+      if (mutationSetupTimeoutRef.current) {
+        clearTimeout(mutationSetupTimeoutRef.current);
+        mutationSetupTimeoutRef.current = null;
+      }
+
+      // Clear undo check interval
+      if (undoCheckIntervalRef.current) {
+        clearInterval(undoCheckIntervalRef.current);
+        undoCheckIntervalRef.current = null;
+      }
+    };
+  }, [activeTabId]); // Run cleanup when tab changes
+
+  // Ref to track if tab was already modified (to skip unnecessary state updates)
+  const wasModifiedRef = useRef(false);
+
+  // Reset wasModified ref when active tab changes
   useEffect(() => {
-    let observer: MutationObserver | null = null;
-    let timeoutId: number | null = null;
-
-    if (editorRef.current) {
-      timeoutId = window.setTimeout(() => {
-        const editorElement = editorRef.current?.getDomNode();
-        if (editorElement) {
-          observer = new MutationObserver(() => {
-            const findWidget = editorElement.querySelector('.find-widget');
-            if (findWidget) {
-              const isHidden = findWidget.classList.contains('hidden') ||
-                findWidget.getAttribute('aria-hidden') === 'true' ||
-                (findWidget as HTMLElement).style.display === 'none';
-
-              const isVisible = !isHidden;
-              const isReplace = findWidget.classList.contains('replaceToggled');
-
-              if (isVisible) {
-                setFindWidgetOpen(!isReplace);
-                setReplaceWidgetOpen(isReplace);
-              } else {
-                setFindWidgetOpen(false);
-                setReplaceWidgetOpen(false);
-              }
-            } else {
-              setFindWidgetOpen(false);
-              setReplaceWidgetOpen(false);
-            }
-          });
-
-          observer.observe(editorElement, {
-            attributes: true,
-            childList: true,
-            subtree: true,
-            attributeFilter: ['class', 'style', 'aria-hidden']
-          });
-        }
-      }, 500);
-    }
-
-    return () => {
-      if (observer) {
-        observer.disconnect();
-      }
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, [activeTabId]); // Re-run when tab changes
+    wasModifiedRef.current = activeTab?.isModified || false;
+  }, [activeTabId, activeTab?.isModified]);
 
   const handleEditorChange = (value: string | undefined) => {
     if (value !== undefined && activeTabId) {
-      updateTabContent(activeTabId, value, true);
+      // Only update state if tab wasn't already marked modified (prevents re-render spam)
+      if (!wasModifiedRef.current) {
+        wasModifiedRef.current = true;
+        setTabs(prevTabs =>
+          prevTabs.map(t =>
+            t.id === activeTabId ? { ...t, isModified: true } : t
+          )
+        );
+      }
+      // Update line count (lightweight, no re-render if unchanged)
       const model = editorRef.current?.getModel();
       if (model) {
         setLineCount(model.getLineCount());
@@ -884,7 +988,9 @@ function App() {
       // Block hash status updates while saving
       allowHashStatusUpdateRef.current = false;
       if (activeTab.filePath) {
-        await saveBinFile(activeTab.filePath, activeTab.content);
+        // Read content from editor for active tab, or from state for inactive tabs
+        const content = editorRef.current?.getValue() || activeTab.content;
+        await saveBinFile(activeTab.filePath, content);
         setTabs(prevTabs =>
           prevTabs.map(t =>
             t.id === activeTabId ? { ...t, isModified: false } : t
@@ -916,7 +1022,9 @@ function App() {
     try {
       // Block hash status updates while saving
       allowHashStatusUpdateRef.current = false;
-      const newPath = await saveBinFileAs(activeTab.content);
+      // Read content from editor for active tab, or from state for inactive tabs
+      const content = editorRef.current?.getValue() || activeTab.content;
+      const newPath = await saveBinFileAs(content);
       if (newPath) {
         setTabs(prevTabs =>
           prevTabs.map(t =>
@@ -1029,10 +1137,8 @@ function App() {
         // Get current selections to preserve cursor position on undo
         const selections = editor.getSelections() || [];
         
-        // Push a stack element to create a new undo stop (prevents merging with previous edits)
-        model.pushStackElement();
-        
         // Use pushEditOperations for proper undo stack with cursor restoration
+        // Only push stack element AFTER the edit (not before)
         model.pushEditOperations(
           selections,
           [{
@@ -1047,11 +1153,15 @@ function App() {
           () => selections // Return same selections for undo
         );
         
-        // Push another stack element to close this undo group
+        // Push stack element AFTER the edit (only once)
         model.pushStackElement();
         
-        // Update tab content state
-        updateTabContent(activeTabId, newContent, true);
+        // Update tab content state (mark as modified, content will be synced on tab switch)
+        setTabs(prevTabs =>
+          prevTabs.map(t =>
+            t.id === activeTabId ? { ...t, isModified: true } : t
+          )
+        );
       }
     }
   };
@@ -1183,22 +1293,31 @@ function App() {
                     autoFindInSelection: 'never',
                     seedSearchStringFromSelection: 'always',
                   },
+                  // Memory optimization options
+                  ...({
+                    "bracketPairColorization.enabled": false, // reduces memory
+                    "suggest.maxVisibleSuggestions": 5,
+                  } as any),
                 }}
               />
-              <GeneralEditPanel
-                isOpen={generalEditPanelOpen}
-                onClose={() => setGeneralEditPanelOpen(false)}
-                editorContent={activeTab.content}
-                onContentChange={handleGeneralEditContentChange}
-              />
-              <ParticleEditorPanel
-                isOpen={particlePanelOpen}
-                onClose={() => setParticlePanelOpen(false)}
-                editorContent={activeTab.content}
-                onContentChange={handleGeneralEditContentChange}
-                onScrollToLine={handleScrollToLine}
-                onStatusUpdate={setStatusMessage}
-              />
+              {generalEditPanelOpen && (
+                <GeneralEditPanel
+                  isOpen={generalEditPanelOpen}
+                  onClose={() => setGeneralEditPanelOpen(false)}
+                  editorContent={editorRef.current?.getValue() || activeTab.content}
+                  onContentChange={handleGeneralEditContentChange}
+                />
+              )}
+              {particlePanelOpen && (
+                <ParticleEditorPanel
+                  isOpen={particlePanelOpen}
+                  onClose={() => setParticlePanelOpen(false)}
+                  editorContent={editorRef.current?.getValue() || activeTab.content}
+                  onContentChange={handleGeneralEditContentChange}
+                  onScrollToLine={handleScrollToLine}
+                  onStatusUpdate={setStatusMessage}
+                />
+              )}
             </>
           )}
         </div>
@@ -1233,11 +1352,11 @@ function App() {
         onClose={() => setShowPreferencesDialog(false)}
       />
 
-      {activeTab && (
+      {activeTab && particleDialogOpen && (
         <ParticleEditorDialog
           isOpen={particleDialogOpen}
           onClose={() => setParticleDialogOpen(false)}
-          editorContent={activeTab.content}
+          editorContent={editorRef.current?.getValue() || activeTab.content}
           onContentChange={handleGeneralEditContentChange}
           onScrollToLine={handleScrollToLine}
           onStatusUpdate={setStatusMessage}
