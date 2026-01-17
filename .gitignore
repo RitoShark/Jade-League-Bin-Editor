@@ -41,6 +41,18 @@ TODO.md
 # Old C# implementation
 JadeCS/
 
+# C# Jade files (root level)
+App.xaml
+App.xaml.cs
+Jade.csproj
+Jade.sln
+Core/
+Editor/
+Ritobin/
+Services/
+Themes/
+Windows/
+
 # VS Code source (not needed)
 vscode-main/
 

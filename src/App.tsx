@@ -61,6 +61,8 @@ function App() {
   });
 
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
+  // Ref to track Monaco editor disposables (event subscriptions) for cleanup
+  const editorDisposablesRef = useRef<MonacoType.IDisposable[]>([]);
 
   // Get the active tab
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
@@ -68,6 +70,14 @@ function App() {
   // Ref to track active tab for keyboard shortcuts
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
+  
+  // Ref to track tabs for keyboard shortcuts
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  
+  // Ref to track activeTabId for keyboard shortcuts
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
 
   // Ref to track if we should allow hash preload status updates
   // This prevents hash preload status from overriding important messages like "Opened file"
@@ -94,7 +104,7 @@ function App() {
 
     window.addEventListener('icon-changed', handleIconChange);
 
-    // Keyboard shortcut for General Edit panel (Ctrl+O), Particle panel (Ctrl+Shift+P) and Escape to close
+    // Keyboard shortcut for General Edit panel (Ctrl+O), Particle panel (Ctrl+Shift+P), Tab switching (Ctrl+Tab) and Escape to close
     const handleKeyDown = (e: KeyboardEvent) => {
       // Helper to check if current file is a bin file (using ref for up-to-date value)
       const isBinFile = (): boolean => {
@@ -103,7 +113,37 @@ function App() {
         return tab.fileName.toLowerCase().endsWith('.bin');
       };
       
-      if (e.ctrlKey && e.key === 'o') {
+      // Handle Ctrl+Tab to switch between tabs
+      if (e.ctrlKey && e.key === 'Tab' && !e.altKey) {
+        e.preventDefault();
+        const currentTabs = tabsRef.current;
+        const currentActiveTabId = activeTabIdRef.current;
+        
+        if (currentTabs.length <= 1) {
+          return; // No need to switch if there's only one or no tabs
+        }
+        
+        const currentIndex = currentTabs.findIndex(t => t.id === currentActiveTabId);
+        let nextIndex: number;
+        
+        if (e.shiftKey) {
+          // Ctrl+Shift+Tab: switch to previous tab (cycle backward)
+          nextIndex = currentIndex <= 0 ? currentTabs.length - 1 : currentIndex - 1;
+        } else {
+          // Ctrl+Tab: switch to next tab (cycle forward)
+          nextIndex = currentIndex >= currentTabs.length - 1 ? 0 : currentIndex + 1;
+        }
+        
+        const nextTab = currentTabs[nextIndex];
+        if (nextTab) {
+          // Save current editor view state before switching tabs
+          if (editorRef.current && currentActiveTabId) {
+            const viewState = editorRef.current.saveViewState();
+            viewStatesRef.current.set(currentActiveTabId, { viewState });
+          }
+          setActiveTabId(nextTab.id);
+        }
+      } else if (e.ctrlKey && e.key === 'o') {
         e.preventDefault();
         setGeneralEditPanelOpen(prev => !prev);
       } else if (e.ctrlKey && e.shiftKey && e.key === 'P') {
@@ -642,14 +682,28 @@ function App() {
   };
 
   const handleEditorMount = (editor: MonacoType.editor.IStandaloneCodeEditor) => {
+    // Clean up previous editor subscriptions before setting up new ones
+    editorDisposablesRef.current.forEach(disposable => {
+      try {
+        disposable.dispose();
+      } catch (error) {
+        console.warn('Error disposing editor subscription:', error);
+      }
+    });
+    editorDisposablesRef.current = [];
+
     editorRef.current = editor;
 
-    // Update caret position on cursor change
-    editor.onDidChangeCursorPosition((e) => {
+    // Update caret position on cursor change - store disposable for cleanup
+    const cursorDisposable = editor.onDidChangeCursorPosition((e) => {
       setCaretPosition({ line: e.position.lineNumber, column: e.position.column });
     });
+    editorDisposablesRef.current.push(cursorDisposable);
 
-    // Update line count when model changes
+    // Set initial line count when model loads
+    // Note: Line count updates are handled by handleEditorChange via onChange prop
+    // We don't subscribe to model.onDidChangeContent() to avoid memory leaks,
+    // as models persist across editor remounts and subscriptions would accumulate
     const model = editor.getModel();
     if (model) {
       setLineCount(model.getLineCount());
@@ -659,43 +713,76 @@ function App() {
     if (activeTabId) {
       setTimeout(() => restoreViewState(activeTabId), 0);
     }
+  };
 
-    // Watch for find widget visibility
-    setTimeout(() => {
-      const editorElement = editor.getDomNode();
-      if (editorElement) {
-        const observer = new MutationObserver(() => {
-          const findWidget = editorElement.querySelector('.find-widget');
-          if (findWidget) {
-            const isHidden = findWidget.classList.contains('hidden') ||
-              findWidget.getAttribute('aria-hidden') === 'true' ||
-              (findWidget as HTMLElement).style.display === 'none';
+  // Clean up editor subscriptions when tab changes or component unmounts
+  useEffect(() => {
+    // This effect runs when activeTabId changes (which triggers editor remount)
+    // and on component unmount
+    return () => {
+      // Clean up all editor subscriptions
+      editorDisposablesRef.current.forEach(disposable => {
+        try {
+          disposable.dispose();
+        } catch (error) {
+          console.warn('Error disposing editor subscription during cleanup:', error);
+        }
+      });
+      editorDisposablesRef.current = [];
+    };
+  }, [activeTabId]); // Clean up when tab changes (editor remounts)
 
-            const isVisible = !isHidden;
-            const isReplace = findWidget.classList.contains('replaceToggled');
+  // Watch for find widget visibility with proper cleanup
+  useEffect(() => {
+    let observer: MutationObserver | null = null;
+    let timeoutId: number | null = null;
 
-            if (isVisible) {
-              setFindWidgetOpen(!isReplace);
-              setReplaceWidgetOpen(isReplace);
+    if (editorRef.current) {
+      timeoutId = window.setTimeout(() => {
+        const editorElement = editorRef.current?.getDomNode();
+        if (editorElement) {
+          observer = new MutationObserver(() => {
+            const findWidget = editorElement.querySelector('.find-widget');
+            if (findWidget) {
+              const isHidden = findWidget.classList.contains('hidden') ||
+                findWidget.getAttribute('aria-hidden') === 'true' ||
+                (findWidget as HTMLElement).style.display === 'none';
+
+              const isVisible = !isHidden;
+              const isReplace = findWidget.classList.contains('replaceToggled');
+
+              if (isVisible) {
+                setFindWidgetOpen(!isReplace);
+                setReplaceWidgetOpen(isReplace);
+              } else {
+                setFindWidgetOpen(false);
+                setReplaceWidgetOpen(false);
+              }
             } else {
               setFindWidgetOpen(false);
               setReplaceWidgetOpen(false);
             }
-          } else {
-            setFindWidgetOpen(false);
-            setReplaceWidgetOpen(false);
-          }
-        });
+          });
 
-        observer.observe(editorElement, {
-          attributes: true,
-          childList: true,
-          subtree: true,
-          attributeFilter: ['class', 'style', 'aria-hidden']
-        });
+          observer.observe(editorElement, {
+            attributes: true,
+            childList: true,
+            subtree: true,
+            attributeFilter: ['class', 'style', 'aria-hidden']
+          });
+        }
+      }, 500);
+    }
+
+    return () => {
+      if (observer) {
+        observer.disconnect();
       }
-    }, 500);
-  };
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [activeTabId]); // Re-run when tab changes
 
   const handleEditorChange = (value: string | undefined) => {
     if (value !== undefined && activeTabId) {
