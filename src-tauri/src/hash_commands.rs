@@ -1,10 +1,10 @@
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use byteorder::{WriteBytesExt, LittleEndian};
 use std::io::Write;
-use crate::ritobin::hashes;
+use crate::core::hash::get_ritoshark_hash_dir;
+use crate::core::bin::get_cached_bin_hashes;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HashStatus {
@@ -33,13 +33,8 @@ const HASH_FILES: &[&str] = &[
 const BASE_URL: &str = "https://raw.githubusercontent.com/CommunityDragon/Data/master/hashes/lol/";
 
 fn get_hash_dir() -> Result<PathBuf, String> {
-    let appdata = env::var("APPDATA").map_err(|e| format!("Failed to get APPDATA: {}", e))?;
-    let path = PathBuf::from(appdata).join("RitoShark").join("Jade").join("hashes");
-    
-    if !path.exists() {
-        fs::create_dir_all(&path).map_err(|e| format!("Failed to create hash dir: {}", e))?;
-    }
-    Ok(path)
+    // Use the RitoShark shared hash directory
+    get_ritoshark_hash_dir().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -184,74 +179,43 @@ fn write_string(writer: &mut impl Write, value: &str) -> std::io::Result<()> {
 }
 
 /// Preload hashes into RAM for instant bin file conversion
-/// This should be called in the background on app startup
+/// This uses the cached hash provider from ltk_bridge
 #[tauri::command]
 pub async fn preload_hashes() -> Result<PreloadStatus, String> {
-    let hash_dir = get_hash_dir()?;
+    // Trigger cache initialization by accessing it
+    let hashes = get_cached_bin_hashes().read();
+    let total = hashes.total_count();
     
-    // Check if already loaded
-    if hashes::are_hashes_preloaded() {
-        let (fnv_count, xxh_count, memory_bytes) = hashes::get_hash_stats();
-        return Ok(PreloadStatus {
-            loaded: true,
-            loading: false,
-            fnv_count,
-            xxh_count,
-            memory_bytes,
-        });
-    }
-    
-    // Check if currently loading
-    if hashes::are_hashes_loading() {
-        return Ok(PreloadStatus {
-            loaded: false,
-            loading: true,
-            fnv_count: 0,
-            xxh_count: 0,
-            memory_bytes: 0,
-        });
-    }
-    
-    // Run preload in a blocking task (since it's CPU-bound)
-    let result = tokio::task::spawn_blocking(move || {
-        hashes::preload_hashes(hash_dir)
-    }).await.map_err(|e| format!("Task error: {}", e))?;
-    
-    match result {
-        Ok((fnv_count, xxh_count)) => {
-            let (_, _, memory_bytes) = hashes::get_hash_stats();
-            Ok(PreloadStatus {
-                loaded: true,
-                loading: false,
-                fnv_count,
-                xxh_count,
-                memory_bytes,
-            })
-        }
-        Err(e) => Err(e)
-    }
+    Ok(PreloadStatus {
+        loaded: true,
+        loading: false,
+        fnv_count: total,  // Combined count since ltk_ritobin uses different structure
+        xxh_count: 0,
+        memory_bytes: total * 64, // Estimate
+    })
 }
 
 /// Check if hashes are preloaded
 #[tauri::command]
 pub async fn get_preload_status() -> PreloadStatus {
-    let loaded = hashes::are_hashes_preloaded();
-    let loading = hashes::are_hashes_loading();
-    let (fnv_count, xxh_count, memory_bytes) = hashes::get_hash_stats();
+    let hashes = get_cached_bin_hashes().read();
+    let total = hashes.total_count();
     
     PreloadStatus {
-        loaded,
-        loading,
-        fnv_count,
-        xxh_count,
-        memory_bytes,
+        loaded: total > 0,
+        loading: false,
+        fnv_count: total,
+        xxh_count: 0,
+        memory_bytes: total * 64,
     }
 }
 
 /// Unload preloaded hashes from memory
+/// Note: With OnceLock cache, hashes can't be truly unloaded without restart
 #[tauri::command]
 pub async fn unload_hashes() -> Result<(), String> {
-    hashes::unload_hashes();
+    // OnceLock doesn't support unloading - just return success
+    println!("[HashCommands] Note: Hashes are cached globally and cannot be unloaded without restart");
     Ok(())
 }
 

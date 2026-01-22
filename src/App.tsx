@@ -68,11 +68,11 @@ function App() {
 
   // Get the active tab
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
-  
+
   // Ref to track active tab for keyboard shortcuts
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
-  
+
   // Ref to track active tab ID for keyboard shortcuts
   const activeTabIdRef = useRef(activeTabId);
   activeTabIdRef.current = activeTabId;
@@ -110,7 +110,61 @@ function App() {
         if (!tab) return false;
         return tab.fileName.toLowerCase().endsWith('.bin');
       };
-      
+
+      // Ctrl+S - Save file
+      if (e.ctrlKey && e.key === 's' && !e.shiftKey) {
+        e.preventDefault();
+        // Trigger save - handleSave is defined elsewhere, use a custom event
+        window.dispatchEvent(new CustomEvent('app-save'));
+        return;
+      }
+
+      // Ctrl+Shift+S - Save As
+      if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('app-save-as'));
+        return;
+      }
+
+      // Ctrl+Z - Undo
+      if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+        // Don't prevent default - let Monaco handle it, but ensure editor is focused
+        return;
+      }
+
+      // Ctrl+Y - Redo
+      if (e.ctrlKey && e.key === 'y' && !e.shiftKey) {
+        // Don't prevent default - let Monaco handle it
+        return;
+      }
+
+      // Ctrl+F - Find
+      if (e.ctrlKey && e.key === 'f' && !e.shiftKey) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('app-find'));
+        return;
+      }
+
+      // Ctrl+H - Replace
+      if (e.ctrlKey && e.key === 'h' && !e.shiftKey) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('app-replace'));
+        return;
+      }
+
+      // Ctrl+A - Select All (let Monaco handle it)
+      if (e.ctrlKey && e.key === 'a' && !e.shiftKey) {
+        // Don't prevent default - let Monaco handle it
+        return;
+      }
+
+      // Ctrl+W - Close current tab
+      if (e.ctrlKey && e.key === 'w' && !e.shiftKey) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('app-close-tab'));
+        return;
+      }
+
       // Tab switching shortcuts
       if (e.ctrlKey && e.key === 'Tab' && !e.shiftKey) {
         e.preventDefault();
@@ -120,14 +174,14 @@ function App() {
           const content = editorRef.current.getValue();
           viewStatesRef.current.set(activeTabIdRef.current, { viewState });
           // Sync content to state
-          setTabs(prev => prev.map(t => 
+          setTabs(prev => prev.map(t =>
             t.id === activeTabIdRef.current ? { ...t, content } : t
           ));
         }
         // Switch to next tab
         setTabs(currentTabs => {
           if (currentTabs.length <= 1) return currentTabs; // No need to switch if 0 or 1 tab
-          
+
           const currentIndex = currentTabs.findIndex(t => t.id === activeTabIdRef.current);
           const nextIndex = currentIndex < currentTabs.length - 1 ? currentIndex + 1 : 0;
           setActiveTabId(currentTabs[nextIndex].id);
@@ -141,14 +195,14 @@ function App() {
           const content = editorRef.current.getValue();
           viewStatesRef.current.set(activeTabIdRef.current, { viewState });
           // Sync content to state
-          setTabs(prev => prev.map(t => 
+          setTabs(prev => prev.map(t =>
             t.id === activeTabIdRef.current ? { ...t, content } : t
           ));
         }
         // Switch to previous tab
         setTabs(currentTabs => {
           if (currentTabs.length <= 1) return currentTabs; // No need to switch if 0 or 1 tab
-          
+
           const currentIndex = currentTabs.findIndex(t => t.id === activeTabIdRef.current);
           const prevIndex = currentIndex > 0 ? currentIndex - 1 : currentTabs.length - 1;
           setActiveTabId(currentTabs[prevIndex].id);
@@ -196,12 +250,12 @@ function App() {
 
       let lastMaximized = await window.isMaximized();
       let lastFullscreen = await window.isFullscreen();
-      
+
       const checkMaximized = setInterval(async () => {
         const maximized = await window.isMaximized();
         const fullscreen = await window.isFullscreen();
         setIsMaximized(maximized || fullscreen);
-        
+
         // Save state when maximized or fullscreen changes
         if (maximized !== lastMaximized || fullscreen !== lastFullscreen) {
           lastMaximized = maximized;
@@ -223,7 +277,7 @@ function App() {
       const unlisten = await listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
         console.log('File drop event:', event.payload);
         setIsDragging(false);
-        
+
         for (const filePath of event.payload.paths) {
           console.log('Dropped file:', filePath);
           if (filePath.toLowerCase().endsWith('.bin')) {
@@ -244,7 +298,7 @@ function App() {
 
     let cleanup: (() => void) | undefined;
     let fileDropCleanup: (() => void) | undefined;
-    
+
     setupWindowListeners().then(fn => { cleanup = fn; });
     setupFileDropListener().then(fn => { fileDropCleanup = fn; });
 
@@ -262,20 +316,20 @@ function App() {
       const window = getCurrentWindow();
       const maximized = await window.isMaximized();
       const fullscreen = await window.isFullscreen();
-      
+
       // Minimum window size constants (matching backend)
       const MIN_WIDTH = 800;
       const MIN_HEIGHT = 600;
-      
+
       // Update tracked normal dimensions only when not maximized/fullscreen
       if (!maximized && !fullscreen) {
         const size = await window.innerSize();
         const position = await window.outerPosition();
-        
+
         // Enforce minimum size constraints
         const width = Math.max(size.width, MIN_WIDTH);
         const height = Math.max(size.height, MIN_HEIGHT);
-        
+
         normalWindowSize.current = {
           width,
           height,
@@ -295,7 +349,7 @@ function App() {
           fullscreen
         }
       });
-      
+
       console.log('Saved window state:', {
         ...normalWindowSize.current,
         maximized,
@@ -325,7 +379,7 @@ function App() {
           x: state.x,
           y: state.y
         };
-        
+
         const window = getCurrentWindow();
         const maximized = await window.isMaximized();
         const fullscreen = await window.isFullscreen();
@@ -361,18 +415,18 @@ function App() {
   // Auto-download hashes on startup if setting is enabled
   const autoDownloadHashesIfEnabled = async () => {
     try {
-      const autoDownloadEnabled = await invoke<string>('get_preference', { 
-        key: 'AutoDownloadHashes', 
-        defaultValue: 'False' 
+      const autoDownloadEnabled = await invoke<string>('get_preference', {
+        key: 'AutoDownloadHashes',
+        defaultValue: 'False'
       });
-      
+
       if (autoDownloadEnabled !== 'True') {
         return;
       }
 
-      const useBinaryFormat = await invoke<string>('get_preference', { 
-        key: 'UseBinaryHashFormat', 
-        defaultValue: 'False' 
+      const useBinaryFormat = await invoke<string>('get_preference', {
+        key: 'UseBinaryHashFormat',
+        defaultValue: 'False'
       }) === 'True';
 
       // Always download latest hashes when auto-download is enabled
@@ -413,32 +467,32 @@ function App() {
   // Preload hashes in background if setting is enabled
   const preloadHashesIfEnabled = async () => {
     try {
-      const preloadEnabled = await invoke<string>('get_preference', { 
-        key: 'PreloadHashes', 
-        defaultValue: 'False' 
+      const preloadEnabled = await invoke<string>('get_preference', {
+        key: 'PreloadHashes',
+        defaultValue: 'False'
       });
-      
+
       if (preloadEnabled === 'True') {
         // Check status first to see if hashes are already loaded
         const status = await invoke<{ loaded: boolean; loading: boolean; fnv_count: number; xxh_count: number; memory_bytes: number }>('get_preload_status');
-        
+
         if (status.loaded) {
           // Hashes are already loaded, always update status to show correct info
           // (even if current status is "Preloading hashes..." - we need to correct it)
           const totalHashes = status.fnv_count + status.xxh_count;
           const newStatus = `Ready (${totalHashes} hashes preloaded)`;
-          
+
           // Force update the status - always update when hashes are already loaded
           // This corrects any incorrect "Preloading hashes..." status
           setStatusMessage(currentStatus => {
             const lowerCurrent = currentStatus.toLowerCase();
             // Always update if current status is hash-related or generic (to correct wrong status)
-            const isHashRelated = lowerCurrent.includes('preloading hashes') || 
-                                  lowerCurrent.includes('hashes preloaded') ||
-                                  lowerCurrent.includes('hash');
+            const isHashRelated = lowerCurrent.includes('preloading hashes') ||
+              lowerCurrent.includes('hashes preloaded') ||
+              lowerCurrent.includes('hash');
             const isGeneric = lowerCurrent === 'ready' ||
-                             lowerCurrent.includes('latest hash files downloaded');
-            
+              lowerCurrent.includes('latest hash files downloaded');
+
             if (isHashRelated || isGeneric || isStatusSafeToOverride(currentStatus)) {
               statusMessageRef.current = newStatus;
               allowHashStatusUpdateRef.current = true;
@@ -462,7 +516,7 @@ function App() {
             allowHashStatusUpdateRef.current = false;
             return currentStatus;
           });
-          
+
           // Run preload in background - don't await
           invoke<{ loaded: boolean; fnv_count: number; xxh_count: number; memory_bytes: number }>('preload_hashes')
             .then((preloadStatus) => {
@@ -473,8 +527,8 @@ function App() {
                 setStatusMessage(currentStatus => {
                   statusMessageRef.current = currentStatus;
                   const lowerCurrent = currentStatus.toLowerCase();
-                  if (lowerCurrent.includes('preloading hashes') || 
-                      (allowHashStatusUpdateRef.current && isStatusSafeToOverride(currentStatus))) {
+                  if (lowerCurrent.includes('preloading hashes') ||
+                    (allowHashStatusUpdateRef.current && isStatusSafeToOverride(currentStatus))) {
                     return newStatus;
                   }
                   return currentStatus;
@@ -487,8 +541,8 @@ function App() {
               setStatusMessage(currentStatus => {
                 statusMessageRef.current = currentStatus;
                 const lowerCurrent = currentStatus.toLowerCase();
-                if (lowerCurrent.includes('preloading hashes') || 
-                    (allowHashStatusUpdateRef.current && isStatusSafeToOverride(currentStatus))) {
+                if (lowerCurrent.includes('preloading hashes') ||
+                  (allowHashStatusUpdateRef.current && isStatusSafeToOverride(currentStatus))) {
                   return 'Ready';
                 }
                 return currentStatus;
@@ -528,7 +582,7 @@ function App() {
       allowHashStatusUpdateRef.current = false;
       setStatusMessage(`Opening ${getFileName(filePath)}...`);
       statusMessageRef.current = `Opening ${getFileName(filePath)}...`;
-      
+
       const existingTab = tabs.find(t => t.filePath && t.filePath.toLowerCase() === filePath.toLowerCase());
       if (existingTab) {
         setActiveTabId(existingTab.id);
@@ -551,9 +605,9 @@ function App() {
       await addToRecentFiles(filePath);
       setStatusMessage(`Opened ${getFileName(filePath)}`);
       statusMessageRef.current = `Opened ${getFileName(filePath)}`;
-      
+
       await openLinkedBinFiles(filePath, content);
-      
+
       // Re-enable hash status updates after file is opened (with delay to show the message)
       setTimeout(() => {
         allowHashStatusUpdateRef.current = true;
@@ -577,7 +631,7 @@ function App() {
       const content = editorRef.current.getValue(); // Get current content
       viewStatesRef.current.set(activeTabId, { viewState });
       // Sync content to state only when switching tabs (for inactive tabs)
-      setTabs(prev => prev.map(t => 
+      setTabs(prev => prev.map(t =>
         t.id === activeTabId ? { ...t, content } : t
       ));
     }
@@ -627,7 +681,7 @@ function App() {
 
     setTabs(prevTabs => {
       const newTabs = prevTabs.filter(t => t.id !== tabId);
-      
+
       // Dispose orphaned Monaco models for closed tabs
       // Import monaco-editor to access getModels
       import('monaco-editor').then(monaco => {
@@ -652,7 +706,7 @@ function App() {
           }
         });
       });
-      
+
       // If closing the active tab, switch to another or clear active
       if (tabId === activeTabId) {
         if (newTabs.length > 0) {
@@ -664,7 +718,7 @@ function App() {
           setActiveTabId(null);
         }
       }
-      
+
       return newTabs;
     });
   }, [tabs, activeTabId]);
@@ -683,8 +737,8 @@ function App() {
   }, [tabs]);
 
   const handleTabPin = useCallback((tabId: string) => {
-    setTabs(prevTabs => 
-      prevTabs.map(t => 
+    setTabs(prevTabs =>
+      prevTabs.map(t =>
         t.id === tabId ? { ...t, isPinned: !t.isPinned } : t
       )
     );
@@ -733,7 +787,7 @@ function App() {
       }
     });
     editorDisposablesRef.current = [];
-    
+
     // Disconnect previous MutationObserver if it exists
     if (mutationObserverRef.current) {
       mutationObserverRef.current.disconnect();
@@ -778,10 +832,10 @@ function App() {
       }, 100);
     });
     editorDisposablesRef.current.push(cursorDisposable);
-    editorDisposablesRef.current.push({ 
-      dispose: () => { 
-        if (caretUpdateTimeoutRef.current) clearTimeout(caretUpdateTimeoutRef.current); 
-      } 
+    editorDisposablesRef.current.push({
+      dispose: () => {
+        if (caretUpdateTimeoutRef.current) clearTimeout(caretUpdateTimeoutRef.current);
+      }
     });
 
     // Restore view state for active tab
@@ -850,7 +904,7 @@ function App() {
         }
       });
       editorDisposablesRef.current = [];
-      
+
       // Disconnect MutationObserver
       if (mutationObserverRef.current) {
         mutationObserverRef.current.disconnect();
@@ -878,6 +932,13 @@ function App() {
   useEffect(() => {
     wasModifiedRef.current = activeTab?.isModified || false;
   }, [activeTabId, activeTab?.isModified]);
+
+  // Create refs for handlers to use in keyboard shortcut event listeners
+  const handleSaveRef = useRef<() => void>(() => { });
+  const handleSaveAsRef = useRef<() => void>(() => { });
+  const handleFindRef = useRef<() => void>(() => { });
+  const handleReplaceRef = useRef<() => void>(() => { });
+  const handleCloseTabRef = useRef<() => void>(() => { });
 
   const handleEditorChange = (value: string | undefined) => {
     if (value !== undefined && activeTabId) {
@@ -913,14 +974,14 @@ function App() {
         addTab(result.path, result.content);
         setStatusMessage(`Opened ${result.path}`);
         statusMessageRef.current = `Opened ${result.path}`;
-        
+
         if (result.path) {
           await addToRecentFiles(result.path);
         }
-        
+
         // Open linked bin files if preference enabled
         await openLinkedBinFiles(result.path, result.content);
-        
+
         // Re-enable hash status updates after file is opened
         setTimeout(() => {
           allowHashStatusUpdateRef.current = true;
@@ -938,26 +999,26 @@ function App() {
 
   const openLinkedBinFiles = async (filePath: string, content: string) => {
     try {
-      const importLinked = await invoke<string>('get_preference', { 
-        key: 'ImportLinkedBins', 
-        defaultValue: 'False' 
+      const importLinked = await invoke<string>('get_preference', {
+        key: 'ImportLinkedBins',
+        defaultValue: 'False'
       });
-      
+
       if (importLinked !== 'True') return;
-      
+
       const extension = filePath.toLowerCase().split('.').pop();
       if (extension !== 'bin') return;
-      
-      const recursiveEnabled = await invoke<string>('get_preference', { 
-        key: 'RecursiveLinkedBins', 
-        defaultValue: 'False' 
+
+      const recursiveEnabled = await invoke<string>('get_preference', {
+        key: 'RecursiveLinkedBins',
+        defaultValue: 'False'
       }) === 'True';
-      
+
       // Block hash status updates while loading linked files
       allowHashStatusUpdateRef.current = false;
       setStatusMessage('Loading linked files...');
       statusMessageRef.current = 'Loading linked files...';
-      
+
       const linkedResults = await findAndOpenLinkedBins(
         filePath,
         content,
@@ -966,12 +1027,12 @@ function App() {
           addTab(result.path, result.content);
         }
       );
-      
+
       if (linkedResults.length > 0) {
         setStatusMessage(`Loaded ${linkedResults.length} linked file(s)`);
         statusMessageRef.current = `Loaded ${linkedResults.length} linked file(s)`;
       }
-      
+
       // Re-enable hash status updates after loading linked files
       setTimeout(() => {
         allowHashStatusUpdateRef.current = true;
@@ -983,14 +1044,14 @@ function App() {
 
   const handleSave = async () => {
     if (!activeTab) return;
-    
+
     try {
       // Block hash status updates while saving
       allowHashStatusUpdateRef.current = false;
       if (activeTab.filePath) {
         // Read content from editor for active tab, or from state for inactive tabs
         const content = editorRef.current?.getValue() || activeTab.content;
-        await saveBinFile(activeTab.filePath, content);
+        await saveBinFile(content, activeTab.filePath);
         setTabs(prevTabs =>
           prevTabs.map(t =>
             t.id === activeTabId ? { ...t, isModified: false } : t
@@ -1018,7 +1079,7 @@ function App() {
 
   const handleSaveAs = async () => {
     if (!activeTab) return;
-    
+
     try {
       // Block hash status updates while saving
       allowHashStatusUpdateRef.current = false;
@@ -1028,11 +1089,11 @@ function App() {
       if (newPath) {
         setTabs(prevTabs =>
           prevTabs.map(t =>
-            t.id === activeTabId ? { 
-              ...t, 
-              filePath: newPath, 
+            t.id === activeTabId ? {
+              ...t,
+              filePath: newPath,
               fileName: getFileName(newPath),
-              isModified: false 
+              isModified: false
             } : t
           )
         );
@@ -1096,7 +1157,7 @@ function App() {
     editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
     setGeneralEditPanelOpen(!generalEditPanelOpen);
   };
-  
+
   // Handle content change from General Edit Panel (undoable, preserves cursor/scroll)
   const handleGeneralEditContentChange = (newContent: string) => {
     if (activeTabId && editorRef.current) {
@@ -1104,39 +1165,39 @@ function App() {
       const model = editor.getModel();
       if (model) {
         const currentContent = model.getValue();
-        
+
         // Find the actual changed lines to minimize the edit
         const oldLines = currentContent.split('\n');
         const newLines = newContent.split('\n');
-        
+
         // Find first different line
         let startLine = 0;
-        while (startLine < oldLines.length && startLine < newLines.length && 
-               oldLines[startLine] === newLines[startLine]) {
+        while (startLine < oldLines.length && startLine < newLines.length &&
+          oldLines[startLine] === newLines[startLine]) {
           startLine++;
         }
-        
+
         // Find last different line (from end)
         let oldEndLine = oldLines.length - 1;
         let newEndLine = newLines.length - 1;
-        while (oldEndLine > startLine && newEndLine > startLine && 
-               oldLines[oldEndLine] === newLines[newEndLine]) {
+        while (oldEndLine > startLine && newEndLine > startLine &&
+          oldLines[oldEndLine] === newLines[newEndLine]) {
           oldEndLine--;
           newEndLine--;
         }
-        
+
         // Calculate the range to replace (1-indexed for Monaco)
         const startLineNum = startLine + 1;
         const endLineNum = oldEndLine + 1;
         const endColumn = (oldLines[oldEndLine]?.length || 0) + 1;
-        
+
         // Get the replacement text
         const replacementLines = newLines.slice(startLine, newEndLine + 1);
         const replacementText = replacementLines.join('\n');
-        
+
         // Get current selections to preserve cursor position on undo
         const selections = editor.getSelections() || [];
-        
+
         // Use pushEditOperations for proper undo stack with cursor restoration
         // Only push stack element AFTER the edit (not before)
         model.pushEditOperations(
@@ -1152,10 +1213,10 @@ function App() {
           }],
           () => selections // Return same selections for undo
         );
-        
+
         // Push stack element AFTER the edit (only once)
         model.pushStackElement();
-        
+
         // Update tab content state (mark as modified, content will be synced on tab switch)
         setTabs(prevTabs =>
           prevTabs.map(t =>
@@ -1184,18 +1245,18 @@ function App() {
   const handleParticlePanel = () => {
     // Only allow opening if a bin file is loaded
     if (!isBinFileOpen()) return;
-    
+
     setFindWidgetOpen(false);
     setReplaceWidgetOpen(false);
     setGeneralEditPanelOpen(false);
     editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
     setParticlePanelOpen(prev => !prev);
   };
-  
+
   const handleParticleEditor = () => {
     // Only allow opening if a bin file is loaded
     if (!isBinFileOpen()) return;
-    
+
     setParticlePanelOpen(false);
     setParticleDialogOpen(true);
   };

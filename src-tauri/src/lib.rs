@@ -1,7 +1,8 @@
 mod bin_commands;
 mod app_commands;
 mod hash_commands;
-mod ritobin;
+mod core;
+mod error;
 
 use tauri::Manager;
 

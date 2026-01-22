@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
-use crate::ritobin::{self, HashManager, are_hashes_preloaded};
+use crate::core::bin::{read_bin_ltk, tree_to_text_cached, text_to_tree, write_bin_ltk, BinTree};
 use std::env;
 use std::fs;
 
@@ -21,7 +21,8 @@ pub struct BatchConvertResult {
 
 fn get_hash_dir() -> Result<PathBuf, String> {
     let appdata = env::var("APPDATA").map_err(|e| format!("Failed to get APPDATA: {}", e))?;
-    let path = PathBuf::from(appdata).join("RitoShark").join("Jade").join("hashes");
+    // Use the RitoShark shared hash directory
+    let path = PathBuf::from(appdata).join("RitoShark").join("Requirements").join("Hashes");
     Ok(path)
 }
 
@@ -30,10 +31,7 @@ pub async fn convert_bin_to_text(input_path: String, output_path: String) -> Res
     let data = std::fs::read(&input_path)
         .map_err(|e| format!("Failed to read input file: {}", e))?;
     
-    let hash_dir = get_hash_dir().ok();
-    
-    let text = ritobin::convert_bin_to_text(&data, hash_dir)
-        .map_err(|e| format!("Conversion failed: {}", e))?;
+    let text = convert_bin_data_to_text(&data)?;
     
     // Write to output file
     std::fs::write(&output_path, &text)
@@ -48,8 +46,24 @@ pub async fn convert_bin_to_text(input_path: String, output_path: String) -> Res
 
 #[tauri::command]
 pub async fn convert_text_to_bin(text_content: String, output_path: String) -> Result<BinInfo, String> {
-    let bin_data = ritobin::convert_text_to_bin(text_content)
-        .map_err(|e| format!("Conversion failed: {}", e))?;
+    // Debug: Log the first 200 chars safely
+    let preview: String = text_content.chars().take(200).collect();
+    println!("[convert_text_to_bin] Parsing {} bytes, preview:\n{}", text_content.len(), preview);
+    
+    // Debug: Write input to file for analysis
+    let debug_path = output_path.clone() + ".debug_input.txt";
+    let _ = std::fs::write(&debug_path, &text_content);
+    println!("[convert_text_to_bin] Wrote debug input to: {}", debug_path);
+    
+    // Parse the ritobin text to BinTree
+    let tree = text_to_tree(&text_content)
+        .map_err(|e| format!("Failed to parse ritobin text: {}", e))?;
+    
+    println!("[convert_text_to_bin] Parsed successfully: {} objects", tree.objects.len());
+    
+    // Write to binary
+    let bin_data = write_bin_ltk(&tree)
+        .map_err(|e| format!("Failed to write binary: {}", e))?;
     
     std::fs::write(&output_path, &bin_data)
         .map_err(|e| format!("Failed to write output file: {}", e))?;
@@ -62,7 +76,7 @@ pub async fn convert_text_to_bin(text_content: String, output_path: String) -> R
 }
 
 /// Batch convert multiple bin files to text.
-/// Loads hashes once and converts all files - much faster when hashes aren't preloaded.
+/// Uses cached hash provider for fast conversion.
 #[tauri::command]
 pub async fn batch_convert_bins(input_paths: Vec<String>) -> Result<Vec<BatchConvertResult>, String> {
     if input_paths.is_empty() {
@@ -72,23 +86,10 @@ pub async fn batch_convert_bins(input_paths: Vec<String>) -> Result<Vec<BatchCon
     let start = std::time::Instant::now();
     println!("[BatchConvert] Converting {} files", input_paths.len());
     
-    // Load hashes once if not preloaded
-    let hash_manager = if are_hashes_preloaded() {
-        println!("[BatchConvert] Using preloaded hashes");
-        HashManager::from_preloaded()
-    } else {
-        println!("[BatchConvert] Loading hashes for batch...");
-        let mut hm = HashManager::new();
-        if let Ok(hash_dir) = get_hash_dir() {
-            let _ = hm.load(hash_dir);
-        }
-        hm
-    };
-    
     let mut results = Vec::with_capacity(input_paths.len());
     
     for path in input_paths {
-        let result = convert_single_bin(&path, &hash_manager);
+        let result = convert_single_bin(&path);
         results.push(result);
     }
     
@@ -97,8 +98,8 @@ pub async fn batch_convert_bins(input_paths: Vec<String>) -> Result<Vec<BatchCon
     Ok(results)
 }
 
-/// Convert a single bin file using a shared HashManager
-fn convert_single_bin(input_path: &str, hash_manager: &HashManager) -> BatchConvertResult {
+/// Convert a single bin file
+fn convert_single_bin(input_path: &str) -> BatchConvertResult {
     // Read file
     let data = match std::fs::read(input_path) {
         Ok(d) => d,
@@ -110,8 +111,8 @@ fn convert_single_bin(input_path: &str, hash_manager: &HashManager) -> BatchConv
         },
     };
     
-    // Convert using the shared hash manager
-    match convert_bin_with_manager(&data, hash_manager) {
+    // Convert using the cached hash provider
+    match convert_bin_data_to_text(&data) {
         Ok(text) => BatchConvertResult {
             path: input_path.to_string(),
             success: true,
@@ -128,8 +129,7 @@ fn convert_single_bin(input_path: &str, hash_manager: &HashManager) -> BatchConv
 }
 
 /// Convert bin data to text using ltk_meta/ltk_ritobin with cached hashes
-/// Note: HashManager parameter kept for API compatibility but not used (cached hashes are used instead)
-fn convert_bin_with_manager(bin_data: &[u8], _hash_manager: &HashManager) -> Result<String, String> {
+fn convert_bin_data_to_text(bin_data: &[u8]) -> Result<String, String> {
     // Check if the data is UTF-8 text
     if let Ok(text) = std::str::from_utf8(bin_data) {
         let trimmed = text.trim_start();
@@ -141,9 +141,9 @@ fn convert_bin_with_manager(bin_data: &[u8], _hash_manager: &HashManager) -> Res
         
         // JSON format (BinTree serialized)
         if trimmed.starts_with('{') {
-            let tree: ritobin::BinTree = serde_json::from_str(text)
+            let tree: BinTree = serde_json::from_str(text)
                 .map_err(|e| format!("Failed to parse JSON: {}", e))?;
-            return ritobin::tree_to_text_cached(&tree)
+            return tree_to_text_cached(&tree)
                 .map_err(|e| format!("Failed to convert to text: {}", e));
         }
         
@@ -154,9 +154,9 @@ fn convert_bin_with_manager(bin_data: &[u8], _hash_manager: &HashManager) -> Res
                 continue;
             }
             if line.contains(':') && line.contains('=') {
-                let tree = ritobin::text_to_tree(text)
+                let tree = text_to_tree(text)
                     .map_err(|e| format!("Failed to parse text: {}", e))?;
-                return ritobin::tree_to_text_cached(&tree)
+                return tree_to_text_cached(&tree)
                     .map_err(|e| format!("Failed to convert to text: {}", e));
             }
             break;
@@ -164,10 +164,10 @@ fn convert_bin_with_manager(bin_data: &[u8], _hash_manager: &HashManager) -> Res
     }
     
     // Binary format - use ltk_bridge
-    let tree = ritobin::read_bin_ltk(bin_data)
+    let tree = read_bin_ltk(bin_data)
         .map_err(|e| format!("Failed to parse BIN: {}", e))?;
     
-    ritobin::tree_to_text_cached(&tree)
+    tree_to_text_cached(&tree)
         .map_err(|e| format!("Failed to convert to text: {}", e))
 }
 
