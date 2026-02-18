@@ -20,9 +20,3 @@ pub use ltk_bridge::{
 #[allow(unused_imports)]
 pub use ltk_meta::{BinTree, BinTreeObject, BinProperty, BinPropertyKind, PropertyValueEnum};
 
-// Legacy aliases for backwards compatibility with commands
-pub use ltk_bridge::read_bin;
-pub use ltk_bridge::write_bin;
-
-// Re-export converter functions
-pub use converter::{bin_to_text, text_to_bin, bin_to_json, json_to_bin};

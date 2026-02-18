@@ -562,7 +562,7 @@ pub async fn get_recent_files(_app: tauri::AppHandle) -> Result<Vec<String>, Str
     
     Ok(prefs.get(RECENT_FILES_KEY)
         .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_else(Vec::new))
+        .unwrap_or_default())
 }
 
 #[tauri::command]

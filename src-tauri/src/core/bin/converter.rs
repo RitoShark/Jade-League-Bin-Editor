@@ -37,6 +37,7 @@ pub fn bin_to_text_from_data(data: &[u8], _hashtable: Option<&Hashtable>) -> Res
 /// Convert a BinTree to Python-like text format
 ///
 /// This is for legacy compatibility - prefer using ltk_bridge::tree_to_text directly
+#[allow(dead_code)]
 pub fn bin_to_text(tree: &BinTree, _hashtable: Option<&Hashtable>) -> Result<String> {
     tree_to_text(tree)
         .map_err(|e| bin_error(format!("Failed to convert to text: {}", e)))
@@ -50,6 +51,7 @@ pub fn bin_to_text(tree: &BinTree, _hashtable: Option<&Hashtable>) -> Result<Str
 ///
 /// # Returns
 /// A BinTree structure
+#[allow(dead_code)]
 pub fn text_to_bin(text: &str, _hashtable: Option<&Hashtable>) -> Result<BinTree> {
     text_to_tree(text)
         .map_err(|e| bin_error(format!("Failed to parse text: {}", e)))
@@ -58,6 +60,7 @@ pub fn text_to_bin(text: &str, _hashtable: Option<&Hashtable>) -> Result<BinTree
 /// Convert a BinTree to JSON format
 ///
 /// Uses serde serialization of the BinTree structure
+#[allow(dead_code)]
 pub fn bin_to_json(tree: &BinTree, _hashtable: Option<&Hashtable>) -> Result<String> {
     serde_json::to_string_pretty(tree)
         .map_err(|e| bin_error(format!("JSON serialization failed: {}", e)))
@@ -66,6 +69,7 @@ pub fn bin_to_json(tree: &BinTree, _hashtable: Option<&Hashtable>) -> Result<Str
 /// Convert JSON format to a BinTree
 ///
 /// Uses serde deserialization
+#[allow(dead_code)]
 pub fn json_to_bin(json: &str, _hashtable: Option<&Hashtable>) -> Result<BinTree> {
     serde_json::from_str(json)
         .map_err(|e| bin_error(format!("JSON parse error: {}", e)))

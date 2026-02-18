@@ -19,8 +19,16 @@ import PreferencesDialog from "./components/PreferencesDialog";
 import GeneralEditPanel from "./components/GeneralEditPanel";
 import ParticleEditorPanel from "./components/ParticleEditorPanel";
 import ParticleEditorDialog from "./components/ParticleEditorDialog";
+import UpdaterDialog from "./components/UpdaterDialog";
 import { findAndOpenLinkedBins, LinkedBinResult } from "./lib/linkedBinParser";
 import "./App.css";
+
+interface UpdateInfo {
+  available: boolean;
+  version: string;
+  notes: string;
+  download_url: string;
+}
 
 // Store editor view states (scroll position, cursor position) per tab
 interface EditorViewState {
@@ -39,6 +47,8 @@ function App() {
   const [showThemesDialog, setShowThemesDialog] = useState(false);
   const [showPreferencesDialog, setShowPreferencesDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [showUpdaterDialog, setShowUpdaterDialog] = useState(false);
+  const [pendingUpdateInfo, setPendingUpdateInfo] = useState<UpdateInfo | null>(null);
   const [appIcon, setAppIcon] = useState<string>("/jade.ico");
   const [findWidgetOpen, setFindWidgetOpen] = useState(false);
   const [replaceWidgetOpen, setReplaceWidgetOpen] = useState(false);
@@ -65,6 +75,9 @@ function App() {
   const mutationObserverRef = useRef<MutationObserver | null>(null);
   const mutationSetupTimeoutRef = useRef<number | null>(null);
   const undoCheckIntervalRef = useRef<number | null>(null);
+  // Map of tabId -> Monaco ITextModel (model-based tab switching to prevent RAM leaks)
+  const monacoModelsRef = useRef<Map<string, MonacoType.editor.ITextModel>>(new Map());
+  const monacoRef = useRef<Monaco | null>(null);
 
   // Get the active tab
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
@@ -94,6 +107,31 @@ function App() {
     if (!monacoInstance) {
       loadSavedTheme(invoke);
     }
+
+    // Listen for open-file events from backend (file association double-click or single-instance)
+    const openFileUnlisten = listen<string>('open-file', (event) => {
+      const filePath = event.payload;
+      if (filePath && filePath.trim()) {
+        console.log('[App] Received open-file event:', filePath);
+        openFileFromPath(filePath);
+      }
+    });
+
+    // Auto-check for updates on startup (if preference enabled)
+    invoke<string>('get_preference', { key: 'AutoCheckUpdates', defaultValue: 'True' })
+      .then(pref => {
+        if (pref === 'True') {
+          invoke<{ available: boolean; version: string; notes: string; download_url: string }>('check_for_update')
+            .then(info => {
+              if (info.available) {
+                setPendingUpdateInfo(info);
+                setShowUpdaterDialog(true);
+              }
+            })
+            .catch(e => console.warn('[Updater] Auto-check failed:', e));
+        }
+      })
+      .catch(() => { });
 
     const handleIconChange = (event: Event) => {
       const customEvent = event as CustomEvent;
@@ -207,15 +245,10 @@ function App() {
       // Tab switching shortcuts
       if (e.ctrlKey && e.key === 'Tab' && !e.shiftKey) {
         e.preventDefault();
-        // Save current view state before switching
+        // Save current view state before switching (model handles content)
         if (editorRef.current && activeTabIdRef.current) {
           const viewState = editorRef.current.saveViewState();
-          const content = editorRef.current.getValue();
           viewStatesRef.current.set(activeTabIdRef.current, { viewState });
-          // Sync content to state
-          setTabs(prev => prev.map(t =>
-            t.id === activeTabIdRef.current ? { ...t, content } : t
-          ));
         }
         // Switch to next tab
         setTabs(currentTabs => {
@@ -228,15 +261,10 @@ function App() {
         });
       } else if (e.ctrlKey && e.shiftKey && e.key === 'Tab') {
         e.preventDefault();
-        // Save current view state before switching
+        // Save current view state before switching (model handles content)
         if (editorRef.current && activeTabIdRef.current) {
           const viewState = editorRef.current.saveViewState();
-          const content = editorRef.current.getValue();
           viewStatesRef.current.set(activeTabIdRef.current, { viewState });
-          // Sync content to state
-          setTabs(prev => prev.map(t =>
-            t.id === activeTabIdRef.current ? { ...t, content } : t
-          ));
         }
         // Switch to previous tab
         setTabs(currentTabs => {
@@ -366,6 +394,8 @@ function App() {
       cleanup?.();
       fileDropCleanup?.();
       saveCurrentWindowState();
+      // Unlisten from Tauri open-file event
+      openFileUnlisten.then(fn => fn());
     };
   }, [monacoInstance]);
 
@@ -683,35 +713,20 @@ function App() {
 
 
   // Save current editor view state before switching tabs
+  // Note: content sync is no longer needed since Monaco models handle content
   const saveCurrentViewState = useCallback(() => {
     if (editorRef.current && activeTabId) {
       const viewState = editorRef.current.saveViewState();
-      const content = editorRef.current.getValue(); // Get current content
       viewStatesRef.current.set(activeTabId, { viewState });
-      // Sync content to state only when switching tabs (for inactive tabs)
-      setTabs(prev => prev.map(t =>
-        t.id === activeTabId ? { ...t, content } : t
-      ));
     }
   }, [activeTabId]);
-
-  // Restore editor view state when switching to a tab
-  const restoreViewState = useCallback((tabId: string) => {
-    if (editorRef.current) {
-      const savedState = viewStatesRef.current.get(tabId);
-      if (savedState?.viewState) {
-        editorRef.current.restoreViewState(savedState.viewState);
-      }
-      editorRef.current.focus();
-    }
-  }, []);
 
   // Tab operations
   const handleTabSelect = useCallback((tabId: string) => {
     if (tabId === activeTabId) return;
     saveCurrentViewState();
     setActiveTabId(tabId);
-    // View state will be restored in onMount or after model change
+    // Model switching and view state restoration handled by the activeTabId useEffect
   }, [activeTabId, saveCurrentViewState]);
 
   const handleTabClose = useCallback((tabId: string) => {
@@ -725,45 +740,27 @@ function App() {
       }
     }
 
-    // If this was the active tab's model, clear undo stack before closing
-    if (editorRef.current && tabId === activeTabId) {
-      const model = editorRef.current.getModel();
-      if (model) {
-        // Push a stack element to clear undo groupings
-        model.pushStackElement();
-      }
-    }
-
     // Remove view state
     viewStatesRef.current.delete(tabId);
 
+    // Dispose the Monaco model for this tab to free RAM
+    const modelToDispose = monacoModelsRef.current.get(tabId);
+    if (modelToDispose && !modelToDispose.isDisposed()) {
+      // If this is the active tab, detach editor from model first
+      if (tabId === activeTabId && editorRef.current) {
+        // We'll switch models in the tab change effect; just push stack element
+        try { modelToDispose.pushStackElement(); } catch (_) { }
+      }
+      try {
+        modelToDispose.dispose();
+      } catch (error) {
+        console.warn('Error disposing Monaco model:', error);
+      }
+    }
+    monacoModelsRef.current.delete(tabId);
+
     setTabs(prevTabs => {
       const newTabs = prevTabs.filter(t => t.id !== tabId);
-
-      // Dispose orphaned Monaco models for closed tabs
-      // Import monaco-editor to access getModels
-      import('monaco-editor').then(monaco => {
-        monaco.editor.getModels().forEach(model => {
-          const uri = model.uri.toString();
-          // Check if this model corresponds to a closed tab
-          const tabStillExists = newTabs.some(t => {
-            // Match by file path or tab ID
-            if (t.filePath) {
-              // Convert file path to URI format for comparison
-              const fileUri = `file:///${t.filePath.replace(/\\/g, '/')}`;
-              return uri === fileUri || uri.includes(t.filePath);
-            }
-            return false;
-          });
-          if (!tabStillExists) {
-            try {
-              model.dispose();
-            } catch (error) {
-              console.warn('Error disposing Monaco model:', error);
-            }
-          }
-        });
-      });
 
       // If closing the active tab, switch to another or clear active
       if (tabId === activeTabId) {
@@ -790,6 +787,15 @@ function App() {
     }
 
     viewStatesRef.current.clear();
+
+    // Dispose all Monaco models to free RAM
+    monacoModelsRef.current.forEach((model) => {
+      if (!model.isDisposed()) {
+        try { model.dispose(); } catch (_) { }
+      }
+    });
+    monacoModelsRef.current.clear();
+
     setTabs([]);
     setActiveTabId(null);
   }, [tabs]);
@@ -825,9 +831,68 @@ function App() {
   function handleBeforeMount(monaco: Monaco) {
     registerRitobinLanguage(monaco);
     registerRitobinTheme(monaco);
+    monacoRef.current = monaco;
     setMonacoInstance(monaco);
     loadSavedTheme(invoke, monaco);
   }
+
+  // Model-based tab switching: swap Monaco model when active tab changes
+  // This is the core fix for the RAM leak - no more editor remounts
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco || !activeTabId) return;
+
+    const activeTab = tabs.find(t => t.id === activeTabId);
+    if (!activeTab) return;
+
+    // Save view state of current model before switching
+    const currentModel = editor.getModel();
+    if (currentModel) {
+      // Find which tab owns the current model
+      monacoModelsRef.current.forEach((model, tabId) => {
+        if (model === currentModel && tabId !== activeTabId) {
+          const vs = editor.saveViewState();
+          viewStatesRef.current.set(tabId, { viewState: vs });
+        }
+      });
+    }
+
+    // Get or create the Monaco model for this tab
+    let model = monacoModelsRef.current.get(activeTabId);
+    if (!model || model.isDisposed()) {
+      // Create a new model with a unique URI
+      const uri = activeTab.filePath
+        ? monaco.Uri.file(activeTab.filePath)
+        : monaco.Uri.parse(`inmemory://tab/${activeTabId}`);
+
+      // Check if a model with this URI already exists (e.g. from a previous session)
+      const existing = monaco.editor.getModel(uri);
+      if (existing && !existing.isDisposed()) {
+        model = existing;
+      } else {
+        model = monaco.editor.createModel(activeTab.content, RITOBIN_LANGUAGE_ID, uri);
+      }
+      monacoModelsRef.current.set(activeTabId, model!);
+    }
+
+    // Set the model on the editor (this is the key operation - no remount!)
+    editor.setModel(model ?? null);
+
+    // Restore view state for this tab
+    const savedState = viewStatesRef.current.get(activeTabId);
+    if (savedState?.viewState) {
+      editor.restoreViewState(savedState.viewState);
+    } else {
+      // New tab - scroll to top
+      editor.setScrollPosition({ scrollTop: 0, scrollLeft: 0 });
+    }
+
+    editor.focus();
+
+    // Update line count
+    setLineCount(model!.getLineCount());
+  }, [activeTabId]); // Only re-run when active tab changes
 
   const handleThemeApplied = () => {
     if (monacoInstance) {
@@ -896,9 +961,34 @@ function App() {
       }
     });
 
-    // Restore view state for active tab
+    // Restore view state for active tab (model-switching effect will handle this on tab changes)
+    // On initial mount, trigger model setup for the first tab
     if (activeTabId) {
-      setTimeout(() => restoreViewState(activeTabId), 0);
+      // Trigger the model-switching effect by forcing a re-evaluation
+      // The effect depends on activeTabId which is already set
+      setTimeout(() => {
+        const monaco = monacoRef.current;
+        const activeTabData = tabs.find(t => t.id === activeTabId);
+        if (monaco && activeTabData && editor) {
+          const uri = activeTabData.filePath
+            ? monaco.Uri.file(activeTabData.filePath)
+            : monaco.Uri.parse(`inmemory://tab/${activeTabId}`);
+          const existing = monaco.editor.getModel(uri);
+          let model: MonacoType.editor.ITextModel;
+          if (existing && !existing.isDisposed()) {
+            model = existing;
+          } else {
+            model = monaco.editor.createModel(activeTabData.content, RITOBIN_LANGUAGE_ID, uri);
+          }
+          monacoModelsRef.current.set(activeTabId, model);
+          editor.setModel(model);
+          const savedState = viewStatesRef.current.get(activeTabId);
+          if (savedState?.viewState) {
+            editor.restoreViewState(savedState.viewState);
+          }
+          setLineCount(model.getLineCount());
+        }
+      }, 0);
     }
 
     // Periodic undo stack trimming to prevent memory bloat
@@ -950,7 +1040,7 @@ function App() {
     }, 500) as unknown as number;
   };
 
-  // Cleanup subscriptions when tab changes or component unmounts
+  // Cleanup subscriptions only on component unmount (editor no longer remounts on tab change)
   useEffect(() => {
     return () => {
       // Clean up all editor subscriptions
@@ -980,8 +1070,16 @@ function App() {
         clearInterval(undoCheckIntervalRef.current);
         undoCheckIntervalRef.current = null;
       }
+
+      // Dispose all Monaco models on unmount
+      monacoModelsRef.current.forEach((model) => {
+        if (!model.isDisposed()) {
+          try { model.dispose(); } catch (_) { }
+        }
+      });
+      monacoModelsRef.current.clear();
     };
-  }, [activeTabId]); // Run cleanup when tab changes
+  }, []); // Only run cleanup on unmount
 
   // Ref to track if tab was already modified (to skip unnecessary state updates)
   const wasModifiedRef = useRef(false);
@@ -1385,10 +1483,8 @@ function App() {
           {activeTab && (
             <>
               <Editor
-                key={activeTabId} // Force remount when tab changes for clean state
                 height="100%"
                 defaultLanguage={RITOBIN_LANGUAGE_ID}
-                value={activeTab.content}
                 theme={RITOBIN_THEME_ID}
                 beforeMount={handleBeforeMount}
                 onMount={handleEditorMount}
@@ -1462,6 +1558,12 @@ function App() {
       <PreferencesDialog
         isOpen={showPreferencesDialog}
         onClose={() => setShowPreferencesDialog(false)}
+      />
+
+      <UpdaterDialog
+        isOpen={showUpdaterDialog}
+        onClose={() => setShowUpdaterDialog(false)}
+        updateInfo={pendingUpdateInfo}
       />
 
       {activeTab && particleDialogOpen && (

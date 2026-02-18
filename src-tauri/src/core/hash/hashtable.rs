@@ -11,6 +11,7 @@ pub struct Hashtable {
     source_dir: PathBuf,
 }
 
+#[allow(dead_code)]
 impl Hashtable {
     /// Creates an empty Hashtable (for fallback when loading fails or not needed)
     pub fn empty() -> Self {

@@ -67,8 +67,13 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             const mt = await invoke<string>('get_preference', { key: 'MinimizeToTray', defaultValue: 'False' });
             setMinimizeToTray(mt === 'True');
 
-            const rs = await invoke<string>('get_preference', { key: 'RunAtStartup', defaultValue: 'False' });
-            setRunAtStartup(rs === 'True');
+            // Get real autostart status from OS
+            const autostartEnabled = await invoke<boolean>('get_autostart_status');
+            setRunAtStartup(autostartEnabled);
+
+            // Get real file association status from registry
+            const assocRegistered = await invoke<boolean>('get_bin_association_status');
+            setIsRegistered(assocRegistered);
         } catch (e) {
             console.error("Failed to load prefs", e);
         }
@@ -123,7 +128,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         const newVal = !preloadHash;
         setPreloadHash(newVal);
         savePreference('PreloadHashes', newVal);
-        
+
         if (newVal) {
             // Immediately preload hashes when enabled
             setIsPreloading(true);
@@ -150,7 +155,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         const newVal = !binaryFormat;
         setBinaryFormat(newVal);
         savePreference('UseBinaryHashFormat', newVal);
-        
+
         // If enabling binary format and text files exist, convert them
         if (newVal && hashStatus?.format === 'Text') {
             setDownloadStatus('Converting text hashes to binary format...');
@@ -209,10 +214,10 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                             >
                                 {isPreloading ? 'Preloading...' : `Preload hashes: ${preloadHash ? 'Enabled' : 'Disabled'}`}
                             </button>
-                            
+
                             {preloadStatus?.loaded && (
                                 <div className="preload-status">
-                                    ✓ {preloadStatus.fnv_count + preloadStatus.xxh_count} hashes in RAM 
+                                    ✓ {preloadStatus.fnv_count + preloadStatus.xxh_count} hashes in RAM
                                     ({Math.round(preloadStatus.memory_bytes / 1024 / 1024)}MB)
                                 </div>
                             )}
@@ -260,11 +265,15 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
 
                             <button
                                 className={`toggle-button ${runAtStartup ? 'enabled' : 'disabled'}`}
-                                disabled={!minimizeToTray} // Matches C# logic roughly
-                                onClick={() => {
+                                onClick={async () => {
                                     const newVal = !runAtStartup;
                                     setRunAtStartup(newVal);
-                                    savePreference('RunAtStartup', newVal);
+                                    try {
+                                        await invoke('toggle_autostart', { enable: newVal });
+                                    } catch (e) {
+                                        console.error('Failed to toggle autostart', e);
+                                        setRunAtStartup(!newVal); // revert on error
+                                    }
                                 }}
                             >
                                 Run at Startup: {runAtStartup ? 'Enabled' : 'Disabled'}
@@ -274,11 +283,25 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                         <h3>File Association</h3>
                         <p className="description">Register Jade as a handler for .bin files.</p>
 
-                        <button className="action-button blue" onClick={() => setIsRegistered(true)}>
+                        <button className="action-button blue" onClick={async () => {
+                            try {
+                                await invoke('register_bin_association');
+                                setIsRegistered(true);
+                            } catch (e) {
+                                console.error('Failed to register .bin association', e);
+                            }
+                        }}>
                             Register .bin
                         </button>
 
-                        <button className="action-button red" onClick={() => setIsRegistered(false)}>
+                        <button className="action-button red" onClick={async () => {
+                            try {
+                                await invoke('unregister_bin_association');
+                                setIsRegistered(false);
+                            } catch (e) {
+                                console.error('Failed to unregister .bin association', e);
+                            }
+                        }}>
                             Unregister
                         </button>
 

@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use crate::core::bin::{read_bin_ltk, tree_to_text_cached, text_to_tree, write_bin_ltk, BinTree};
-use std::env;
 use std::fs;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -17,13 +16,6 @@ pub struct BatchConvertResult {
     pub success: bool,
     pub content: Option<String>,
     pub error: Option<String>,
-}
-
-fn get_hash_dir() -> Result<PathBuf, String> {
-    let appdata = env::var("APPDATA").map_err(|e| format!("Failed to get APPDATA: {}", e))?;
-    // Use the RitoShark shared hash directory
-    let path = PathBuf::from(appdata).join("RitoShark").join("Requirements").join("Hashes");
-    Ok(path)
 }
 
 #[tauri::command]

@@ -38,7 +38,7 @@ function adjustColor(hex: string, amount: number): string {
 /**
  * Calculate scrollbar colors based on theme
  */
-function calculateScrollbarColors(selectedTab: string, editorBg: string): { thumb: string; thumbHover: string } {
+function calculateScrollbarColors(selectedTab: string, _editorBg: string): { thumb: string; thumbHover: string } {
     // Use selectedTab as the base for scrollbar thumb
     // Make hover state slightly lighter
     return {

@@ -206,7 +206,6 @@ pub fn load_bin_hashes() -> HashMapProvider {
         ("hashes.bintypes", "types"),
     ];
 
-    let mut total_loaded = 0;
     let mut binary_count = 0;
     let mut text_count = 0;
 
@@ -219,7 +218,6 @@ pub fn load_bin_hashes() -> HashMapProvider {
             match load_binary_hash_file(&bin_path, &mut hashes, category) {
                 Ok(count) => {
                     println!("[ltk_bridge] Loaded {} hashes from binary file: {}.bin", count, base_name);
-                    total_loaded += count;
                     binary_count += 1;
                 }
                 Err(e) => {
