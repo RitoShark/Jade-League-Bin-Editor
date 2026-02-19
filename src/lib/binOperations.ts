@@ -31,13 +31,8 @@ export async function openBinFile(): Promise<{ path: string; content: string } |
       return null;
     }
 
-    // Create temp output path for converted text
-    const tempPath = filePath + '.temp.txt';
-
-    // Convert bin to text using C# logic
     const result = await invoke<BinInfo>('convert_bin_to_text', {
       inputPath: filePath,
-      outputPath: tempPath
     });
 
     if (!result.success || !result.data) {
@@ -110,11 +105,8 @@ export async function saveBinFileAs(content: string): Promise<string | null> {
  */
 export async function readBinDirect(filePath: string): Promise<string> {
   try {
-    const tempPath = filePath + '.temp.txt';
-    
     const result = await invoke<BinInfo>('convert_bin_to_text', {
       inputPath: filePath,
-      outputPath: tempPath
     });
 
     if (!result.success || !result.data) {

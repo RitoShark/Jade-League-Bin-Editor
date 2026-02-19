@@ -19,16 +19,12 @@ pub struct BatchConvertResult {
 }
 
 #[tauri::command]
-pub async fn convert_bin_to_text(input_path: String, output_path: String) -> Result<BinInfo, String> {
+pub async fn convert_bin_to_text(input_path: String) -> Result<BinInfo, String> {
     let data = std::fs::read(&input_path)
         .map_err(|e| format!("Failed to read input file: {}", e))?;
-    
+
     let text = convert_bin_data_to_text(&data)?;
-    
-    // Write to output file
-    std::fs::write(&output_path, &text)
-        .map_err(|e| format!("Failed to write output file: {}", e))?;
-    
+
     Ok(BinInfo {
         success: true,
         message: format!("Converted: {}", input_path),
@@ -41,11 +37,6 @@ pub async fn convert_text_to_bin(text_content: String, output_path: String) -> R
     // Debug: Log the first 200 chars safely
     let preview: String = text_content.chars().take(200).collect();
     println!("[convert_text_to_bin] Parsing {} bytes, preview:\n{}", text_content.len(), preview);
-    
-    // Debug: Write input to file for analysis
-    let debug_path = output_path.clone() + ".debug_input.txt";
-    let _ = std::fs::write(&debug_path, &text_content);
-    println!("[convert_text_to_bin] Wrote debug input to: {}", debug_path);
     
     // Parse the ritobin text to BinTree
     let tree = text_to_tree(&text_content)

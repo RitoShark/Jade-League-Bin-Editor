@@ -82,6 +82,12 @@ function App() {
   const MODEL_CACHE_LIMIT = 10;
   const monacoRef = useRef<Monaco | null>(null);
 
+  // Stable refs so Tauri/DOM event listeners (registered once) always call the
+  // latest version of these callbacks rather than stale closure captures.
+  const openFileFromPathRef = useRef<((path: string) => Promise<void>) | null>(null);
+  const openingFilesRef = useRef<Set<string>>(new Set()); // prevents duplicate concurrent opens
+  const handleTabCloseRef = useRef<((tabId: string) => void) | null>(null);
+
   // Get the active tab
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
 
@@ -116,7 +122,7 @@ function App() {
       const filePath = event.payload;
       if (filePath && filePath.trim()) {
         console.log('[App] Received open-file event:', filePath);
-        openFileFromPath(filePath);
+        openFileFromPathRef.current?.(filePath);
       }
     });
 
@@ -152,7 +158,7 @@ function App() {
     const handleAppCompare = () => handleCompareFiles();
     const handleAppCloseTab = () => {
       if (activeTabIdRef.current) {
-        handleTabClose(activeTabIdRef.current);
+        handleTabCloseRef.current?.(activeTabIdRef.current);
       }
     };
 
@@ -363,7 +369,7 @@ function App() {
         for (const filePath of event.payload.paths) {
           console.log('Dropped file:', filePath);
           if (filePath.toLowerCase().endsWith('.bin')) {
-            await openFileFromPath(filePath);
+            await openFileFromPathRef.current?.(filePath);
           }
         }
       });
@@ -668,6 +674,11 @@ function App() {
   };
 
   const openFileFromPath = async (filePath: string) => {
+    // Prevent duplicate concurrent opens (e.g. Tauri drag-drop firing twice,
+    // or rapid re-drops of the same file before the first open completes).
+    const normalizedPath = filePath.toLowerCase();
+    if (openingFilesRef.current.has(normalizedPath)) return;
+    openingFilesRef.current.add(normalizedPath);
     try {
       // Block hash status updates while opening file
       allowHashStatusUpdateRef.current = false;
@@ -711,8 +722,13 @@ function App() {
       setTimeout(() => {
         allowHashStatusUpdateRef.current = true;
       }, 2000);
+    } finally {
+      openingFilesRef.current.delete(normalizedPath);
     }
   };
+  // Keep the ref up-to-date every render so event listeners always call the
+  // latest version (which has fresh `tabs` in its closure).
+  openFileFromPathRef.current = openFileFromPath;
 
 
   // Save current editor view state before switching tabs
@@ -787,14 +803,12 @@ function App() {
       }
     }
 
-    // Dispose the old model after a short delay so Monaco's background
-    // tokenizer (requestIdleCallback) can finish its current pass first.
-    // Disposing immediately while tokenization is in-flight causes
-    // "Cannot read properties of undefined (reading 'domNode')" in the renderer.
+    // Dispose the old model after a delay so Monaco's RAF-based render pipeline
+    // can finish all queued frames before the model is torn down.
     if (modelToDispose && !modelToDispose.isDisposed()) {
       setTimeout(() => {
         try { modelToDispose.dispose(); } catch (_) { }
-      }, 100);
+      }, 500);
     }
 
     setTabs(newTabs);
@@ -802,6 +816,7 @@ function App() {
       setActiveTabId(nextActiveId);
     }
   }, [tabs, activeTabId]);
+  handleTabCloseRef.current = handleTabClose;
 
   const handleTabCloseAll = useCallback(() => {
     const hasModified = tabs.some(t => t.isModified);
@@ -814,13 +829,18 @@ function App() {
     viewStatesRef.current.clear();
     modelLruRef.current = [];
 
-    // Dispose all Monaco models to free RAM
-    monacoModelsRef.current.forEach((model) => {
-      if (!model.isDisposed()) {
-        try { model.dispose(); } catch (_) { }
-      }
-    });
+    // Collect models for delayed disposal, then clear the map immediately so
+    // no further renders reference them.  The 500ms delay lets Monaco's
+    // RAF-based render pipeline drain before we tear down the models.
+    const modelsToDispose = Array.from(monacoModelsRef.current.values());
     monacoModelsRef.current.clear();
+    setTimeout(() => {
+      modelsToDispose.forEach((model) => {
+        if (!model.isDisposed()) {
+          try { model.dispose(); } catch (_) { }
+        }
+      });
+    }, 500);
 
     setTabs([]);
     setActiveTabId(null);
@@ -917,11 +937,18 @@ function App() {
         if (evictTab) {
           evictTab.content = evictModel.getValue();
         }
-        // Delay disposal so Monaco's background tokenizer can finish its pass
+        // Delay disposal so Monaco's RAF-based render pipeline can finish all
+        // queued frames.  100ms was too short on busy systems; 500ms gives plenty
+        // of headroom.  Also guard against the model being re-mapped before the
+        // timeout fires (e.g. rapid tab switching back to an evicted tab).
         const modelRef = evictModel;
         setTimeout(() => {
-          try { modelRef.dispose(); } catch (_) { }
-        }, 100);
+          let isStillMapped = false;
+          monacoModelsRef.current.forEach((m) => { if (m === modelRef) isStillMapped = true; });
+          if (!isStillMapped && !modelRef.isDisposed()) {
+            try { modelRef.dispose(); } catch (_) { }
+          }
+        }, 500);
       }
       monacoModelsRef.current.delete(evictId);
       viewStatesRef.current.delete(evictId);
@@ -1532,60 +1559,58 @@ function App() {
         />
       )}
 
-      {tabs.length === 0 ? (
-        <WelcomeScreen onOpenFile={handleOpen} />
-      ) : (
-        <div className="editor-container">
-          {activeTab && (
-            <>
-              <Editor
-                height="100%"
-                defaultLanguage={RITOBIN_LANGUAGE_ID}
-                theme={RITOBIN_THEME_ID}
-                beforeMount={handleBeforeMount}
-                onMount={handleEditorMount}
-                onChange={handleEditorChange}
-                options={{
-                  minimap: { enabled: true },
-                  fontSize: 14,
-                  scrollBeyondLastLine: false,
-                  automaticLayout: true,
-                  fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
-                  fixedOverflowWidgets: true, // Render tooltips outside editor container
-                  find: {
-                    addExtraSpaceOnTop: false,
-                    autoFindInSelection: 'never',
-                    seedSearchStringFromSelection: 'always',
-                  },
-                  // Memory optimization options
-                  ...({
-                    "bracketPairColorization.enabled": false, // reduces memory
-                    "suggest.maxVisibleSuggestions": 5,
-                  } as any),
-                }}
-              />
-              {generalEditPanelOpen && (
-                <GeneralEditPanel
-                  isOpen={generalEditPanelOpen}
-                  onClose={() => setGeneralEditPanelOpen(false)}
-                  editorContent={editorRef.current?.getValue() || activeTab.content}
-                  onContentChange={handleGeneralEditContentChange}
-                />
-              )}
-              {particlePanelOpen && (
-                <ParticleEditorPanel
-                  isOpen={particlePanelOpen}
-                  onClose={() => setParticlePanelOpen(false)}
-                  editorContent={editorRef.current?.getValue() || activeTab.content}
-                  onContentChange={handleGeneralEditContentChange}
-                  onScrollToLine={handleScrollToLine}
-                  onStatusUpdate={setStatusMessage}
-                />
-              )}
-            </>
-          )}
-        </div>
-      )}
+      {tabs.length === 0 && <WelcomeScreen onOpenFile={handleOpen} />}
+
+      {/* Keep the editor container (and Monaco) always mounted.
+          Unmounting Monaco while a requestAnimationFrame render is in-flight
+          causes "Cannot read properties of undefined (reading 'domNode')".
+          We hide it with display:none when there are no tabs instead. */}
+      <div className="editor-container" style={tabs.length === 0 ? { display: 'none' } : undefined}>
+        <Editor
+          height="100%"
+          defaultLanguage={RITOBIN_LANGUAGE_ID}
+          theme={RITOBIN_THEME_ID}
+          beforeMount={handleBeforeMount}
+          onMount={handleEditorMount}
+          onChange={handleEditorChange}
+          options={{
+            minimap: { enabled: true },
+            fontSize: 14,
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+            fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+            fixedOverflowWidgets: true, // Render tooltips outside editor container
+            find: {
+              addExtraSpaceOnTop: false,
+              autoFindInSelection: 'never',
+              seedSearchStringFromSelection: 'always',
+            },
+            // Memory optimization options
+            ...({
+              "bracketPairColorization.enabled": false, // reduces memory
+              "suggest.maxVisibleSuggestions": 5,
+            } as any),
+          }}
+        />
+        {generalEditPanelOpen && activeTab && (
+          <GeneralEditPanel
+            isOpen={generalEditPanelOpen}
+            onClose={() => setGeneralEditPanelOpen(false)}
+            editorContent={editorRef.current?.getValue() || activeTab.content}
+            onContentChange={handleGeneralEditContentChange}
+          />
+        )}
+        {particlePanelOpen && activeTab && (
+          <ParticleEditorPanel
+            isOpen={particlePanelOpen}
+            onClose={() => setParticlePanelOpen(false)}
+            editorContent={editorRef.current?.getValue() || activeTab.content}
+            onContentChange={handleGeneralEditContentChange}
+            onScrollToLine={handleScrollToLine}
+            onStatusUpdate={setStatusMessage}
+          />
+        )}
+      </div>
 
       <StatusBar
         status={statusText}
