@@ -166,6 +166,11 @@ pub fn migrate_preferences_if_needed(app: &tauri::AppHandle) -> Result<(), Strin
 
 /// Write content to file atomically to prevent corruption
 fn write_file_atomic(path: &Path, content: &str) -> std::io::Result<()> {
+    // Ensure parent directory exists (defensive: get_config_dir should already do this,
+    // but guard against races or first-run situations)
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     // Write to a temporary file first
     let temp_path = path.with_extension("tmp");
     fs::write(&temp_path, content)?;

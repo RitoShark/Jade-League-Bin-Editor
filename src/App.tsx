@@ -77,6 +77,9 @@ function App() {
   const undoCheckIntervalRef = useRef<number | null>(null);
   // Map of tabId -> Monaco ITextModel (model-based tab switching to prevent RAM leaks)
   const monacoModelsRef = useRef<Map<string, MonacoType.editor.ITextModel>>(new Map());
+  // LRU order for model eviction: most-recently-used tab IDs (front = oldest)
+  const modelLruRef = useRef<string[]>([]);
+  const MODEL_CACHE_LIMIT = 10;
   const monacoRef = useRef<Monaco | null>(null);
 
   // Get the active tab
@@ -746,10 +749,11 @@ function App() {
     // Dispose the Monaco model for this tab to free RAM
     const modelToDispose = monacoModelsRef.current.get(tabId);
     if (modelToDispose && !modelToDispose.isDisposed()) {
-      // If this is the active tab, detach editor from model first
+      // If this is the active tab, detach the editor from the model FIRST.
+      // Disposing a model that is still attached to the editor tears down
+      // Monaco's InstantiationService and crashes the whole editor.
       if (tabId === activeTabId && editorRef.current) {
-        // We'll switch models in the tab change effect; just push stack element
-        try { modelToDispose.pushStackElement(); } catch (_) { }
+        try { editorRef.current.setModel(null); } catch (_) { }
       }
       try {
         modelToDispose.dispose();
@@ -758,6 +762,7 @@ function App() {
       }
     }
     monacoModelsRef.current.delete(tabId);
+    modelLruRef.current = modelLruRef.current.filter(id => id !== tabId);
 
     setTabs(prevTabs => {
       const newTabs = prevTabs.filter(t => t.id !== tabId);
@@ -787,6 +792,7 @@ function App() {
     }
 
     viewStatesRef.current.clear();
+    modelLruRef.current = [];
 
     // Dispose all Monaco models to free RAM
     monacoModelsRef.current.forEach((model) => {
@@ -843,6 +849,10 @@ function App() {
     const monaco = monacoRef.current;
     if (!editor || !monaco || !activeTabId) return;
 
+    // Guard: if the editor was disposed (e.g. React hot-reload or unmount race),
+    // bail out to avoid "InstantiationService has been disposed" crashes.
+    try { editor.getContainerDomNode(); } catch (_) { return; }
+
     const activeTab = tabs.find(t => t.id === activeTabId);
     if (!activeTab) return;
 
@@ -876,22 +886,45 @@ function App() {
       monacoModelsRef.current.set(activeTabId, model!);
     }
 
+    // LRU eviction: mark this tab as most-recently used, evict oldest if over limit
+    modelLruRef.current = modelLruRef.current.filter(id => id !== activeTabId);
+    modelLruRef.current.push(activeTabId);
+    while (modelLruRef.current.length > MODEL_CACHE_LIMIT) {
+      const evictId = modelLruRef.current.shift()!;
+      const evictModel = monacoModelsRef.current.get(evictId);
+      if (evictModel && !evictModel.isDisposed()) {
+        // Save the current text back to the tab so it isn't lost
+        const evictTab = tabs.find(t => t.id === evictId);
+        if (evictTab) {
+          evictTab.content = evictModel.getValue();
+        }
+        evictModel.dispose();
+      }
+      monacoModelsRef.current.delete(evictId);
+      viewStatesRef.current.delete(evictId);
+    }
+
     // Set the model on the editor (this is the key operation - no remount!)
-    editor.setModel(model ?? null);
+    try {
+      editor.setModel(model ?? null);
+    } catch (e) {
+      console.warn('[tab-switch] setModel failed, editor may be mid-dispose:', e);
+      return;
+    }
 
     // Restore view state for this tab
     const savedState = viewStatesRef.current.get(activeTabId);
     if (savedState?.viewState) {
-      editor.restoreViewState(savedState.viewState);
+      try { editor.restoreViewState(savedState.viewState); } catch (_) { }
     } else {
       // New tab - scroll to top
-      editor.setScrollPosition({ scrollTop: 0, scrollLeft: 0 });
+      try { editor.setScrollPosition({ scrollTop: 0, scrollLeft: 0 }); } catch (_) { }
     }
 
-    editor.focus();
+    try { editor.focus(); } catch (_) { }
 
     // Update line count
-    setLineCount(model!.getLineCount());
+    try { setLineCount(model!.getLineCount()); } catch (_) { }
   }, [activeTabId]); // Only re-run when active tab changes
 
   const handleThemeApplied = () => {
