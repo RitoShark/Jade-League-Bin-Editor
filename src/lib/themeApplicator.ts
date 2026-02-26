@@ -36,6 +36,32 @@ function adjustColor(hex: string, amount: number): string {
 }
 
 /**
+ * Ensure an accent color is bright enough to be readable as text on dark surfaces.
+ * Mixes the color toward white until perceived luminance reaches a minimum threshold.
+ * Colors already above the threshold are returned unchanged, so bright accents stay vivid.
+ */
+function makeTextAccent(hex: string): string {
+    hex = hex.replace('#', '');
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+
+    // Perceived luminance (0–1)
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+    // Already readable — keep original hue and saturation
+    if (lum >= 0.38) return `#${hex}`;
+
+    // Mix toward white: find blend factor t so that blended luminance ≈ 0.45
+    // blended_lum = lum*t + 1.0*(1-t)  →  t = (0.45 - 1) / (lum - 1)
+    const t = Math.max(0, Math.min(1, (0.45 - 1) / (lum - 1 + 0.0001)));
+    const nr = Math.min(255, Math.round(r * t + 255 * (1 - t)));
+    const ng = Math.min(255, Math.round(g * t + 255 * (1 - t)));
+    const nb = Math.min(255, Math.round(b * t + 255 * (1 - t)));
+    return '#' + [nr, ng, nb].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+/**
  * Calculate scrollbar colors based on theme
  */
 function calculateScrollbarColors(selectedTab: string, _editorBg: string): { thumb: string; thumbHover: string } {
@@ -68,8 +94,14 @@ export function applyTheme(themeId: string, customColors?: CustomThemeColors) {
         root.style.setProperty('--scrollbar-thumb', scrollbarColors.thumb);
         root.style.setProperty('--scrollbar-thumb-hover', scrollbarColors.thumbHover);
 
-        // Accent color: drives jade-accent, used everywhere for glows/highlights
+        // Accent color: drives jade-accent for glows/highlights
         root.style.setProperty('--jade-accent', customColors.statusBar);
+        // Text-safe version: guaranteed readable luminance on dark surfaces
+        root.style.setProperty('--jade-accent-text', makeTextAccent(customColors.statusBar));
+
+        // Adaptive utility colors derived from this theme's text / window colors
+        root.style.setProperty('--border-color', `color-mix(in srgb, ${customColors.text} 25%, ${customColors.windowBg})`);
+        root.style.setProperty('--text-muted', `color-mix(in srgb, ${customColors.text} 55%, ${customColors.windowBg})`);
 
         // Update Monaco editor background
         updateMonacoBackground(customColors.editorBg);
@@ -90,8 +122,14 @@ export function applyTheme(themeId: string, customColors?: CustomThemeColors) {
             root.style.setProperty('--scrollbar-thumb', scrollbarColors.thumb);
             root.style.setProperty('--scrollbar-thumb-hover', scrollbarColors.thumbHover);
 
-            // Accent color: drives jade-accent, used everywhere for glows/highlights
+            // Accent color: drives jade-accent for glows/highlights
             root.style.setProperty('--jade-accent', theme.statusBar);
+            // Text-safe version: guaranteed readable luminance on dark surfaces
+            root.style.setProperty('--jade-accent-text', makeTextAccent(theme.statusBar));
+
+            // Adaptive utility colors derived from this theme's text / window colors
+            root.style.setProperty('--border-color', `color-mix(in srgb, ${theme.text} 25%, ${theme.windowBg})`);
+            root.style.setProperty('--text-muted', `color-mix(in srgb, ${theme.text} 55%, ${theme.windowBg})`);
 
             // Update Monaco editor background
             updateMonacoBackground(theme.editorBg);
@@ -171,6 +209,10 @@ export function createMonacoTheme(monaco: Monaco, themeId: string, syntaxThemeId
     const colors = getSyntaxColors(syntaxThemeId);
     const brackets = getBracketColors(syntaxThemeId);
     const theme = getTheme(themeId);
+
+    // Expose syntax colors as CSS variables so non-Monaco UI (e.g. texture
+    // preview filename) can stay in sync with the active syntax theme.
+    document.documentElement.style.setProperty('--syntax-string-color', colors.stringColor);
 
     const editorBg = theme?.editorBg || '#1E1E1E';
     const textColor = theme?.text || '#D4D4D4';

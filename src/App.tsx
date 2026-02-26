@@ -7,9 +7,10 @@ import type * as MonacoType from 'monaco-editor';
 import { registerRitobinLanguage, registerRitobinTheme, RITOBIN_LANGUAGE_ID, RITOBIN_THEME_ID } from "./lib/ritobinLanguage";
 import { openBinFile, saveBinFile, saveBinFileAs } from "./lib/binOperations";
 import { loadSavedTheme } from "./lib/themeApplicator";
+import { texBufferToDataURL } from "./lib/texFormat";
 import TitleBar from "./components/TitleBar";
 import MenuBar from "./components/MenuBar";
-import TabBar, { EditorTab, createTab, getFileName } from "./components/TabBar";
+import TabBar, { EditorTab, createTab, createTexPreviewTab, getFileName } from "./components/TabBar";
 import StatusBar from "./components/StatusBar";
 import WelcomeScreen from "./components/WelcomeScreen";
 import AboutDialog from "./components/AboutDialog";
@@ -20,6 +21,9 @@ import GeneralEditPanel from "./components/GeneralEditPanel";
 import ParticleEditorPanel from "./components/ParticleEditorPanel";
 import ParticleEditorDialog from "./components/ParticleEditorDialog";
 import UpdateToast from "./components/UpdateToast";
+import TexHoverPopup from "./components/TexHoverPopup";
+import TexturePreviewTab from "./components/TexturePreviewTab";
+import SmokeOverlay from "./components/SmokeOverlay";
 import { findAndOpenLinkedBins, LinkedBinResult } from "./lib/linkedBinParser";
 import "./App.css";
 import "./App.modernui.css";
@@ -61,6 +65,27 @@ function App() {
   const [caretPosition, setCaretPosition] = useState({ line: 1, column: 1 });
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [cigaretteMode, setCigaretteMode] = useState(false);
+
+  // Texture hover popup state
+  interface TexPopupState {
+    x: number;
+    y: number;
+    rawPath: string;
+    resolvedPath: string | null;
+    imageDataUrl: string | null;
+    texWidth: number;
+    texHeight: number;
+    formatStr: string;
+    formatNum: number;
+    error: string | null;
+  }
+  const [texPopup, setTexPopup] = useState<TexPopupState | null>(null);
+  const texPopupRef = useRef<TexPopupState | null>(null);
+  texPopupRef.current = texPopup;
+  // Whether the mouse is currently over the popup (prevents premature dismissal)
+  const isMouseOverPopupRef = useRef(false);
+  const texHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Track normal window dimensions (when not maximized/fullscreen)
   const normalWindowSize = useRef<{ width: number; height: number; x: number; y: number }>({
@@ -116,6 +141,15 @@ function App() {
     if (!monacoInstance) {
       loadSavedTheme(invoke);
     }
+
+    invoke<string>('get_preference', { key: 'CigaretteMode', defaultValue: 'false' })
+      .then(val => setCigaretteMode(val === 'true'))
+      .catch(() => {});
+
+    const handleCigaretteModeChanged = (e: Event) => {
+      setCigaretteMode((e as CustomEvent<boolean>).detail);
+    };
+    window.addEventListener('cigarette-mode-changed', handleCigaretteModeChanged);
 
     // Listen for open-file events from backend (file association double-click or single-instance)
     const openFileUnlisten = listen<string>('open-file', (event) => {
@@ -398,6 +432,7 @@ function App() {
     return () => {
       window.removeEventListener('icon-changed', handleIconChange);
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('cigarette-mode-changed', handleCigaretteModeChanged);
       window.removeEventListener('app-open', handleAppOpen);
       window.removeEventListener('app-save', handleAppSave);
       window.removeEventListener('app-save-as', handleAppSaveAs);
@@ -900,6 +935,9 @@ function App() {
     const activeTab = tabs.find(t => t.id === activeTabId);
     if (!activeTab) return;
 
+    // Texture-preview tabs don't have a Monaco model — skip model switching
+    if (activeTab.tabType === 'texture-preview') return;
+
     // Save view state of current model before switching
     const currentModel = editor.getModel();
     if (currentModel) {
@@ -988,6 +1026,210 @@ function App() {
     }
   };
 
+  // ── Texture hover helpers ──────────────────────────────────────────────────
+
+  /**
+   * Given a line of text and a column (1-based), extract a .tex path if the
+   * cursor is inside a quoted string that ends with ".tex".
+   */
+  function extractTexPathAtColumn(line: string, column: number): string | null {
+    // Walk backwards from the column to find an opening quote
+    const col0 = column - 1; // 0-based
+    let start = -1;
+    for (let i = col0; i >= 0; i--) {
+      if (line[i] === '"') { start = i + 1; break; }
+      if (line[i] === '\n') break;
+    }
+    if (start === -1) return null;
+
+    // Walk forwards to find a closing quote
+    let end = -1;
+    for (let i = col0; i < line.length; i++) {
+      if (line[i] === '"') { end = i; break; }
+    }
+    if (end === -1) return null;
+
+    const candidate = line.slice(start, end);
+    if (candidate.toLowerCase().endsWith('.tex')) return candidate;
+    return null;
+  }
+
+  /**
+   * Decode a .tex file at the given resolved path and load it into a texture tab.
+   * Updates the tab state in-place once loading is complete.
+   */
+  // Track which texture-preview tab is currently reloading (for the spinner)
+  const [reloadingTexTabId, setReloadingTexTabId] = useState<string | null>(null);
+  // Per-tab last-seen mtime (seconds since epoch); used by the auto-reload poller
+  const texMtimeRef = useRef<Map<string, number>>(new Map());
+  // Interval handle for the file-watch poll loop
+  const texPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadTextureIntoTab = useCallback(async (tabId: string, resolvedPath: string, silent = false) => {
+    if (!silent) setReloadingTexTabId(tabId);
+    try {
+      const b64: string = await invoke('read_file_base64', { path: resolvedPath });
+      const binaryStr = atob(b64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+      const { dataURL, width, height, format } = texBufferToDataURL(bytes.buffer);
+      setTabs(prev => prev.map(t =>
+        t.id === tabId
+          ? { ...t, textureDataUrl: dataURL, textureWidth: width, textureHeight: height, textureFormat: format, textureError: null }
+          : t
+      ));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setTabs(prev => prev.map(t =>
+        t.id === tabId ? { ...t, textureError: msg } : t
+      ));
+    } finally {
+      if (!silent) setReloadingTexTabId(null);
+    }
+  }, []);
+
+  /** Manual reload triggered by the Reload button */
+  const handleTexReload = useCallback(() => {
+    const tab = tabs.find(t => t.id === activeTabId && t.tabType === 'texture-preview');
+    if (!tab?.filePath) return;
+    // Reset the stored mtime so the poller doesn't double-fire
+    texMtimeRef.current.delete(tab.id);
+    loadTextureIntoTab(tab.id, tab.filePath);
+  }, [tabs, activeTabId, loadTextureIntoTab]);
+
+  // Auto-reload: poll the active texture tab's file mtime every 1.5 s
+  useEffect(() => {
+    // Clear any existing poll
+    if (texPollIntervalRef.current) {
+      clearInterval(texPollIntervalRef.current);
+      texPollIntervalRef.current = null;
+    }
+
+    const tab = tabs.find(t => t.id === activeTabId);
+    if (!tab || tab.tabType !== 'texture-preview' || !tab.filePath) return;
+
+    const filePath = tab.filePath;
+    const tabId = tab.id;
+
+    texPollIntervalRef.current = setInterval(async () => {
+      try {
+        const mtime = await invoke<number>('get_file_mtime', { path: filePath });
+        const last = texMtimeRef.current.get(tabId);
+        if (last === undefined) {
+          // First reading — just store it, don't reload
+          texMtimeRef.current.set(tabId, mtime);
+        } else if (mtime !== last) {
+          texMtimeRef.current.set(tabId, mtime);
+          // File changed on disk — silently reload
+          await loadTextureIntoTab(tabId, filePath, true);
+        }
+      } catch {
+        // File temporarily locked while being written — ignore and retry next tick
+      }
+    }, 1500);
+
+    return () => {
+      if (texPollIntervalRef.current) {
+        clearInterval(texPollIntervalRef.current);
+        texPollIntervalRef.current = null;
+      }
+    };
+  }, [activeTabId, tabs, loadTextureIntoTab]);
+
+  /**
+   * Resolve a .tex asset path and decode it for the hover popup.
+   * Called whenever the popup's rawPath changes.
+   */
+  const loadTextureForPopup = useCallback(async (rawPath: string, baseFile: string | null) => {
+    try {
+      const resolved: string | null = baseFile
+        ? await invoke('resolve_asset_path', { baseFile, assetPath: rawPath })
+        : null;
+
+      if (!resolved) {
+        setTexPopup(prev =>
+          prev?.rawPath === rawPath
+            ? { ...prev, error: `File not found: ${rawPath}`, resolvedPath: null }
+            : prev
+        );
+        return;
+      }
+
+      const b64: string = await invoke('read_file_base64', { path: resolved });
+      const binaryStr = atob(b64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+      const { dataURL, width, height, format } = texBufferToDataURL(bytes.buffer);
+
+      // Import lazily to keep bundle tidy
+      const { formatName } = await import('./lib/texFormat');
+
+      setTexPopup(prev =>
+        prev?.rawPath === rawPath
+          ? {
+              ...prev,
+              resolvedPath: resolved,
+              imageDataUrl: dataURL,
+              texWidth: width,
+              texHeight: height,
+              formatStr: formatName(format),
+              formatNum: format,
+              error: null,
+            }
+          : prev
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setTexPopup(prev =>
+        prev?.rawPath === rawPath
+          ? { ...prev, error: msg, resolvedPath: null }
+          : prev
+      );
+    }
+  }, []);
+
+  /** Schedule dismissal of the hover popup (can be cancelled if mouse re-enters) */
+  const scheduleTexPopupHide = useCallback(() => {
+    if (texHideTimeoutRef.current) clearTimeout(texHideTimeoutRef.current);
+    texHideTimeoutRef.current = setTimeout(() => {
+      if (!isMouseOverPopupRef.current) {
+        setTexPopup(null);
+      }
+    }, 280);
+  }, []);
+
+  /** Open a full-size texture preview tab for the currently shown popup */
+  const handleTexOpenFull = useCallback(() => {
+    const popup = texPopupRef.current;
+    if (!popup?.resolvedPath) return;
+    setTexPopup(null);
+
+    // Check if already open
+    const existing = tabs.find(t => t.filePath === popup.resolvedPath && t.tabType === 'texture-preview');
+    if (existing) {
+      setActiveTabId(existing.id);
+      return;
+    }
+
+    const newTab = createTexPreviewTab(popup.resolvedPath);
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+
+    // Load texture data into the new tab
+    loadTextureIntoTab(newTab.id, popup.resolvedPath);
+  }, [tabs, loadTextureIntoTab]);
+
+  /** Open the file in the configured image editor (or OS default) */
+  const handleTexEditImage = useCallback(async (resolvedPath: string | null | undefined) => {
+    const path = resolvedPath ?? texPopupRef.current?.resolvedPath;
+    if (!path) return;
+    try {
+      await invoke('open_tex_for_edit', { filePath: path });
+    } catch (err) {
+      setStatusMessage(`Edit Image: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, []);
+
   const handleEditorMount = (editor: MonacoType.editor.IStandaloneCodeEditor) => {
     // Clean up any previous subscriptions before creating new ones
     editorDisposablesRef.current.forEach(disposable => {
@@ -1048,6 +1290,76 @@ function App() {
         if (caretUpdateTimeoutRef.current) clearTimeout(caretUpdateTimeoutRef.current);
       }
     });
+
+    // ── Texture path hover detection ──────────────────────────────────────
+    const texMoveHideTimeout = { current: null as ReturnType<typeof setTimeout> | null };
+    let lastTexPath = '';
+
+    const mouseMoveDisposable = editor.onMouseMove((e) => {
+      if (!e.target.position) {
+        // Mouse left the editor text area - schedule hide
+        if (texMoveHideTimeout.current) clearTimeout(texMoveHideTimeout.current);
+        texMoveHideTimeout.current = setTimeout(() => {
+          if (!isMouseOverPopupRef.current) setTexPopup(null);
+        }, 280);
+        return;
+      }
+
+      const model = editor.getModel();
+      if (!model) return;
+
+      const line = model.getLineContent(e.target.position.lineNumber);
+      const texPath = extractTexPathAtColumn(line, e.target.position.column);
+
+      if (texPath) {
+        if (texMoveHideTimeout.current) clearTimeout(texMoveHideTimeout.current);
+
+        if (texPath !== lastTexPath) {
+          lastTexPath = texPath;
+          // Get the base file path from the currently active tab
+          const baseFile = activeTabRef.current?.filePath ?? null;
+          setTexPopup({
+            x: e.event.posx,
+            y: e.event.posy,
+            rawPath: texPath,
+            resolvedPath: null,
+            imageDataUrl: null,
+            texWidth: 0,
+            texHeight: 0,
+            formatStr: '',
+            formatNum: 0,
+            error: null,
+          });
+          // Kick off async load
+          loadTextureForPopup(texPath, baseFile);
+        } else {
+          // Same path - just update position
+          setTexPopup(prev => prev ? { ...prev, x: e.event.posx, y: e.event.posy } : prev);
+        }
+      } else {
+        lastTexPath = '';
+        if (texMoveHideTimeout.current) clearTimeout(texMoveHideTimeout.current);
+        texMoveHideTimeout.current = setTimeout(() => {
+          if (!isMouseOverPopupRef.current) setTexPopup(null);
+        }, 280);
+      }
+    });
+    editorDisposablesRef.current.push(mouseMoveDisposable);
+    editorDisposablesRef.current.push({
+      dispose: () => {
+        if (texMoveHideTimeout.current) clearTimeout(texMoveHideTimeout.current);
+      }
+    });
+
+    const mouseLeaveDisposable = editor.onMouseLeave(() => {
+      lastTexPath = '';
+      if (texMoveHideTimeout.current) clearTimeout(texMoveHideTimeout.current);
+      texMoveHideTimeout.current = setTimeout(() => {
+        if (!isMouseOverPopupRef.current) setTexPopup(null);
+      }, 280);
+    });
+    editorDisposablesRef.current.push(mouseLeaveDisposable);
+    // ── End texture hover detection ───────────────────────────────────────
 
     // Restore view state for active tab (model-switching effect will handle this on tab changes)
     // On initial mount, trigger model setup for the first tab
@@ -1570,7 +1882,29 @@ function App() {
           Unmounting Monaco while a requestAnimationFrame render is in-flight
           causes "Cannot read properties of undefined (reading 'domNode')".
           We hide it with display:none when there are no tabs instead. */}
-      <div className="editor-container" style={tabs.length === 0 ? { display: 'none' } : undefined}>
+      {/* Texture-preview tab: shown instead of Monaco when active tab is a texture */}
+      {activeTab?.tabType === 'texture-preview' && activeTab.filePath && (
+        <TexturePreviewTab
+          filePath={activeTab.filePath}
+          imageDataUrl={activeTab.textureDataUrl ?? null}
+          texWidth={activeTab.textureWidth ?? 0}
+          texHeight={activeTab.textureHeight ?? 0}
+          format={activeTab.textureFormat ?? 0}
+          error={activeTab.textureError ?? null}
+          isReloading={reloadingTexTabId === activeTab.id}
+          onEditImage={() => handleTexEditImage(activeTab.filePath)}
+          onReload={handleTexReload}
+        />
+      )}
+
+      <div
+        className="editor-container"
+        style={
+          tabs.length === 0 || activeTab?.tabType === 'texture-preview'
+            ? { display: 'none' }
+            : undefined
+        }
+      >
         <Editor
           height="100%"
           defaultLanguage={RITOBIN_LANGUAGE_ID}
@@ -1584,7 +1918,7 @@ function App() {
             scrollBeyondLastLine: false,
             automaticLayout: true,
             fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
-            fixedOverflowWidgets: true, // Render tooltips outside editor container
+            fixedOverflowWidgets: true,
             find: {
               addExtraSpaceOnTop: false,
               autoFindInSelection: 'never',
@@ -1596,7 +1930,7 @@ function App() {
             } as any),
           }}
         />
-        {activeTab && (
+        {activeTab && activeTab.tabType !== 'texture-preview' && (
           <GeneralEditPanel
             isOpen={generalEditPanelOpen}
             onClose={() => setGeneralEditPanelOpen(false)}
@@ -1604,7 +1938,7 @@ function App() {
             onContentChange={handleGeneralEditContentChange}
           />
         )}
-        {activeTab && (
+        {activeTab && activeTab.tabType !== 'texture-preview' && (
           <ParticleEditorPanel
             isOpen={particlePanelOpen}
             onClose={() => setParticlePanelOpen(false)}
@@ -1615,6 +1949,34 @@ function App() {
           />
         )}
       </div>
+
+      {/* Texture hover popup */}
+      {texPopup && (
+        <TexHoverPopup
+          x={texPopup.x}
+          y={texPopup.y}
+          rawPath={texPopup.rawPath}
+          resolvedPath={texPopup.resolvedPath}
+          imageDataUrl={texPopup.imageDataUrl}
+          texWidth={texPopup.texWidth}
+          texHeight={texPopup.texHeight}
+          formatName={texPopup.formatStr}
+          error={texPopup.error}
+          onOpenFull={handleTexOpenFull}
+          onEditImage={() => handleTexEditImage(texPopup.resolvedPath)}
+          onDismiss={() => {
+            isMouseOverPopupRef.current = false;
+            scheduleTexPopupHide();
+          }}
+          onMouseEnter={() => {
+            isMouseOverPopupRef.current = true;
+            if (texHideTimeoutRef.current) {
+              clearTimeout(texHideTimeoutRef.current);
+              texHideTimeoutRef.current = null;
+            }
+          }}
+        />
+      )}
 
       <StatusBar
         status={statusText}
@@ -1663,6 +2025,8 @@ function App() {
           onStatusUpdate={setStatusMessage}
         />
       )}
+
+      <SmokeOverlay active={cigaretteMode} />
     </div>
   );
 }

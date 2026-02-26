@@ -187,6 +187,12 @@ pub fn run() {
             extra_commands::check_for_update,
             extra_commands::start_update_download,
             extra_commands::run_installer,
+            // Texture preview
+            app_commands::get_file_mtime,
+            app_commands::read_file_base64,
+            app_commands::resolve_asset_path,
+            app_commands::detect_image_editors,
+            app_commands::open_tex_for_edit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -44,6 +44,7 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
     const [overrideSyntax, setOverrideSyntax] = useState(false);
     const [roundedCorners, setRoundedCorners] = useState(true);
     const [modernUI, setModernUI] = useState(true);
+    const [cigaretteMode, setCigaretteMode] = useState(false);
 
     const [customTheme, setCustomTheme] = useState<CustomTheme>({
         windowBg: '#0F1928',
@@ -65,8 +66,9 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             const syntaxTheme= await invoke<string>('get_preference', { key: 'SyntaxTheme',   defaultValue: 'Default' });
             const override   = await invoke<string>('get_preference', { key: 'OverrideSyntax',defaultValue: 'false'   });
             const useCustom  = await invoke<string>('get_preference', { key: 'UseCustomTheme',defaultValue: 'false'   });
-            const rounded    = await invoke<string>('get_preference', { key: 'RoundedCorners', defaultValue: 'true'   });
-            const modern     = await invoke<string>('get_preference', { key: 'ModernUI',       defaultValue: 'true'   });
+            const rounded    = await invoke<string>('get_preference', { key: 'RoundedCorners',  defaultValue: 'true'  });
+            const modern     = await invoke<string>('get_preference', { key: 'ModernUI',        defaultValue: 'true'  });
+            const cigarette  = await invoke<string>('get_preference', { key: 'CigaretteMode',   defaultValue: 'false' });
 
             setSelectedTheme(theme);
             setSelectedSyntaxTheme(syntaxTheme);
@@ -74,6 +76,7 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             setUseCustomTheme(useCustom === 'true');
             setRoundedCorners(rounded === 'true');
             setModernUI(modern !== 'false');
+            setCigaretteMode(cigarette === 'true');
 
             if (useCustom === 'true') {
                 const customBg          = await invoke<string>('get_preference', { key: 'Custom_Bg',          defaultValue: '#0F1928' });
@@ -112,11 +115,13 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
 
             await invoke('set_preference', { key: 'SyntaxTheme',   value: selectedSyntaxTheme        });
             await invoke('set_preference', { key: 'OverrideSyntax', value: overrideSyntax.toString() });
-            await invoke('set_preference', { key: 'RoundedCorners', value: roundedCorners.toString() });
-            await invoke('set_preference', { key: 'ModernUI',       value: modernUI.toString()        });
+            await invoke('set_preference', { key: 'RoundedCorners', value: roundedCorners.toString()  });
+            await invoke('set_preference', { key: 'ModernUI',       value: modernUI.toString()         });
+            await invoke('set_preference', { key: 'CigaretteMode',  value: cigaretteMode.toString()    });
 
             applyRoundedCorners(roundedCorners);
             applyModernUI(modernUI);
+            window.dispatchEvent(new CustomEvent('cigarette-mode-changed', { detail: cigaretteMode }));
 
             onThemeApplied?.(useCustomTheme ? 'Custom' : selectedTheme);
             alert('Theme applied successfully!');
@@ -303,6 +308,13 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
                         <span style={{ display: 'block', fontSize: 11, opacity: 0.5, fontWeight: 400 }}>
                             Apply rounded corners to panels and buttons
                         </span>
+                    </span>
+                </label>
+                <label className="checkbox-label">
+                    <input type="checkbox" checked={cigaretteMode}
+                        onChange={e => setCigaretteMode(e.target.checked)} />
+                    <span>
+                        <strong>Cigarette Mode</strong>
                     </span>
                 </label>
             </div>

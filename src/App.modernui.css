@@ -49,13 +49,13 @@
     0 0 32px var(--modern-accent-15);
 }
 
-/* ── App container: base bg + ambient radial accent glows ── */
+/* ── App container: subtle vertical gradient (top = editor-bg, same as sticky scroll) ── */
 [data-ui-mode="modern"] .app-container {
-  background-color: var(--window-bg);
-  background-image:
-    radial-gradient(ellipse 60% 40% at 15%  0%,  var(--modern-accent-07) 0%, transparent 70%),
-    radial-gradient(ellipse 50% 35% at 85% 100%,  var(--modern-accent-05) 0%, transparent 65%),
-    radial-gradient(ellipse 40% 30% at 50%  50%, color-mix(in srgb, var(--jade-accent) 3%, transparent) 0%, transparent 60%);
+  background: linear-gradient(
+    to bottom,
+    var(--editor-bg) 0%,
+    color-mix(in srgb, var(--editor-bg) 72%, black) 100%
+  );
   position: relative;
 }
 
@@ -305,9 +305,27 @@
 [data-ui-mode="modern"] .themes-dialog,
 [data-ui-mode="modern"] .about-dialog,
 [data-ui-mode="modern"] .settings-modal,
-[data-ui-mode="modern"] .preferences-modal,
-[data-ui-mode="modern"] .ped-dialog {
+[data-ui-mode="modern"] .preferences-modal {
   background: var(--modern-dialog-bg) !important;
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 12px !important;
+  box-shadow:
+    0 32px 80px rgba(0, 0, 0, 0.60),
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09) !important;
+}
+
+/* Particle editor dialog: same glass shell but with an accent-tinted gradient */
+[data-ui-mode="modern"] .ped-dialog {
+  background:
+    linear-gradient(
+      150deg,
+      color-mix(in srgb, var(--jade-accent) 10%, transparent) 0%,
+      transparent 45%
+    ),
+    var(--modern-dialog-bg) !important;
   backdrop-filter: saturate(180%) blur(24px);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
   border: 1px solid rgba(255, 255, 255, 0.10) !important;
@@ -433,43 +451,183 @@
 }
 
 /* ── Particle Editor Dialog ── */
+
 /* Toolbar */
 [data-ui-mode="modern"] .ped-toolbar {
-  background: rgba(0, 0, 0, 0.15) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.07) !important;
+  background: rgba(0, 0, 0, 0.25) !important;
+  backdrop-filter: var(--modern-blur);
+  -webkit-backdrop-filter: var(--modern-blur);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
 }
 
-/* Content gap between panels */
+/* Content split line */
 [data-ui-mode="modern"] .ped-content {
-  background: rgba(255, 255, 255, 0.06) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
 }
 
-/* Individual panels inside dialog */
+/* Panels */
 [data-ui-mode="modern"] .ped-panel {
-  background: rgba(255, 255, 255, 0.02) !important;
+  background: transparent !important;
 }
 
-/* Panel header strip */
+/* Left panel: darker so items pop against it */
+[data-ui-mode="modern"] .ped-panel-left {
+  background: rgba(0, 0, 0, 0.2) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Section headers */
 [data-ui-mode="modern"] .ped-panel-header {
-  background: rgba(255, 255, 255, 0.04) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.07) !important;
+  background: rgba(0, 0, 0, 0.15) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
 }
 
-/* System header rows */
+/* Footer */
+[data-ui-mode="modern"] .ped-footer {
+  background: rgba(0, 0, 0, 0.15) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 0 0 12px 12px !important;
+}
+
+/*
+ * Inputs: dark inset look so the text fields are clearly defined
+ * containers rather than invisible floating text.
+ */
+[data-ui-mode="modern"] .ped-input {
+  background: rgba(0, 0, 0, 0.35) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 6px !important;
+  color: var(--text-color) !important;
+}
+
+[data-ui-mode="modern"] .ped-input:hover {
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+
+[data-ui-mode="modern"] .ped-input:focus {
+  border-color: var(--jade-accent) !important;
+  box-shadow: 0 0 0 1px var(--modern-accent-35) !important;
+  outline: none !important;
+}
+
+[data-ui-mode="modern"] .ped-input::placeholder {
+  color: rgba(255, 255, 255, 0.3) !important;
+}
+
+/* Buttons: visible glass with strong borders */
+[data-ui-mode="modern"] .ped-btn {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-radius: 6px !important;
+  color: var(--text-color) !important;
+  transition: all 0.15s ease !important;
+}
+
+[data-ui-mode="modern"] .ped-btn:hover {
+  background: rgba(255, 255, 255, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.28) !important;
+}
+
+/* Primary buttons: accent fill, clearly different from regular */
+[data-ui-mode="modern"] .ped-btn.ped-btn-primary {
+  background: var(--modern-accent-40) !important;
+  border-color: var(--jade-accent) !important;
+  color: #fff !important;
+}
+
+[data-ui-mode="modern"] .ped-btn.ped-btn-primary:hover {
+  background: var(--modern-accent-50) !important;
+}
+
+/* Close button: solid accent */
+[data-ui-mode="modern"] .ped-btn.ped-btn-close {
+  background: var(--jade-accent) !important;
+  border-color: var(--jade-accent) !important;
+  color: #fff !important;
+}
+
+[data-ui-mode="modern"] .ped-btn.ped-btn-close:hover {
+  background: color-mix(in srgb, var(--jade-accent) 80%, white) !important;
+  border-color: color-mix(in srgb, var(--jade-accent) 80%, white) !important;
+}
+
+/* Small buttons (0/1 toggles) */
+[data-ui-mode="modern"] .ped-btn.ped-btn-sm {
+  border-radius: 6px !important;
+}
+
+/* System headers */
 [data-ui-mode="modern"] .ped-system-header {
-  background: rgba(255, 255, 255, 0.04) !important;
-  border-color: rgba(255, 255, 255, 0.07) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 6px !important;
+}
+
+[data-ui-mode="modern"] .ped-system-header:hover {
+  background: rgba(255, 255, 255, 0.10) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
 }
 
 [data-ui-mode="modern"] .ped-system-header.has-selection {
-  background: var(--modern-accent-15) !important;
-  border-color: var(--modern-accent-30) !important;
+  background: var(--modern-accent-22) !important;
+  border-color: var(--modern-accent-45) !important;
+  border-left: 3px solid var(--jade-accent) !important;
 }
 
-/* Emitter items */
+[data-ui-mode="modern"] .ped-system-expand {
+  border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .ped-system-expand:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* System count pill */
+[data-ui-mode="modern"] .ped-system-count {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: none !important;
+}
+
+/* Emitter rows */
+[data-ui-mode="modern"] .ped-emitter {
+  border-radius: 5px !important;
+  transition: all 0.12s ease !important;
+}
+
+[data-ui-mode="modern"] .ped-emitter:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Selected emitter: bold accent fill so it's unmistakable */
 [data-ui-mode="modern"] .ped-emitter.selected {
-  background: var(--modern-accent-20) !important;
-  border-color: var(--modern-accent-40) !important;
+  background: var(--modern-accent-45) !important;
+  border-color: transparent !important;
+}
+
+[data-ui-mode="modern"] .ped-emitter.selected .ped-emitter-name {
+  color: #fff !important;
+  font-weight: 600 !important;
+}
+
+[data-ui-mode="modern"] .ped-emitter.selected .ped-prop-tag {
+  background: rgba(255, 255, 255, 0.22) !important;
+  color: #fff !important;
+}
+
+/* "EDITING" label */
+[data-ui-mode="modern"] .ped-props-label {
+  color: var(--text-muted) !important;
+}
+
+/* Property section cards: visible containers, not invisible */
+[data-ui-mode="modern"] .ped-prop-section {
+  background: rgba(0, 0, 0, 0.2) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 8px !important;
+}
+
+[data-ui-mode="modern"] .ped-prop-section:hover {
+  border-color: rgba(255, 255, 255, 0.18) !important;
 }
 
 /* About sections */
@@ -550,20 +708,21 @@
 }
 
 /* ── General Edit Panel: glass card ── */
-[data-ui-mode="modern"] .general-edit-panel-wrapper {
-  backdrop-filter: var(--modern-blur);
-  -webkit-backdrop-filter: var(--modern-blur);
-}
-
+/*
+ * The wrapper covers the full editor area; DO NOT apply backdrop-filter here
+ * or it will blur the entire editor behind the panel.
+ * Glass blur is only applied to the panel itself, which is small and targeted.
+ */
 [data-ui-mode="modern"] .general-edit-panel {
   background: var(--modern-dialog-bg) !important;
   backdrop-filter: saturate(170%) blur(18px);
   -webkit-backdrop-filter: saturate(170%) blur(18px);
   border: 1px solid rgba(255, 255, 255, 0.10) !important;
-  border-radius: 10px !important;
+  /* Top edge flush with tab bar — only bottom corners get radius */
+  border-radius: 0 0 8px 8px !important;
   box-shadow:
-    0 16px 48px rgba(0, 0, 0, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+    0 8px 24px rgba(0, 0, 0, 0.45),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06) !important;
 }
 
 /* ── Particle Editor Panel (inline side panel): glass ── */

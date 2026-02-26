@@ -9,6 +9,17 @@ export interface EditorTab {
     content: string;
     isModified: boolean;
     isPinned: boolean;
+    /** 'editor' (default) or 'texture-preview' */
+    tabType?: 'editor' | 'texture-preview';
+    /** For texture-preview tabs: decoded PNG data URL */
+    textureDataUrl?: string | null;
+    /** For texture-preview tabs: pixel dimensions */
+    textureWidth?: number;
+    textureHeight?: number;
+    /** For texture-preview tabs: TEX format enum value */
+    textureFormat?: number;
+    /** For texture-preview tabs: error string if loading failed */
+    textureError?: string | null;
 }
 
 interface TabBarProps {
@@ -138,7 +149,7 @@ export function getFileName(filePath: string | null): string {
     return parts[parts.length - 1] || 'Untitled';
 }
 
-// Create a new tab object
+// Create a new editor tab object
 export function createTab(filePath: string | null, content: string): EditorTab {
     return {
         id: generateTabId(),
@@ -147,5 +158,25 @@ export function createTab(filePath: string | null, content: string): EditorTab {
         content,
         isModified: false,
         isPinned: false,
+        tabType: 'editor',
+    };
+}
+
+// Create a texture preview tab
+export function createTexPreviewTab(filePath: string): EditorTab {
+    const fileName = getFileName(filePath);
+    return {
+        id: generateTabId(),
+        filePath,
+        fileName,
+        content: '',
+        isModified: false,
+        isPinned: false,
+        tabType: 'texture-preview',
+        textureDataUrl: null,
+        textureWidth: 0,
+        textureHeight: 0,
+        textureFormat: 0,
+        textureError: null,
     };
 }

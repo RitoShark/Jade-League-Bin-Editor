@@ -51,6 +51,11 @@
   --vscode-input-foreground: var(--text-color);
   --vscode-input-border: var(--border-color);
   --jade-accent: var(--button-bg);
+  --jade-accent-text: var(--button-bg); /* brightened version set per-theme by themeApplicator */
+
+  /* Syntax highlight color for string literals / file paths — updated by
+     themeApplicator when a syntax theme is applied */
+  --syntax-string-color: #CE9178;
 }
 
 * {

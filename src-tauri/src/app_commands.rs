@@ -616,3 +616,240 @@ pub async fn add_recent_file(app: tauri::AppHandle, path: String) -> Result<Vec<
     
     Ok(recent)
 }
+
+/// Return the last-modified timestamp (seconds since Unix epoch) for a file.
+/// Used by the texture preview tab to detect external edits.
+#[tauri::command]
+pub async fn get_file_mtime(path: String) -> Result<u64, String> {
+    let meta = fs::metadata(&path)
+        .map_err(|e| format!("Cannot stat '{}': {}", path, e))?;
+    let mtime = meta
+        .modified()
+        .map_err(|e| format!("Cannot read mtime: {}", e))?;
+    let secs = mtime
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    Ok(secs)
+}
+
+/// Read a binary file and return its contents as a base64-encoded string.
+#[tauri::command]
+pub async fn read_file_base64(path: String) -> Result<String, String> {
+    let bytes = fs::read(&path)
+        .map_err(|e| format!("Failed to read file '{}': {}", path, e))?;
+    Ok(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes))
+}
+
+/// Given the path of the currently open file and a relative asset path (e.g.
+/// "ASSETS/Characters/Ahri/...tex"), walk up the directory tree of the open
+/// file looking for a parent that contains the asset and return the first
+/// resolved absolute path that actually exists.
+#[tauri::command]
+pub async fn resolve_asset_path(base_file: String, asset_path: String) -> Result<Option<String>, String> {
+    // Normalise to forward slashes for uniform handling
+    let asset_norm = asset_path.replace('\\', "/");
+
+    // 1. If the asset path is already absolute, check directly.
+    let as_path = std::path::Path::new(&asset_norm);
+    if as_path.is_absolute() {
+        return Ok(if as_path.exists() { Some(asset_norm) } else { None });
+    }
+
+    // 2. Walk up from the directory of base_file.
+    let base = std::path::Path::new(&base_file);
+    let mut dir = if base.is_file() {
+        base.parent().map(|p| p.to_path_buf())
+    } else {
+        Some(base.to_path_buf())
+    };
+
+    while let Some(d) = dir {
+        let candidate = d.join(&asset_norm);
+        if candidate.exists() {
+            return Ok(Some(candidate.to_string_lossy().replace('\\', "/")));
+        }
+        dir = d.parent().map(|p| p.to_path_buf());
+    }
+
+    Ok(None)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Image editor detection + launch
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Try a list of candidate paths; return the first one that exists.
+fn find_exe(candidates: &[&str]) -> Option<String> {
+    for c in candidates {
+        if !c.is_empty() && std::path::Path::new(c).exists() {
+            return Some(c.to_string());
+        }
+    }
+    None
+}
+
+/// Look up an App Paths entry in HKLM (Windows only).
+#[cfg(windows)]
+fn find_exe_via_registry(app_paths_key: &str) -> Option<String> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let variants = [
+        format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{}", app_paths_key),
+        format!(r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\{}", app_paths_key),
+    ];
+    for path in &variants {
+        if let Ok(key) = hklm.open_subkey(path) {
+            if let Ok(exe) = key.get_value::<String, _>("") {
+                if std::path::Path::new(&exe).exists() {
+                    return Some(exe);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn locate_paintnet() -> Option<String> {
+    let r = find_exe(&[
+        r"C:\Program Files\paint.net\paintdotnet.exe",
+        r"C:\Program Files\paint.net\PaintDotNet.exe",
+        r"C:\Program Files (x86)\paint.net\paintdotnet.exe",
+        r"C:\Program Files (x86)\paint.net\PaintDotNet.exe",
+    ]);
+    if r.is_some() { return r; }
+    #[cfg(windows)] { find_exe_via_registry("PaintDotNet.exe") }
+    #[cfg(not(windows))] { None }
+}
+
+fn locate_photoshop() -> Option<String> {
+    // Try common Adobe install paths (newest versions first)
+    let common_bases = [
+        r"C:\Program Files\Adobe",
+        r"C:\Program Files (x86)\Adobe",
+    ];
+    for base in &common_bases {
+        if let Ok(entries) = std::fs::read_dir(base) {
+            let mut dirs: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    let name = e.file_name();
+                    let n = name.to_string_lossy().to_lowercase();
+                    n.starts_with("adobe photoshop")
+                })
+                .collect();
+            // Sort descending so newest version is first
+            dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+            for dir in dirs {
+                let exe = dir.path().join("Photoshop.exe");
+                if exe.exists() {
+                    return Some(exe.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+    #[cfg(windows)] { find_exe_via_registry("Photoshop.exe") }
+    #[cfg(not(windows))] { None }
+}
+
+fn locate_gimp() -> Option<String> {
+    let r = find_exe(&[
+        r"C:\Program Files\GIMP 3\bin\gimp-3.0.exe",
+        r"C:\Program Files\GIMP 2\bin\gimp-2.10.exe",
+        r"C:\Program Files\GIMP 2\bin\gimp-2.0.exe",
+        r"C:\Program Files (x86)\GIMP 2\bin\gimp-2.10.exe",
+    ]);
+    if r.is_some() { return r; }
+    // Try registry
+    #[cfg(windows)]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let search_keys = [
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\GIMP_is1",
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\GIMP_is1",
+        ];
+        for key_path in &search_keys {
+            if let Ok(key) = hklm.open_subkey(key_path) {
+                if let Ok(install_location) = key.get_value::<String, _>("InstallLocation") {
+                    let exe = std::path::Path::new(&install_location).join("bin").join("gimp-2.10.exe");
+                    if exe.exists() { return Some(exe.to_string_lossy().into_owned()); }
+                    let exe3 = std::path::Path::new(&install_location).join("bin").join("gimp-3.0.exe");
+                    if exe3.exists() { return Some(exe3.to_string_lossy().into_owned()); }
+                }
+            }
+        }
+    }
+    None
+}
+
+#[derive(serde::Serialize)]
+pub struct ImageEditorStatus {
+    pub paintnet: bool,
+    pub photoshop: bool,
+    pub gimp: bool,
+}
+
+/// Detect which image editors are installed and return their availability.
+#[tauri::command]
+pub async fn detect_image_editors() -> Result<ImageEditorStatus, String> {
+    Ok(ImageEditorStatus {
+        paintnet:  locate_paintnet().is_some(),
+        photoshop: locate_photoshop().is_some(),
+        gimp:      locate_gimp().is_some(),
+    })
+}
+
+/// Open a .tex file for editing.
+/// Reads the `TexEditorApp` preference (default|paintnet|photoshop|gimp) and
+/// launches the appropriate application. Falls back to the OS default handler.
+#[tauri::command]
+pub async fn open_tex_for_edit(app: tauri::AppHandle, file_path: String) -> Result<(), String> {
+    let pref = get_preference(app, "TexEditorApp".to_string(), "default".to_string())
+        .await
+        .unwrap_or_else(|_| "default".to_string());
+
+    let exe_path: Option<String> = match pref.as_str() {
+        "paintnet"  => locate_paintnet(),
+        "photoshop" => locate_photoshop(),
+        "gimp"      => locate_gimp(),
+        _           => None, // "default" or unknown → use OS default
+    };
+
+    if let Some(exe) = exe_path {
+        std::process::Command::new(&exe)
+            .arg(&file_path)
+            .spawn()
+            .map_err(|e| format!("Failed to launch image editor: {}", e))?;
+        return Ok(());
+    }
+
+    // Open with OS default handler
+    open_with_os_default(&file_path)
+}
+
+/// Open a file with the operating-system default handler.
+///
+/// On Windows we use `cmd /c start "" "path"` which is exactly what Windows
+/// Explorer does when you double-click a file, so it honours whatever default
+/// app the user has set — even for uncommon extensions like `.tex`.
+fn open_with_os_default(file_path: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        // Normalise to backslashes so cmd.exe is happy
+        let win_path = file_path.replace('/', "\\");
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &win_path])
+            .spawn()
+            .map_err(|e| format!("Failed to open file with default handler: {}", e))?;
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        opener::open(file_path)
+            .map_err(|e| format!("Failed to open file with default handler: {}", e))?;
+        Ok(())
+    }
+}

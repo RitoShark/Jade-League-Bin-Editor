@@ -166,6 +166,42 @@
     color: var(--text-color);
 }
 
+/* ── Generic row (label without checkbox) ── */
+.preference-row {
+    padding: 4px 0 2px;
+}
+
+/* ── Select dropdown ── */
+.preference-select {
+    width: 100%;
+    padding: 7px 10px;
+    background: var(--window-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    color: var(--text-color);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23808080' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 30px;
+    transition: border-color 0.15s;
+}
+
+.preference-select:focus,
+.preference-select:hover {
+    border-color: var(--jade-accent, #0e639c);
+}
+
+.preference-select option:disabled {
+    color: var(--text-muted);
+    opacity: 0.5;
+}
+
 /* ── Scrollbar ── */
 .preferences-content::-webkit-scrollbar {
     width: 5px;

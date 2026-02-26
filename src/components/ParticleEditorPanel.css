@@ -153,7 +153,7 @@
 .pep-emitter-name {
   font-size: 12px;
   font-weight: 600;
-  color: var(--jade-accent, #9d8cd9);
+  color: var(--jade-accent-text, var(--jade-accent, #9d8cd9));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -318,7 +318,7 @@
   border-radius: 2px;
   border: 1px solid var(--vscode-widget-border);
   background-color: var(--vscode-input-background);
-  color: var(--jade-accent, #9d8cd9);
+  color: var(--jade-accent-text, var(--jade-accent, #9d8cd9));
   cursor: pointer;
   font-size: 11px;
   font-weight: 600;
@@ -339,7 +339,7 @@
 .pep-emitter-selector-header .pep-section-title {
   flex: 1;
   font-weight: 500;
-  color: var(--jade-accent, #9d8cd9);
+  color: var(--jade-accent-text, var(--jade-accent, #9d8cd9));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -400,7 +400,7 @@
 .pep-emitter-list-system-name {
   font-size: 10px;
   font-weight: 600;
-  color: var(--jade-accent, #9d8cd9);
+  color: var(--jade-accent-text, var(--jade-accent, #9d8cd9));
   padding: 4px 8px 2px;
   opacity: 0.8;
   text-transform: uppercase;
@@ -424,7 +424,7 @@
 
 .pep-emitter-list-item.selected {
   background: rgba(157, 140, 217, 0.2);
-  color: var(--jade-accent, #9d8cd9);
+  color: var(--jade-accent-text, var(--jade-accent, #9d8cd9));
   font-weight: 500;
 }
 
