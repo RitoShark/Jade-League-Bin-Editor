@@ -7,6 +7,8 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-24C8D8?style=for-the-badge&logo=tauri)](https://tauri.app/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE.md)
 
+> **Warning:** this is still in development, expect issues and report them please. [open an issue](https://github.com/LeagueToolkit/Jade-League-Bin-Editor/issues/new) or [dm me on discord](http://discordapp.com/users/464506365402939402)
+
 bin file editor for league of legends modding. rebuilt from scratch in rust + tauri so its actually fast now i guess
 
 ## Features
