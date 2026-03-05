@@ -1,129 +1,105 @@
 # Jade
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-7.0-646CFF?style=for-the-badge&logo=vite)](https://vitejs.dev/)
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-24C8D8?style=for-the-badge&logo=tauri)](https://tauri.app/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE.md)
 
-A fast, modern bin file editor for League of Legends modding. Built with Rust and Tauri for native performance.
+bin file editor for league of legends modding. rebuilt from scratch in rust + tauri so its actually fast now i guess
 
 ## Features
 
-- Native Ritobin parser written in Rust
-- Monaco editor with custom syntax highlighting
-- Hash file management with auto-download from CommunityDragon
-- Theme customization with built-in and custom themes
-- Linked bin file importing
-- Tab-based editing with multiple files
-- Window state and preferences persistence
-- Auto-updater with signed releases (no manual downloads needed)
-- Launch on Windows startup toggle
-- Minimize to system tray on close
-- `.bin` file association (double-click to open in Jade)
-- Single-instance: re-launching focuses the existing window
+- two converter engines — jade custom (native rust) and ltk, you can switch between them in settings
+- monaco editor with syntax highlighting for the bin text format
+- hash file management with auto-download from communitydragon
+- texture preview with hover popups so you can actually see what youre looking at
+- particle editor for uh tweaking particle systems visually
+- quartz integration — detects when external tools modify your open files
+- theme customization with built-in and custom themes
+- custom app icon (click it in the about dialog)
+- linked bin file importing
+- tab-based editing with drag and drop support
+- window state and preferences persistence
+- launch on windows startup toggle
+- minimize to system tray on close
+- `.bin` file association (double-click to open in jade)
+- single-instance mode so it doesnt open a million windows i guess
 
-## Requirements
+## Download
 
-- [Node.js](https://nodejs.org/) (v18+)
-- [Rust](https://rustup.rs/) (stable)
-- [pnpm](https://pnpm.io/) or npm
+grab the latest release from the [releases page](https://github.com/LeagueToolkit/Jade-League-Bin-Editor/releases). just run the installer and youre good
 
-## Installation
+## Building from source
+
+you need [Node.js](https://nodejs.org/) (v18+) and [Rust](https://rustup.rs/) (stable)
 
 ```bash
-# Clone the repository
 git clone https://github.com/LeagueToolkit/Jade-League-Bin-Editor.git
 cd Jade-League-Bin-Editor
 
-# Switch to the jade-rust branch
-git checkout jade-rust
-
-# Install dependencies
 npm install
 
-# Run in development mode
+# dev mode
 npm run tauri dev
 
-# Build for production
+# release build
 npm run tauri build
 ```
+
+the built installer ends up in `src-tauri/target/release/bundle/nsis/`
 
 ## Project Structure
 
 ```
-├── .github/workflows/      # CI/CD - release.yml triggers on v* tags
-├── src/                    # React frontend
-│   ├── components/         # UI components (UpdaterDialog, SettingsDialog, …)
-│   └── lib/                # Utilities and parsers
-├── src-tauri/              # Rust backend
+├── src/                    # react frontend
+│   ├── App.tsx             # main app component (its big)
+│   ├── components/         # ui components
+│   └── lib/                # utilities, parsers, theme stuff
+├── src-tauri/              # rust backend
 │   └── src/
-│       ├── core/           # Bin parser, hash table
-│       ├── bin_commands.rs # File operations
-│       ├── hash_commands.rs# Hash management
-│       ├── app_commands.rs # App preferences & window state
-│       └── extra_commands.rs # Autostart, .bin association, updater
+│       ├── core/           # bin parser, hash table, jade converter engine
+│       ├── bin_commands.rs  # file conversion commands
+│       ├── hash_commands.rs # hash management
+│       ├── app_commands.rs  # preferences, window state, icon management
+│       └── extra_commands.rs # autostart, file association, updater
 ```
 
 ## Keyboard Shortcuts
 
 ### File
-- **Ctrl+O** - Open file (when on welcome screen) / Toggle General Editing panel (when file is open)
-- **Ctrl+S** - Save file
-- **Ctrl+Shift+S** - Save As...
+- **Ctrl+O** — open file (welcome screen) / toggle general editing panel (when file is open)
+- **Ctrl+S** — save
+- **Ctrl+Shift+S** — save as
 
 ### Edit
-- **Ctrl+Z** - Undo
-- **Ctrl+Y** - Redo
-- **Ctrl+X** - Cut
-- **Ctrl+C** - Copy
-- **Ctrl+V** - Paste
-- **Ctrl+A** - Select All
-- **Ctrl+F** - Find
-- **Ctrl+H** - Replace
-- **Ctrl+D** - Compare Files
+- **Ctrl+Z** — undo
+- **Ctrl+Y** — redo
+- **Ctrl+F** — find
+- **Ctrl+H** — replace
+- **Ctrl+D** — compare files
 
 ### Tools
-- **Ctrl+P** - Toggle Particle Editing panel (bin files only)
-- **Ctrl+Shift+P** - Toggle Particle Editor dialog (bin files only)
+- **Ctrl+P** — toggle particle editing panel
+- **Ctrl+Shift+P** — open particle editor dialog
 
 ### Navigation
-- **Ctrl+W** - Close current tab
-- **Ctrl+Tab** - Switch to next tab
-- **Ctrl+Shift+Tab** - Switch to previous tab
-- **Escape** - Close all panels/dialogs
+- **Ctrl+W** — close current tab
+- **Ctrl+Tab** — next tab
+- **Ctrl+Shift+Tab** — previous tab
+- **Escape** — close all panels/dialogs
 
 ## Configuration
 
-Hash files are stored in `%APPDATA%\LeagueToolkit\Requirements\Hashes` and can be downloaded automatically through the Settings dialog.
+hash files are stored in `%APPDATA%\LeagueToolkit\Requirements\Hashes` and can be downloaded automatically through settings. you can also preload them on startup if you want i guess
 
-## Releasing
+## Issues
 
-The GitHub Actions workflow at `.github/workflows/release.yml` builds and publishes a signed installer whenever you push a version tag:
-
-```bash
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-This will:
-1. Build the Tauri app on `windows-latest`
-2. Sign the installer with your private key
-3. Generate `latest.json` for the auto-updater endpoint
-4. Create a GitHub Release with the installer, `.sig`, and `latest.json` attached
-
-### Required GitHub Secrets
-
-Set these once in **Settings → Secrets and variables → Actions**:
-
-| Secret | Description |
-|---|---|
-| `TAURI_SIGNING_PRIVATE_KEY` | Base64-encoded private key from `tauri signer generate` |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for the private key (empty string if none) |
-
-The `tauri.conf.json` `updater.pubkey` field must contain the matching **public** key so the app can verify downloaded updates.
+if something breaks:
+- [open a github issue](https://github.com/LeagueToolkit/Jade-League-Bin-Editor/issues/new)
+- [dm me on discord](http://discordapp.com/users/464506365402939402)
 
 ## License
 
-See [LICENSE.md](LICENSE.md) for details.
+see [LICENSE.md](LICENSE.md)
