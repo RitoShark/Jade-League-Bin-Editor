@@ -4,7 +4,25 @@ use serde::{Deserialize, Serialize};
 use byteorder::{WriteBytesExt, LittleEndian};
 use std::io::Write;
 use crate::core::hash::get_leaguetoolkit_hash_dir;
-use crate::core::bin::get_cached_bin_hashes;
+use crate::core::bin::{get_cached_bin_hashes, are_hashes_loaded, estimate_ltk_hash_memory};
+use crate::core::bin::jade::hash_manager as jade_hashes;
+
+/// Check which converter engine is active (true = jade, false = ltk).
+fn is_jade_engine() -> bool {
+    let pref_file = if let Ok(appdata) = std::env::var("APPDATA") {
+        std::path::PathBuf::from(appdata).join("LeagueToolkit").join("Jade").join("preferences.json")
+    } else {
+        return true;
+    };
+    if let Ok(content) = std::fs::read_to_string(&pref_file) {
+        if let Ok(prefs) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(engine) = prefs.get("ConverterEngine").and_then(|v| v.as_str()) {
+                return engine == "jade";
+            }
+        }
+    }
+    true // default to Jade Custom
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HashStatus {
@@ -178,35 +196,65 @@ fn write_string(writer: &mut impl Write, value: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Preload hashes into RAM for instant bin file conversion
-/// This uses the cached hash provider from ltk_bridge
+/// Preload hashes into RAM for instant bin file conversion.
+/// Only loads the active engine's cache to avoid double memory usage.
 #[tauri::command]
 pub async fn preload_hashes() -> Result<PreloadStatus, String> {
-    // Trigger cache initialization by accessing it
-    let hashes = get_cached_bin_hashes().read();
-    let total = hashes.total_count();
-    
-    Ok(PreloadStatus {
-        loaded: true,
-        loading: false,
-        fnv_count: total,  // Combined count since ltk_ritobin uses different structure
-        xxh_count: 0,
-        memory_bytes: total * 64, // Estimate
-    })
+    if is_jade_engine() {
+        let jade = jade_hashes::get_cached_hashes();
+        Ok(PreloadStatus {
+            loaded: true,
+            loading: false,
+            fnv_count: jade.total_count(),
+            xxh_count: 0,
+            memory_bytes: jade.memory_bytes(),
+        })
+    } else {
+        let count = {
+            let hashes = get_cached_bin_hashes().read();
+            hashes.total_count()
+        };
+        Ok(PreloadStatus {
+            loaded: true,
+            loading: false,
+            fnv_count: count,
+            xxh_count: 0,
+            memory_bytes: estimate_ltk_hash_memory(),
+        })
+    }
 }
 
-/// Check if hashes are preloaded
+/// Check if hashes are preloaded — does NOT trigger loading.
+/// Only reports the active engine's cache to avoid confusion.
 #[tauri::command]
 pub async fn get_preload_status() -> PreloadStatus {
-    let hashes = get_cached_bin_hashes().read();
-    let total = hashes.total_count();
-    
-    PreloadStatus {
-        loaded: total > 0,
-        loading: false,
-        fnv_count: total,
-        xxh_count: 0,
-        memory_bytes: total * 64,
+    if is_jade_engine() {
+        if !jade_hashes::are_jade_hashes_loaded() {
+            return PreloadStatus { loaded: false, loading: false, fnv_count: 0, xxh_count: 0, memory_bytes: 0 };
+        }
+        let jade = jade_hashes::get_cached_hashes();
+        PreloadStatus {
+            loaded: true,
+            loading: false,
+            fnv_count: jade.total_count(),
+            xxh_count: 0,
+            memory_bytes: jade.memory_bytes(),
+        }
+    } else {
+        if !are_hashes_loaded() {
+            return PreloadStatus { loaded: false, loading: false, fnv_count: 0, xxh_count: 0, memory_bytes: 0 };
+        }
+        let count = {
+            let hashes = get_cached_bin_hashes().read();
+            hashes.total_count()
+        };
+        PreloadStatus {
+            loaded: true,
+            loading: false,
+            fnv_count: count,
+            xxh_count: 0,
+            memory_bytes: estimate_ltk_hash_memory(),
+        }
     }
 }
 

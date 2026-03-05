@@ -14,7 +14,7 @@ export default function UpdateToast({ version, onOpenSettings, onDismiss }: Upda
 
     return (
         <div className="update-toast">
-            <div className="update-toast-icon">🚀</div>
+            <div className="update-toast-icon">&uarr;</div>
             <div className="update-toast-body">
                 <div className="update-toast-title">Update available — v{version}</div>
                 <div className="update-toast-sub">Open Settings → Updates to download</div>
@@ -24,7 +24,7 @@ export default function UpdateToast({ version, onOpenSettings, onDismiss }: Upda
                     Open Settings
                 </button>
                 <button className="update-toast-btn-dismiss" onClick={onDismiss} title="Dismiss">
-                    ✕
+                    &times;
                 </button>
             </div>
         </div>

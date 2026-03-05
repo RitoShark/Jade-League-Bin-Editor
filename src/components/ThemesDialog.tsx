@@ -9,6 +9,7 @@ import {
     type ThemeColors
 } from '../lib/themes';
 import { applyTheme, applyRoundedCorners, applyModernUI, applyCustomBackground } from '../lib/themeApplicator';
+import { PaletteIcon, SparklesIcon, EyeIcon, ImageIcon, SettingsIcon } from './Icons';
 import './ThemesDialog.css';
 
 interface ThemesDialogProps {
@@ -29,12 +30,12 @@ interface CustomTheme {
 
 type NavSection = 'ui' | 'syntax' | 'preview' | 'background' | 'options';
 
-const NAV_ITEMS: { id: NavSection; label: string; icon: string }[] = [
-    { id: 'ui',      label: 'UI Theme',       icon: '🎨' },
-    { id: 'syntax',  label: 'Syntax Colors',  icon: '✦'  },
-    { id: 'preview', label: 'Live Preview',   icon: '👁'  },
-    { id: 'background', label: 'Background',  icon: 'IMG' },
-    { id: 'options', label: 'Options',        icon: '⚙'  },
+const NAV_ITEMS: { id: NavSection; label: string; icon: React.ReactNode }[] = [
+    { id: 'ui',         label: 'UI Theme',      icon: <PaletteIcon size={15} />  },
+    { id: 'syntax',     label: 'Syntax Colors',  icon: <SparklesIcon size={15} /> },
+    { id: 'preview',    label: 'Live Preview',   icon: <EyeIcon size={15} />     },
+    { id: 'background', label: 'Background',     icon: <ImageIcon size={15} />   },
+    { id: 'options',    label: 'Options',         icon: <SettingsIcon size={15} />},
 ];
 
 export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: ThemesDialogProps) {
@@ -420,14 +421,20 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
 
                 <div className="background-preview">
                     {customBackgroundImage ? (
-                        <div
-                            className="background-preview-image"
-                            style={{
-                                backgroundImage: `url(${customBackgroundImage})`,
-                                filter: `blur(${customBackgroundBlur}px)`,
-                                transform: `scale(${(1 + customBackgroundBlur / 100).toFixed(2)})`
-                            }}
-                        />
+                        <>
+                            <img
+                                src={customBackgroundImage}
+                                className="background-preview-sizer"
+                                alt=""
+                            />
+                            <div
+                                className="background-preview-image"
+                                style={{
+                                    backgroundImage: `url(${customBackgroundImage})`,
+                                    filter: `blur(${customBackgroundBlur}px)`,
+                                }}
+                            />
+                        </>
                     ) : (
                         <div className="background-preview-empty">Image preview</div>
                     )}

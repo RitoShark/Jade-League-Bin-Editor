@@ -2216,12 +2216,13 @@ checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
 name = "jade-rust"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "byteorder",
  "futures",
  "image",
+ "indexmap 2.13.0",
  "libloading 0.8.9",
  "ltk_meta",
  "ltk_ritobin",

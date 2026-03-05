@@ -34,7 +34,7 @@ pub fn bin_to_text_from_data(data: &[u8], _hashtable: Option<&Hashtable>) -> Res
         .map_err(|e| bin_error(format!("Failed to convert to text: {}", e)))
 }
 
-/// Convert a BinTree to Python-like text format
+/// Convert a Bin to Python-like text format
 ///
 /// This is for legacy compatibility - prefer using ltk_bridge::tree_to_text directly
 #[allow(dead_code)]
@@ -43,30 +43,30 @@ pub fn bin_to_text(tree: &BinTree, _hashtable: Option<&Hashtable>) -> Result<Str
         .map_err(|e| bin_error(format!("Failed to convert to text: {}", e)))
 }
 
-/// Convert Python-like text format to BinTree
+/// Convert Python-like text format to Bin
 ///
 /// # Arguments
 /// * `text` - The ritobin text to parse
 /// * `_hashtable` - Optional hashtable (not used in this implementation)
 ///
 /// # Returns
-/// A BinTree structure
+/// A Bin structure
 #[allow(dead_code)]
 pub fn text_to_bin(text: &str, _hashtable: Option<&Hashtable>) -> Result<BinTree> {
     text_to_tree(text)
         .map_err(|e| bin_error(format!("Failed to parse text: {}", e)))
 }
 
-/// Convert a BinTree to JSON format
+/// Convert a Bin to JSON format
 ///
-/// Uses serde serialization of the BinTree structure
+/// Uses serde serialization of the Bin structure
 #[allow(dead_code)]
 pub fn bin_to_json(tree: &BinTree, _hashtable: Option<&Hashtable>) -> Result<String> {
     serde_json::to_string_pretty(tree)
         .map_err(|e| bin_error(format!("JSON serialization failed: {}", e)))
 }
 
-/// Convert JSON format to a BinTree
+/// Convert JSON format to a Bin
 ///
 /// Uses serde deserialization
 #[allow(dead_code)]
@@ -75,14 +75,14 @@ pub fn json_to_bin(json: &str, _hashtable: Option<&Hashtable>) -> Result<BinTree
         .map_err(|e| bin_error(format!("JSON parse error: {}", e)))
 }
 
-/// Read binary data and convert to BinTree
+/// Read binary data and convert to Bin
 #[allow(dead_code)] // Kept for legacy compatibility
 pub fn read_and_parse(data: &[u8]) -> Result<BinTree> {
     read_bin(data)
         .map_err(|e| bin_error(format!("Failed to parse bin: {}", e)))
 }
 
-/// Write BinTree to binary format
+/// Write Bin to binary format
 #[allow(dead_code)] // Kept for legacy compatibility
 pub fn write_to_binary(tree: &BinTree) -> Result<Vec<u8>> {
     write_bin(tree)

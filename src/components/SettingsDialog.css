@@ -191,6 +191,91 @@
     margin: 0;
 }
 
+/* ── Engine switcher (segmented control) ── */
+.engine-switcher {
+    display: flex;
+    padding: 3px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--border-radius);
+    margin-bottom: 16px;
+    gap: 3px;
+}
+
+.engine-option {
+    flex: 1;
+    padding: 10px 16px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: calc(var(--border-radius) - 2px);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    position: relative;
+    letter-spacing: 0.01em;
+}
+
+.engine-option:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-color);
+    border-color: rgba(255, 255, 255, 0.06);
+}
+
+.engine-option.active {
+    background: linear-gradient(
+        135deg,
+        var(--jade-accent, var(--status-bar-bg)),
+        color-mix(in srgb, var(--jade-accent, var(--status-bar-bg)) 75%, white)
+    );
+    color: #ffffff;
+    border-color: transparent;
+    box-shadow:
+        0 2px 8px color-mix(in srgb, var(--jade-accent, var(--status-bar-bg)) 35%, transparent),
+        0 0 0 1px color-mix(in srgb, var(--jade-accent, var(--status-bar-bg)) 20%, transparent);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* ── Engine description card ── */
+.engine-description {
+    padding: 16px 18px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--border-radius);
+    margin-bottom: 12px;
+    transition: all 0.2s ease;
+}
+
+.engine-description-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--jade-accent-text, var(--text-color));
+    display: block;
+    margin-bottom: 6px;
+}
+
+.engine-description-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.55;
+    margin: 0;
+}
+
+/* ── Engine restart notice ── */
+.engine-restart-notice {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: rgba(255, 152, 0, 0.06);
+    border: 1px solid rgba(255, 152, 0, 0.18);
+    border-radius: var(--border-radius);
+    color: #ffb74d;
+    font-size: 12px;
+    font-weight: 500;
+}
+
 /* ── Toggle switch ── */
 .settings-toggle {
     position: relative;

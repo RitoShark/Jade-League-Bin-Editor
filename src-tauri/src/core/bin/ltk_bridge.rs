@@ -32,7 +32,7 @@ pub type Result<T> = std::result::Result<T, BinError>;
 /// * `data` - The binary data to parse
 ///
 /// # Returns
-/// A `BinTree` structure containing the parsed data
+/// A `Bin` structure containing the parsed data
 ///
 /// # Safety
 /// This function validates file size and magic bytes to prevent memory issues
@@ -125,10 +125,10 @@ pub fn read_bin(data: &[u8]) -> Result<BinTree> {
     }
 }
 
-/// Write a BinTree to binary format.
+/// Write a Bin to binary format.
 ///
 /// # Arguments
-/// * `tree` - The BinTree to serialize
+/// * `tree` - The Bin to serialize
 ///
 /// # Returns
 /// A Vec<u8> containing the binary data
@@ -139,10 +139,10 @@ pub fn write_bin(tree: &BinTree) -> Result<Vec<u8>> {
     Ok(buffer.into_inner())
 }
 
-/// Convert a BinTree to ritobin text format.
+/// Convert a Bin to ritobin text format.
 ///
 /// # Arguments
-/// * `tree` - The BinTree to convert
+/// * `tree` - The Bin to convert
 ///
 /// # Returns
 /// A String containing the ritobin text format
@@ -151,10 +151,10 @@ pub fn tree_to_text(tree: &BinTree) -> Result<String> {
         .map_err(|e| BinError(format!("Failed to convert to text: {}", e)))
 }
 
-/// Convert a BinTree to ritobin text format with hash name lookup.
+/// Convert a Bin to ritobin text format with hash name lookup.
 ///
 /// # Arguments
-/// * `tree` - The BinTree to convert
+/// * `tree` - The Bin to convert
 /// * `hashes` - Hash provider for name lookup
 ///
 /// # Returns
@@ -275,8 +275,29 @@ pub fn load_bin_hashes() -> HashMapProvider {
 /// This eliminates the massive overhead of loading hash files for every BIN conversion
 static BIN_HASHES_CACHE: OnceLock<RwLock<HashMapProvider>> = OnceLock::new();
 
+/// Check if hashes are already loaded without triggering initialization.
+pub fn are_hashes_loaded() -> bool {
+    BIN_HASHES_CACHE.get().is_some()
+}
+
+/// Estimate actual memory usage of the LTK hash cache (bytes).
+/// Only valid if hashes are already loaded.
+pub fn estimate_ltk_hash_memory() -> usize {
+    match BIN_HASHES_CACHE.get() {
+        Some(lock) => {
+            let hashes = lock.read();
+            // HashMap overhead: ~56 bytes per bucket + key(4) + String(24 + avg content)
+            // Estimate String content at average ~30 bytes
+            let per_entry = 56 + 4 + 24 + 30; // ~114 bytes per entry
+            let count = hashes.total_count();
+            count * per_entry
+        }
+        None => 0,
+    }
+}
+
 /// Get or initialize the cached BIN hash provider
-/// 
+///
 /// This is thread-safe and will only load hashes from disk once.
 /// All subsequent calls return the cached version.
 pub fn get_cached_bin_hashes() -> &'static RwLock<HashMapProvider> {
@@ -288,7 +309,7 @@ pub fn get_cached_bin_hashes() -> &'static RwLock<HashMapProvider> {
     })
 }
 
-/// Convert a BinTree to ritobin text format using the cached hash provider
+/// Convert a Bin to ritobin text format using the cached hash provider
 /// 
 /// This is the preferred method for BIN conversion as it reuses the globally
 /// cached hash provider instead of loading from disk each time.
@@ -297,7 +318,7 @@ pub fn tree_to_text_cached(tree: &BinTree) -> Result<String> {
     tree_to_text_with_hashes(tree, &*hashes)
 }
 
-/// Convert a BinTree to ritobin text format with automatic hash loading
+/// Convert a Bin to ritobin text format with automatic hash loading
 ///
 /// **DEPRECATED**: Use `tree_to_text_cached()` instead for better performance.
 /// This function is kept for backwards compatibility but now uses the cache internally.
@@ -307,25 +328,25 @@ pub fn tree_to_text_with_resolved_names(tree: &BinTree) -> Result<String> {
     tree_to_text_cached(tree)
 }
 
-/// Parse ritobin text format to BinTree.
+/// Parse ritobin text format to Bin.
 ///
 /// # Arguments
 /// * `text` - The ritobin text to parse
 ///
 /// # Returns
-/// A BinTree structure
+/// A Bin structure
 pub fn text_to_tree(text: &str) -> Result<BinTree> {
     ltk_ritobin::parse_to_bin_tree(text)
         .map_err(|e| BinError(format!("Failed to parse text: {}", e)))
 }
 
-/// Get the list of linked/dependency BIN files from a BinTree.
+/// Get the list of linked/dependency BIN files from a Bin.
 #[allow(dead_code)]
 pub fn get_dependencies(tree: &BinTree) -> &[String] {
     &tree.dependencies
 }
 
-/// Set the list of linked/dependency BIN files for a BinTree.
+/// Set the list of linked/dependency BIN files for a Bin.
 #[allow(dead_code)]
 pub fn set_dependencies(tree: &mut BinTree, deps: Vec<String>) {
     tree.dependencies = deps;

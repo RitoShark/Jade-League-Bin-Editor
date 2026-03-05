@@ -3,7 +3,7 @@ interface IconProps {
     className?: string;
 }
 
-// Quartz / Crystal placeholder icon
+// Quartz / Export arrow icon
 export function QuartzIcon({ size = 16, className = '' }: IconProps) {
     return (
         <svg
@@ -12,15 +12,14 @@ export function QuartzIcon({ size = 16, className = '' }: IconProps) {
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
-            strokeWidth="1.8"
+            strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
             className={className}
         >
-            <path d="M12 2 4.5 8.5 7 20h10l2.5-11.5L12 2Z" />
-            <path d="M4.5 8.5h15" />
-            <path d="M12 2v18" />
-            <path d="M8 14h8" />
+            <path d="m5 11 7-7 7 7" />
+            <path d="M12 4v14" />
+            <path d="M3 21h18" />
         </svg>
     );
 }
@@ -311,6 +310,89 @@ export function RestoreIcon({ size = 16, className = '' }: IconProps) {
     );
 }
 
+// Eye / Preview Icon
+export function EyeIcon({ size = 16, className = '' }: IconProps) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+            <circle cx="12" cy="12" r="3" />
+        </svg>
+    );
+}
+
+// Image / Picture Icon
+export function ImageIcon({ size = 16, className = '' }: IconProps) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+            <circle cx="9" cy="9" r="2" />
+            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+        </svg>
+    );
+}
+
+// Hash / Number-sign Icon
+export function HashIcon({ size = 16, className = '' }: IconProps) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <line x1="4" x2="20" y1="9" y2="9" />
+            <line x1="4" x2="20" y1="15" y2="15" />
+            <line x1="10" x2="8" y1="3" y2="21" />
+            <line x1="16" x2="14" y1="3" y2="21" />
+        </svg>
+    );
+}
+
+// Arrow Up / Update Icon
+export function ArrowUpIcon({ size = 16, className = '' }: IconProps) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <path d="m5 12 7-7 7 7" />
+            <path d="M12 19V5" />
+        </svg>
+    );
+}
+
 // Submenu Arrow
 export function ChevronRightIcon({ size = 16, className = '' }: IconProps) {
     return (
@@ -326,6 +408,28 @@ export function ChevronRightIcon({ size = 16, className = '' }: IconProps) {
             className={className}
         >
             <path d="m9 18 6-6-6-6" />
+        </svg>
+    );
+}
+
+// Converter / swap arrows icon
+export function ConverterIcon({ size = 16, className = '' }: IconProps) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <path d="M17 1l4 4-4 4" />
+            <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+            <path d="M7 23l-4-4 4-4" />
+            <path d="M21 13v2a4 4 0 0 1-4 4H3" />
         </svg>
     );
 }

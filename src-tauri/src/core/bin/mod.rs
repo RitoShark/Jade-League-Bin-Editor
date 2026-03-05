@@ -1,6 +1,7 @@
 // Bin module exports
 pub mod ltk_bridge;
 pub mod converter;
+pub mod jade;
 
 // Re-export ltk-based functions from bridge
 #[allow(unused_imports)]
@@ -11,6 +12,8 @@ pub use ltk_bridge::{
     tree_to_text_with_resolved_names,
     tree_to_text_cached,
     get_cached_bin_hashes,
+    are_hashes_loaded,
+    estimate_ltk_hash_memory,
     text_to_tree,
     HashMapProvider,
     MAX_BIN_SIZE,

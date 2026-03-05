@@ -64,8 +64,26 @@ export default function AboutDialog({ isOpen, onClose }: AboutDialogProps) {
         }
     };
 
+    const handleClearIcon = async () => {
+        try {
+            await invoke('clear_custom_icon');
+            setAppIcon('/jade.ico');
+            window.dispatchEvent(new CustomEvent('icon-changed', { detail: null }));
+        } catch (error) {
+            console.error('Failed to clear icon:', error);
+        }
+    };
+
     const handleDocumentationClick = () => {
         invoke('open_url', { url: 'https://github.com/LeagueToolkit/Jade-League-Bin-Editor' });
+    };
+
+    const handleReportIssueClick = () => {
+        invoke('open_url', { url: 'https://github.com/LeagueToolkit/Jade-League-Bin-Editor/issues/new' });
+    };
+
+    const handleDiscordClick = () => {
+        invoke('open_url', { url: 'http://discordapp.com/users/464506365402939402' });
     };
 
     if (!isOpen) return null;
@@ -86,14 +104,23 @@ export default function AboutDialog({ isOpen, onClose }: AboutDialogProps) {
                     {/* Left Column: App Info */}
                     <div className="about-column">
                         <div className="about-app-info">
-                            <button
-                                className="about-icon-button"
-                                onClick={handleIconClick}
-                                title="Click to change application icon"
-                            >
-                                <img src={appIcon} alt="Jade" className="about-app-icon" />
-                                <div className="about-icon-edit-badge">✎</div>
-                            </button>
+                            <div className="about-icon-wrapper">
+                                <button
+                                    className="about-icon-button"
+                                    onClick={handleIconClick}
+                                    title="Click to change application icon"
+                                >
+                                    <img src={appIcon} alt="Jade" className="about-app-icon" />
+                                    <div className="about-icon-edit-badge about-icon-badge-left">✎</div>
+                                </button>
+                                {appIcon !== '/jade.ico' && (
+                                    <button
+                                        className="about-icon-clear-badge"
+                                        onClick={handleClearIcon}
+                                        title="Reset to default icon"
+                                    />
+                                )}
+                            </div>
                             <h1 className="about-app-name">Jade</h1>
                             <p className="about-app-subtitle">BIN Editor for League of Legends</p>
                         </div>
@@ -130,6 +157,19 @@ export default function AboutDialog({ isOpen, onClose }: AboutDialogProps) {
                             onClick={handleDocumentationClick}
                         >
                             Documentation
+                        </button>
+                        <div className="about-section-label" style={{ marginTop: '14px' }}>Report an Issue</div>
+                        <button
+                            className="about-doc-button about-report-button"
+                            onClick={handleReportIssueClick}
+                        >
+                            Open GitHub Issue
+                        </button>
+                        <button
+                            className="about-doc-button about-discord-button"
+                            onClick={handleDiscordClick}
+                        >
+                            DM me on Discord
                         </button>
                     </div>
                 </div>

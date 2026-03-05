@@ -1,7 +1,26 @@
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use crate::core::bin::{read_bin_ltk, tree_to_text_cached, text_to_tree, write_bin_ltk, BinTree};
+use crate::core::bin::jade;
 use std::fs;
+
+/// Check if the Jade Custom converter engine is selected.
+fn use_jade_engine() -> bool {
+    let pref_file = if let Ok(appdata) = std::env::var("APPDATA") {
+        PathBuf::from(appdata).join("LeagueToolkit").join("Jade").join("preferences.json")
+    } else {
+        return false;
+    };
+
+    if let Ok(content) = fs::read_to_string(&pref_file) {
+        if let Ok(prefs) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(engine) = prefs.get("ConverterEngine").and_then(|v| v.as_str()) {
+                return engine == "jade";
+            }
+        }
+    }
+    true // default to Jade Custom
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BinInfo {
@@ -23,7 +42,11 @@ pub async fn convert_bin_to_text(input_path: String) -> Result<BinInfo, String> 
     let data = std::fs::read(&input_path)
         .map_err(|e| format!("Failed to read input file: {}", e))?;
 
-    let text = convert_bin_data_to_text(&data)?;
+    let text = if use_jade_engine() {
+        jade::convert_bin_to_text(&data)?
+    } else {
+        convert_bin_data_to_text(&data)?
+    };
 
     Ok(BinInfo {
         success: true,
@@ -34,23 +57,24 @@ pub async fn convert_bin_to_text(input_path: String) -> Result<BinInfo, String> 
 
 #[tauri::command]
 pub async fn convert_text_to_bin(text_content: String, output_path: String) -> Result<BinInfo, String> {
-    // Debug: Log the first 200 chars safely
     let preview: String = text_content.chars().take(200).collect();
     println!("[convert_text_to_bin] Parsing {} bytes, preview:\n{}", text_content.len(), preview);
-    
-    // Parse the ritobin text to BinTree
-    let tree = text_to_tree(&text_content)
-        .map_err(|e| format!("Failed to parse ritobin text: {}", e))?;
-    
-    println!("[convert_text_to_bin] Parsed successfully: {} objects", tree.objects.len());
-    
-    // Write to binary
-    let bin_data = write_bin_ltk(&tree)
-        .map_err(|e| format!("Failed to write binary: {}", e))?;
-    
+
+    let bin_data = if use_jade_engine() {
+        println!("[convert_text_to_bin] Using Jade Custom engine");
+        jade::convert_text_to_bin(&text_content)?
+    } else {
+        println!("[convert_text_to_bin] Using LTK engine");
+        let tree = text_to_tree(&text_content)
+            .map_err(|e| format!("Failed to parse ritobin text: {}", e))?;
+        println!("[convert_text_to_bin] Parsed successfully: {} objects", tree.objects.len());
+        write_bin_ltk(&tree)
+            .map_err(|e| format!("Failed to write binary: {}", e))?
+    };
+
     std::fs::write(&output_path, &bin_data)
         .map_err(|e| format!("Failed to write output file: {}", e))?;
-    
+
     Ok(BinInfo {
         success: true,
         message: format!("Saved: {}", output_path),
@@ -67,12 +91,13 @@ pub async fn batch_convert_bins(input_paths: Vec<String>) -> Result<Vec<BatchCon
     }
     
     let start = std::time::Instant::now();
-    println!("[BatchConvert] Converting {} files", input_paths.len());
-    
+    let use_jade = use_jade_engine();
+    println!("[BatchConvert] Converting {} files (engine: {})", input_paths.len(), if use_jade { "Jade Custom" } else { "LTK" });
+
     let mut results = Vec::with_capacity(input_paths.len());
-    
+
     for path in input_paths {
-        let result = convert_single_bin(&path);
+        let result = convert_single_bin(&path, use_jade);
         results.push(result);
     }
     
@@ -82,8 +107,7 @@ pub async fn batch_convert_bins(input_paths: Vec<String>) -> Result<Vec<BatchCon
 }
 
 /// Convert a single bin file
-fn convert_single_bin(input_path: &str) -> BatchConvertResult {
-    // Read file
+fn convert_single_bin(input_path: &str, use_jade: bool) -> BatchConvertResult {
     let data = match std::fs::read(input_path) {
         Ok(d) => d,
         Err(e) => return BatchConvertResult {
@@ -93,9 +117,14 @@ fn convert_single_bin(input_path: &str) -> BatchConvertResult {
             error: Some(format!("Failed to read file: {}", e)),
         },
     };
-    
-    // Convert using the cached hash provider
-    match convert_bin_data_to_text(&data) {
+
+    let result = if use_jade {
+        jade::convert_bin_to_text(&data)
+    } else {
+        convert_bin_data_to_text(&data)
+    };
+
+    match result {
         Ok(text) => BatchConvertResult {
             path: input_path.to_string(),
             success: true,
@@ -122,7 +151,7 @@ fn convert_bin_data_to_text(bin_data: &[u8]) -> Result<String, String> {
             return Ok(text.to_string());
         }
         
-        // JSON format (BinTree serialized)
+        // JSON format (Bin serialized)
         if trimmed.starts_with('{') {
             let tree: BinTree = serde_json::from_str(text)
                 .map_err(|e| format!("Failed to parse JSON: {}", e))?;

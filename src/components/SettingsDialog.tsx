@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { HashIcon, SettingsIcon, ArrowUpIcon, ConverterIcon } from './Icons';
 import './SettingsDialog.css';
 
 interface SettingsDialogProps {
@@ -31,12 +32,13 @@ interface PreloadStatus {
     memory_bytes: number;
 }
 
-type NavSection = 'hashes' | 'behavior' | 'updates';
+type NavSection = 'hashes' | 'converter' | 'behavior' | 'updates';
 
-const NAV_ITEMS: { id: NavSection; label: string; icon: string }[] = [
-    { id: 'hashes',   label: 'Hash Files',   icon: '#' },
-    { id: 'behavior', label: 'App Behavior',  icon: '⚙' },
-    { id: 'updates',  label: 'Updates',       icon: '↑' },
+const NAV_ITEMS: { id: NavSection; label: string; icon: React.ReactNode }[] = [
+    { id: 'hashes',    label: 'Hash Files',    icon: <HashIcon size={15} />     },
+    { id: 'converter', label: 'Converter',     icon: <ConverterIcon size={15} /> },
+    { id: 'behavior',  label: 'App Behavior',  icon: <SettingsIcon size={15} /> },
+    { id: 'updates',   label: 'Updates',        icon: <ArrowUpIcon size={15} /> },
 ];
 
 /** Simple toggle-row with a native checkbox styled as a pill switch */
@@ -85,6 +87,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
     const [minimizeToTray, setMinimizeToTray] = useState(false);
     const [runAtStartup, setRunAtStartup] = useState(false);
     const [isRegistered, setIsRegistered] = useState(false);
+    const [converterEngine, setConverterEngine] = useState<string>('jade');
+    const [engineChanged, setEngineChanged] = useState(false);
 
     useEffect(() => {
         if (isOpen) {
@@ -109,6 +113,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             setIsRegistered(await invoke<boolean>('get_bin_association_status'));
             setAutoCheckUpdates((await invoke<string>('get_preference', { key: 'AutoCheckUpdates', defaultValue: 'True' })) === 'True');
             setSilentUpdate((await invoke<string>('get_preference', { key: 'SilentUpdate', defaultValue: 'False' })) === 'True');
+            setConverterEngine(await invoke<string>('get_preference', { key: 'ConverterEngine', defaultValue: 'jade' }));
+            setEngineChanged(false);
         } catch (e) { console.error(e); }
     };
 
@@ -127,7 +133,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         setDownloadStatus('Downloading hash files from CommunityDragon…');
         try {
             await invoke('download_hashes', { useBinary: binaryFormat });
-            setDownloadStatus('✓ Hash files downloaded successfully.');
+            setDownloadStatus('Hash files downloaded successfully.');
             checkHashStatus();
         } catch (e) { setDownloadStatus(`Error: ${e}`); }
         finally { setIsDownloading(false); }
@@ -163,7 +169,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             setDownloadStatus('Converting text hashes to binary format…');
             try {
                 await invoke('convert_hashes_to_binary');
-                setDownloadStatus('✓ Hashes converted to binary format.');
+                setDownloadStatus('Hashes converted to binary format.');
                 checkHashStatus();
             } catch (e) { setDownloadStatus(`Error: ${e}`); }
         }
@@ -207,10 +213,10 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
 
             <div className="settings-btn-group">
                 <button className="action-button blue" onClick={handleDownloadHashes} disabled={isDownloading}>
-                    {isDownloading ? 'Downloading…' : '↓  Download Hashes'}
+                    {isDownloading ? 'Downloading…' : 'Download Hashes'}
                 </button>
                 <button className="action-button gray" onClick={handleOpenHashesFolder}>
-                    📂  Open Folder
+                    Open Folder
                 </button>
             </div>
 
@@ -218,14 +224,14 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
 
             {hashStatus?.all_present ? (
                 <p className="success-text" style={{ marginBottom: 12 }}>
-                    ✓ All hash files present{hashStatus.format !== 'None' ? ` (${hashStatus.format})` : ''}
+                    All hash files present{hashStatus.format !== 'None' ? ` (${hashStatus.format})` : ''}
                     <span className="location-text" style={{ display: 'block' }}>
                         %APPDATA%\LeagueToolkit\Jade\hashes
                     </span>
                 </p>
             ) : (
                 <p className="warning-text" style={{ marginBottom: 12 }}>
-                    ⚠ Missing {hashStatus?.missing.length ?? 0} hash file(s)
+                    Missing {hashStatus?.missing.length ?? 0} hash file(s)
                 </p>
             )}
 
@@ -238,15 +244,15 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                 onChange={v => { setAutoDownload(v); savePref('AutoDownloadHashes', v); }}
             />
             <ToggleRow
-                label={isPreloading ? 'Preloading…' : 'Preload hashes into RAM'}
-                description="Load all hashes into memory for faster lookups. Uses extra RAM."
+                label={isPreloading ? 'Preloading…' : 'Preload hashes on startup'}
+                description="Load hash tables into memory at startup so the first file opens instantly. Without this, hashes load on first use."
                 checked={preloadHash}
                 disabled={isPreloading}
                 onChange={togglePreloadHash}
             />
-            {preloadStatus?.loaded && (
+            {preloadHash && preloadStatus?.loaded && (
                 <div className="preload-status">
-                    ✓ {preloadStatus.fnv_count + preloadStatus.xxh_count} hashes in RAM
+                    {preloadStatus.fnv_count + preloadStatus.xxh_count} hashes in RAM
                     ({Math.round(preloadStatus.memory_bytes / 1024 / 1024)} MB)
                 </div>
             )}
@@ -291,17 +297,74 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                     try { await invoke('register_bin_association'); setIsRegistered(true); }
                     catch (e) { console.error(e); }
                 }}>
-                    ✓  Register .bin
+                    Register .bin
                 </button>
                 <button className="action-button red" onClick={async () => {
                     try { await invoke('unregister_bin_association'); setIsRegistered(false); }
                     catch (e) { console.error(e); }
                 }}>
-                    ✕  Unregister
+                    Unregister
                 </button>
             </div>
             {isRegistered && (
-                <p className="success-text">✓ Jade is registered as the .bin file handler.</p>
+                <p className="success-text">Jade is registered as the .bin file handler.</p>
+            )}
+        </>
+    );
+
+    const engineDescriptions: Record<string, { title: string; description: string }> = {
+        jade: {
+            title: 'Jade Custom',
+            description: 'A native Rust port of the original C# Jade converter. Built specifically for Jade with reliable read/write support and faster issue resolution.',
+        },
+        ltk: {
+            title: 'LTK Converter',
+            description: 'Uses the League Toolkit community crates for bin conversion. Broadly compatible but may lag behind on fixes due to external maintenance.',
+        },
+    };
+
+    const handleEngineChange = async (engine: string) => {
+        if (engine === converterEngine) return;
+        setConverterEngine(engine);
+        setEngineChanged(true);
+        try { await invoke('set_preference', { key: 'ConverterEngine', value: engine }); }
+        catch (err) { console.error(err); }
+    };
+
+    const renderConverter = () => (
+        <>
+            <h2 className="settings-section-title">Converter Engine</h2>
+            <p className="settings-section-subtitle">Select which engine is used to read and write .bin files.</p>
+
+            <div className="engine-switcher">
+                <button
+                    className={`engine-option${converterEngine === 'jade' ? ' active' : ''}`}
+                    onClick={() => handleEngineChange('jade')}
+                >
+                    Jade Custom
+                </button>
+                <button
+                    className={`engine-option${converterEngine === 'ltk' ? ' active' : ''}`}
+                    onClick={() => handleEngineChange('ltk')}
+                >
+                    LTK Converter
+                </button>
+            </div>
+
+            <div className="engine-description">
+                <span className="engine-description-title">{engineDescriptions[converterEngine].title}</span>
+                <p className="engine-description-text">{engineDescriptions[converterEngine].description}</p>
+            </div>
+
+            {engineChanged && (
+                <div className="engine-restart-notice">
+                    Restart the app to apply this change.
+                    <button className="action-button blue" style={{ marginLeft: 'auto', padding: '6px 14px' }} onClick={() =>
+                        invoke('restart_app').catch(() => window.location.reload())
+                    }>
+                        Restart Now
+                    </button>
+                </div>
             )}
         </>
     );
@@ -332,10 +395,10 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                     onClick={handleCheckForUpdate}
                     disabled={['checking','downloading','installing'].includes(updateState)}
                 >
-                    {updateState === 'checking' ? 'Checking…' : '↑  Check for Updates'}
+                    {updateState === 'checking' ? 'Checking…' : 'Check for Updates'}
                 </button>
-                {updateState === 'up-to-date' && <span className="success-text">✓ Jade is up to date</span>}
-                {updateState === 'error'      && <span className="warning-text">⚠ {updateError}</span>}
+                {updateState === 'up-to-date' && <span className="success-text">Jade is up to date</span>}
+                {updateState === 'error'      && <span className="warning-text">{updateError}</span>}
             </div>
 
             {(['available','downloading','ready','installing'].includes(updateState)) && updateInfo && (
@@ -351,7 +414,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
 
                     {updateState === 'available' && (
                         <button className="action-button blue" onClick={handleDownloadUpdate}>
-                            ↓  Download Update
+                            Download Update
                         </button>
                     )}
 
@@ -381,7 +444,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
 
                     {updateState === 'ready' && (
                         <button className="action-button green" onClick={handleInstall}>
-                            ⚙  Install Update — app will close and installer will open
+                            Install Update — app will close and installer will open
                         </button>
                     )}
 
@@ -395,6 +458,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
 
     const sectionContent: Record<NavSection, () => React.ReactElement> = {
         hashes: renderHashes,
+        converter: renderConverter,
         behavior: renderBehavior,
         updates: renderUpdates,
     };
@@ -409,7 +473,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                         <h2>Settings</h2>
                         <p>Configure application behavior and preferences</p>
                     </div>
-                    <button className="settings-close-btn" onClick={onClose}>✕</button>
+                    <button className="settings-close-btn" onClick={onClose}>&times;</button>
                 </div>
 
                 {/* Body */}
@@ -439,7 +503,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                     <button className="action-button green" onClick={() =>
                         invoke('restart_app').catch(() => window.location.reload())
                     }>
-                        ↺  Restart App
+                        Restart App
                     </button>
                     <button className="action-button gray" onClick={onClose}>Close</button>
                 </div>

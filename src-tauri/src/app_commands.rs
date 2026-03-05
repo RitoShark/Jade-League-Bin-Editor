@@ -327,6 +327,33 @@ pub fn update_window_icon(app: &tauri::AppHandle, icon_path: &str) -> Result<(),
 }
 
 #[tauri::command]
+pub async fn clear_custom_icon(app: tauri::AppHandle) -> Result<(), String> {
+    let config_dir = get_config_dir()?;
+    let pref_file = config_dir.join("preferences.json");
+
+    if pref_file.exists() {
+        let content = fs::read_to_string(&pref_file)
+            .map_err(|e| format!("Failed to read preferences: {}", e))?;
+        let mut prefs: serde_json::Value = serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+        prefs.as_object_mut().map(|obj| obj.remove(ICON_PREF_KEY));
+        let content = serde_json::to_string_pretty(&prefs)
+            .map_err(|e| format!("Failed to serialize preferences: {}", e))?;
+        write_file_atomic(&pref_file, &content)
+            .map_err(|e| format!("Failed to write preferences: {}", e))?;
+    }
+
+    // Restore default window icon
+    if let Some(window) = app.get_webview_window("main") {
+        if let Some(icon) = app.default_window_icon().cloned() {
+            window.set_icon(icon)
+                .map_err(|e| format!("Failed to restore default icon: {}", e))?;
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn open_url(url: String) -> Result<(), String> {
     opener::open(url)
         .map_err(|e| format!("Failed to open URL: {}", e))
