@@ -157,8 +157,8 @@ pub async fn get_autostart_status(app: tauri::AppHandle) -> bool {
 // Updater
 // ============================================================
 
-const GITHUB_REPO: &str = "LeagueToolkit/Jade";
-const RELEASES_URL: &str = "https://github.com/LeagueToolkit/Jade/releases/latest";
+const GITHUB_REPO: &str = "LeagueToolkit/Jade-League-Bin-Editor";
+const RELEASES_URL: &str = "https://github.com/LeagueToolkit/Jade-League-Bin-Editor/releases/latest";
 
 /// Holds the path to the downloaded installer so it can be run separately
 static INSTALLER_PATH: Lazy<Mutex<Option<std::path::PathBuf>>> =
