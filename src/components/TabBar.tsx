@@ -27,7 +27,7 @@ export interface EditorTab {
     /** For quartz-diff tabs: unique history/diff entry id */
     diffEntryId?: string;
     /** For quartz-diff tabs: Quartz mode label */
-    diffMode?: 'paint' | 'port';
+    diffMode?: 'paint' | 'port' | 'bineditor' | 'vfxhub';
     /** For quartz-diff tabs: original content before Quartz edits */
     diffOriginalContent?: string;
     /** For quartz-diff tabs: modified content after Quartz edits */
@@ -69,6 +69,7 @@ export default function TabBar({
         // Middle click to close
         if (e.button === 1) {
             e.preventDefault();
+            e.stopPropagation();
             onTabClose(tabId);
         }
     };
@@ -81,6 +82,11 @@ export default function TabBar({
     const handleCloseClick = (e: React.MouseEvent, tabId: string) => {
         e.stopPropagation();
         onTabClose(tabId);
+    };
+
+    const handleCloseMouseDown = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
     };
 
     const handleDoubleClick = (_e: React.MouseEvent, tabId: string) => {
@@ -125,6 +131,7 @@ export default function TabBar({
                         {!tab.isPinned && (
                             <button
                                 className="tab-close-btn"
+                                onMouseDown={handleCloseMouseDown}
                                 onClick={(e) => handleCloseClick(e, tab.id)}
                                 title="Close (Middle Click)"
                             >
@@ -200,7 +207,7 @@ interface QuartzDiffTabParams {
     sourceTabId: string;
     sourceFilePath: string;
     fileName: string;
-    mode: 'paint' | 'port';
+    mode: 'paint' | 'port' | 'bineditor' | 'vfxhub';
     originalContent: string;
     modifiedContent: string;
     status?: 'pending' | 'accepted' | 'rejected';

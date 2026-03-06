@@ -1,5 +1,7 @@
 use std::path::Path;
+use parking_lot::RwLock;
 use std::sync::OnceLock;
+use crate::core::hash::get_frogtools_hash_dir;
 
 /// High-performance hash manager with sorted arrays and binary search.
 /// Matches the C# HashManager design: packed offset+length in a single
@@ -284,21 +286,30 @@ pub fn are_jade_hashes_loaded() -> bool {
     JADE_HASHES.get().is_some()
 }
 
-/// Global cached hash manager — loaded once, reused for all conversions.
-static JADE_HASHES: OnceLock<HashManager> = OnceLock::new();
+fn get_default_hash_dir() -> Option<std::path::PathBuf> {
+    get_frogtools_hash_dir().ok()
+}
+
+fn load_from_default_hash_dir() -> HashManager {
+    if let Some(hash_dir) = get_default_hash_dir() {
+        return HashManager::load(&hash_dir);
+    }
+    eprintln!("[jade::hash_manager] APPDATA not set");
+    HashManager::new()
+}
+
+/// Global cached hash manager. Uses RwLock so it can be refreshed in-process.
+static JADE_HASHES: OnceLock<RwLock<HashManager>> = OnceLock::new();
 
 /// Get or initialize the cached hash manager.
-pub fn get_cached_hashes() -> &'static HashManager {
-    JADE_HASHES.get_or_init(|| {
-        let hash_dir = if let Ok(appdata) = std::env::var("APPDATA") {
-            std::path::PathBuf::from(appdata)
-                .join("LeagueToolkit")
-                .join("Requirements")
-                .join("Hashes")
-        } else {
-            eprintln!("[jade::hash_manager] APPDATA not set");
-            return HashManager::new();
-        };
-        HashManager::load(&hash_dir)
-    })
+pub fn get_cached_hashes() -> &'static RwLock<HashManager> {
+    JADE_HASHES.get_or_init(|| RwLock::new(load_from_default_hash_dir()))
+}
+
+/// Reload cached hashes from disk and return total loaded count.
+pub fn reload_cached_hashes() -> usize {
+    let lock = get_cached_hashes();
+    let mut guard = lock.write();
+    *guard = load_from_default_hash_dir();
+    guard.total_count()
 }

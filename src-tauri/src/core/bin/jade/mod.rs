@@ -21,7 +21,8 @@ pub fn convert_bin_to_text(data: &[u8]) -> Result<String, String> {
         .map_err(|e| format!("Jade reader error: {}", e.0))?;
 
     let hashes = hash_manager::get_cached_hashes();
-    unhasher::unhash(&mut bin, hashes);
+    let hashes_guard = hashes.read();
+    unhasher::unhash(&mut bin, &hashes_guard);
 
     Ok(text_writer::write(&bin))
 }

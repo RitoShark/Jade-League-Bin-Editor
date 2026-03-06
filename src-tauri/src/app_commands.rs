@@ -644,7 +644,7 @@ pub async fn add_recent_file(app: tauri::AppHandle, path: String) -> Result<Vec<
     Ok(recent)
 }
 
-/// Return the last-modified timestamp (seconds since Unix epoch) for a file.
+/// Return the last-modified timestamp (milliseconds since Unix epoch) for a file.
 /// Used by the texture preview tab to detect external edits.
 #[tauri::command]
 pub async fn get_file_mtime(path: String) -> Result<u64, String> {
@@ -653,11 +653,11 @@ pub async fn get_file_mtime(path: String) -> Result<u64, String> {
     let mtime = meta
         .modified()
         .map_err(|e| format!("Cannot read mtime: {}", e))?;
-    let secs = mtime
+    let millis = mtime
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs();
-    Ok(secs)
+        .as_millis() as u64;
+    Ok(millis)
 }
 
 /// Read a binary file and return its contents as a base64-encoded string.
@@ -966,17 +966,18 @@ fn consume_interop_messages(target_app: &str) -> Result<Vec<InteropHandoff>, Str
             }
         };
 
-        // Always delete the file after reading.
-        let _ = fs::remove_file(&path);
-
         let handoff: InteropHandoff = match serde_json::from_str(&content) {
             Ok(h) => h,
             Err(_) => continue, // Malformed — skip.
         };
 
         if handoff.target_app.to_lowercase() != target_app.to_lowercase() {
+            // Do not remove messages targeted at other apps.
             continue;
         }
+
+        // Consume only messages targeted at this app.
+        let _ = fs::remove_file(&path);
 
         // Staleness guard.
         if now_unix.saturating_sub(handoff.created_at_unix) > HANDOFF_STALE_SECONDS {
@@ -1075,16 +1076,69 @@ pub async fn write_text_file(path: String, content: String) -> Result<(), String
 }
 
 #[tauri::command]
-pub async fn consume_interop_handoff(_app: tauri::AppHandle) -> Result<Option<InteropHandoff>, String> {
-    let messages = consume_interop_messages("jade")?;
-    // Return the most recent message (last in sorted order).
-    Ok(messages.into_iter().last())
+pub async fn consume_interop_handoff(_app: tauri::AppHandle) -> Result<Vec<InteropHandoff>, String> {
+    consume_interop_messages("jade")
 }
 
 /// Guard against rapid duplicate spawns.  Stores the last time we spawned
 /// Quartz so we don't launch it again within a short window.
 static LAST_QUARTZ_SPAWN: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 const SPAWN_DEBOUNCE_SECS: u64 = 3;
+
+#[derive(Serialize)]
+pub struct QuartzInstallStatus {
+    pub installed: bool,
+    pub executable_path: Option<String>,
+}
+
+async fn resolve_quartz_executable_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let pref_path = get_preference(
+        app.clone(),
+        "QuartzExecutablePath".to_string(),
+        "".to_string(),
+    )
+    .await
+    .unwrap_or_default();
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if !pref_path.trim().is_empty() {
+        candidates.push(PathBuf::from(pref_path.trim()));
+    }
+
+    if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+        candidates.push(
+            PathBuf::from(&local_app_data)
+                .join("Programs")
+                .join("Quartz")
+                .join("Quartz.exe"),
+        );
+    }
+
+    if let Ok(user_profile) = env::var("USERPROFILE") {
+        let desktop = PathBuf::from(&user_profile).join("Desktop");
+        candidates.push(
+            desktop
+                .join("Quartz")
+                .join("Quartz")
+                .join("dist")
+                .join("win-unpacked")
+                .join("Quartz.exe"),
+        );
+        candidates.push(desktop.join("Quartz").join("Quartz").join("Quartz.exe"));
+        candidates.push(desktop.join("Quartz.lnk"));
+    }
+
+    candidates.into_iter().find(|p| p.exists())
+}
+
+#[tauri::command]
+pub async fn get_quartz_install_status(app: tauri::AppHandle) -> Result<QuartzInstallStatus, String> {
+    let executable = resolve_quartz_executable_path(&app).await;
+    Ok(QuartzInstallStatus {
+        installed: executable.is_some(),
+        executable_path: executable.map(|p| p.to_string_lossy().to_string()),
+    })
+}
 
 #[tauri::command]
 pub async fn send_bin_to_quartz(app: tauri::AppHandle, bin_path: String, mode: String) -> Result<(), String> {
@@ -1123,48 +1177,9 @@ pub async fn send_bin_to_quartz(app: tauri::AppHandle, bin_path: String, mode: S
         *last = Some(std::time::Instant::now());
     }
 
-    let pref_path = get_preference(
-        app.clone(),
-        "QuartzExecutablePath".to_string(),
-        "".to_string(),
-    )
-    .await
-    .unwrap_or_default();
-
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if !pref_path.trim().is_empty() {
-        candidates.push(PathBuf::from(pref_path.trim()));
-    }
-
-    if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
-        candidates.push(
-            PathBuf::from(&local_app_data)
-                .join("Programs")
-                .join("Quartz")
-                .join("Quartz.exe"),
-        );
-    }
-
-    if let Ok(user_profile) = env::var("USERPROFILE") {
-        let desktop = PathBuf::from(&user_profile).join("Desktop");
-        candidates.push(
-            desktop
-                .join("Quartz")
-                .join("Quartz")
-                .join("dist")
-                .join("win-unpacked")
-                .join("Quartz.exe"),
-        );
-        candidates.push(desktop.join("Quartz").join("Quartz").join("Quartz.exe"));
-        candidates.push(desktop.join("Quartz.lnk"));
-    }
-
-    let executable = candidates
-        .into_iter()
-        .find(|p| p.exists())
-        .ok_or_else(|| {
-            "Could not find Quartz executable. Set preference QuartzExecutablePath in preferences.json.".to_string()
-        })?;
+    let executable = resolve_quartz_executable_path(&app).await.ok_or_else(|| {
+        "Could not find Quartz executable. Set preference QuartzExecutablePath in preferences.json.".to_string()
+    })?;
 
     let exe_str = executable.to_string_lossy().to_string();
     if exe_str.to_lowercase().ends_with(".lnk") {
@@ -1219,10 +1234,11 @@ pub async fn notify_quartz_bin_updated(bin_path: String, mode: String) -> Result
         .unwrap_or_default()
         .as_secs();
 
-    let normalized_mode = if mode.to_lowercase() == "port" {
-        "port".to_string()
-    } else {
-        "paint".to_string()
+    let normalized_mode = match mode.to_lowercase().as_str() {
+        "port" => "port".to_string(),
+        "bineditor" => "bineditor".to_string(),
+        "vfxhub" => "vfxhub".to_string(),
+        _ => "paint".to_string(),
     };
 
     write_interop_message(&InteropHandoff {
@@ -1236,3 +1252,4 @@ pub async fn notify_quartz_bin_updated(bin_path: String, mode: String) -> Result
 
     Ok(())
 }
+

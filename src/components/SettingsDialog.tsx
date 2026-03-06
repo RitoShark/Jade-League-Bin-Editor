@@ -80,12 +80,11 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
     const [updateError, setUpdateError] = useState('');
     const [downloadProgress, setDownloadProgress] = useState<{ downloaded: number; total: number } | null>(null);
     const unlistenRef = useRef<(() => void) | null>(null);
-
-    const [autoDownload, setAutoDownload] = useState(false);
     const [preloadHash, setPreloadHash] = useState(false);
     const [binaryFormat, setBinaryFormat] = useState(false);
     const [minimizeToTray, setMinimizeToTray] = useState(false);
     const [runAtStartup, setRunAtStartup] = useState(false);
+    const [communicateWithQuartz, setCommunicateWithQuartz] = useState(true);
     const [isRegistered, setIsRegistered] = useState(false);
     const [converterEngine, setConverterEngine] = useState<string>('jade');
     const [engineChanged, setEngineChanged] = useState(false);
@@ -105,11 +104,11 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
 
     const loadPreferences = async () => {
         try {
-            setAutoDownload((await invoke<string>('get_preference', { key: 'AutoDownloadHashes', defaultValue: 'False' })) === 'True');
             setPreloadHash((await invoke<string>('get_preference', { key: 'PreloadHashes', defaultValue: 'False' })) === 'True');
             setBinaryFormat((await invoke<string>('get_preference', { key: 'UseBinaryHashFormat', defaultValue: 'False' })) === 'True');
             setMinimizeToTray((await invoke<string>('get_preference', { key: 'MinimizeToTray', defaultValue: 'False' })) === 'True');
             setRunAtStartup(await invoke<boolean>('get_autostart_status'));
+            setCommunicateWithQuartz((await invoke<string>('get_preference', { key: 'CommunicateWithQuartz', defaultValue: 'True' })) === 'True');
             setIsRegistered(await invoke<boolean>('get_bin_association_status'));
             setAutoCheckUpdates((await invoke<string>('get_preference', { key: 'AutoCheckUpdates', defaultValue: 'True' })) === 'True');
             setSilentUpdate((await invoke<string>('get_preference', { key: 'SilentUpdate', defaultValue: 'False' })) === 'True');
@@ -226,7 +225,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                 <p className="success-text" style={{ marginBottom: 12 }}>
                     All hash files present{hashStatus.format !== 'None' ? ` (${hashStatus.format})` : ''}
                     <span className="location-text" style={{ display: 'block' }}>
-                        %APPDATA%\LeagueToolkit\Jade\hashes
+                        %APPDATA%\FrogTools\hashes
                     </span>
                 </p>
             ) : (
@@ -236,13 +235,6 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             )}
 
             <div className="settings-divider" />
-
-            <ToggleRow
-                label="Auto-download on startup"
-                description="Automatically fetch the latest hash files each time Jade starts."
-                checked={autoDownload}
-                onChange={v => { setAutoDownload(v); savePref('AutoDownloadHashes', v); }}
-            />
             <ToggleRow
                 label={isPreloading ? 'Preloading…' : 'Preload hashes on startup'}
                 description="Load hash tables into memory at startup so the first file opens instantly. Without this, hashes load on first use."
@@ -284,6 +276,16 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                     setRunAtStartup(v);
                     try { await invoke('toggle_autostart', { enable: v }); }
                     catch (e) { console.error(e); setRunAtStartup(!v); }
+                }}
+            />
+            <ToggleRow
+                label="Communicate with Quartz"
+                description="Allow Jade and Quartz to exchange open/reload/update messages. Disable this to fully stop interop communication."
+                checked={communicateWithQuartz}
+                onChange={async v => {
+                    setCommunicateWithQuartz(v);
+                    await savePref('CommunicateWithQuartz', v);
+                    window.dispatchEvent(new CustomEvent('quartz-interop-changed', { detail: v }));
                 }}
             />
 
@@ -513,3 +515,4 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
 };
 
 export default SettingsDialog;
+

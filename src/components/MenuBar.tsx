@@ -28,6 +28,7 @@ interface MenuBarProps {
     onAbout: () => void;
     recentFiles?: string[];
     onOpenRecentFile?: (path: string) => void;
+    openFileDisabled?: boolean;
 }
 
 export default function MenuBar({
@@ -56,6 +57,7 @@ export default function MenuBar({
     onAbout,
     recentFiles = [],
     onOpenRecentFile,
+    openFileDisabled = false,
 }: MenuBarProps) {
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
@@ -84,7 +86,7 @@ export default function MenuBar({
                 </button>
                 {activeMenu === 'file' && (
                     <div className="menu-dropdown">
-                        <button className="menu-option" onClick={() => handleMenuClick(onOpenFile)}>
+                        <button className="menu-option" onClick={() => handleMenuClick(onOpenFile)} disabled={openFileDisabled}>
                             <span>Open...</span>
                         </button>
 
@@ -101,6 +103,7 @@ export default function MenuBar({
                                             <button
                                                 key={index}
                                                 className="menu-option recent-file-option"
+                                                disabled={openFileDisabled}
                                                 onClick={() => onOpenRecentFile && handleMenuClick(() => onOpenRecentFile(filePath))}
                                                 title={filePath}
                                             >

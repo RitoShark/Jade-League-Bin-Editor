@@ -12,6 +12,7 @@ pub use ltk_bridge::{
     tree_to_text_with_resolved_names,
     tree_to_text_cached,
     get_cached_bin_hashes,
+    reload_cached_bin_hashes,
     are_hashes_loaded,
     estimate_ltk_hash_memory,
     text_to_tree,

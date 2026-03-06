@@ -204,6 +204,7 @@ pub fn run() {
             app_commands::write_text_file,
             app_commands::consume_interop_handoff,
             app_commands::send_bin_to_quartz,
+            app_commands::get_quartz_install_status,
             app_commands::notify_quartz_bin_updated,
         ])
         .build(tauri::generate_context!())

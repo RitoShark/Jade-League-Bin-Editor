@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+﻿import { useState, useEffect, useRef, useCallback } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -21,6 +21,8 @@ import GeneralEditPanel from "./components/GeneralEditPanel";
 import ParticleEditorPanel from "./components/ParticleEditorPanel";
 import ParticleEditorDialog from "./components/ParticleEditorDialog";
 import UpdateToast from "./components/UpdateToast";
+import HashSyncToast from "./components/HashSyncToast";
+import QuartzInstallModal from "./components/QuartzInstallModal";
 import TexHoverPopup from "./components/TexHoverPopup";
 import TexturePreviewTab from "./components/TexturePreviewTab";
 import QuartzDiffTab from "./components/QuartzDiffTab";
@@ -52,10 +54,11 @@ interface InteropHandoff {
 
 interface QuartzEditSession {
   filePath: string;
-  mode: 'paint' | 'port';
+  mode: 'paint' | 'port' | 'bineditor' | 'vfxhub';
   snapshotContent: string;
   lastSeenMtime: number | null;
   pendingEntryId: string | null;
+  forceContentCheck: boolean;
 }
 
 interface QuartzHistoryEntry {
@@ -63,12 +66,21 @@ interface QuartzHistoryEntry {
   tabId: string;
   filePath: string;
   fileName: string;
-  mode: 'paint' | 'port';
+  mode: 'paint' | 'port' | 'bineditor' | 'vfxhub';
   beforeContent: string;
   afterContent: string;
   detectedAt: number;
   status: 'pending' | 'accepted' | 'rejected';
 }
+
+const MAX_QUARTZ_HISTORY_PER_FILE = 10;
+const QUARTZ_INTEROP_DEBUG = true;
+
+type HashSyncToastState = {
+  visible: boolean;
+  status: 'checking' | 'downloading' | 'success' | 'error';
+  message: string;
+};
 
 function App() {
   // Tab management - start with NO tabs (empty)
@@ -82,7 +94,11 @@ function App() {
   const [showThemesDialog, setShowThemesDialog] = useState(false);
   const [showPreferencesDialog, setShowPreferencesDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [showQuartzInstallModal, setShowQuartzInstallModal] = useState(false);
   const [updateToastVersion, setUpdateToastVersion] = useState<string | null>(null);
+  const [hashSyncToast, setHashSyncToast] = useState<HashSyncToastState | null>(null);
+  const [, setHashSyncBusy] = useState(true);
+  const [hashesReady, setHashesReady] = useState(false);
   const [appIcon, setAppIcon] = useState<string>("/jade.ico");
   const [findWidgetOpen, setFindWidgetOpen] = useState(false);
   const [replaceWidgetOpen, setReplaceWidgetOpen] = useState(false);
@@ -96,6 +112,7 @@ function App() {
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [cigaretteMode, setCigaretteMode] = useState(false);
+  const [quartzInteropEnabled, setQuartzInteropEnabled] = useState(true);
   const [quartzHistoryEntries, setQuartzHistoryEntries] = useState<QuartzHistoryEntry[]>([]);
   const quartzSessionsRef = useRef<Map<string, QuartzEditSession>>(new Map());
 
@@ -144,6 +161,13 @@ function App() {
   const openFileFromPathRef = useRef<((path: string) => Promise<void>) | null>(null);
   const openingFilesRef = useRef<Set<string>>(new Set()); // prevents duplicate concurrent opens
   const handleTabCloseRef = useRef<((tabId: string) => void) | null>(null);
+  const handleOpenRef = useRef<(() => void) | null>(null);
+  const handleSaveRef = useRef<(() => void) | null>(null);
+  const handleSaveAsRef = useRef<(() => void) | null>(null);
+  const handleFindRef = useRef<(() => void) | null>(null);
+  const handleReplaceRef = useRef<(() => void) | null>(null);
+  const handleCompareRef = useRef<(() => void) | null>(null);
+  const lastRejectedTabCloseRef = useRef<{ tabId: string; at: number } | null>(null);
 
   // Get the active tab
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
@@ -157,18 +181,21 @@ function App() {
   // Ref to track active tab ID for keyboard shortcuts
   const activeTabIdRef = useRef(activeTabId);
   activeTabIdRef.current = activeTabId;
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
 
   // Ref to track if we should allow hash preload status updates
   // This prevents hash preload status from overriding important messages like "Opened file"
   const statusMessageRef = useRef<string>("Ready");
   const allowHashStatusUpdateRef = useRef<boolean>(true);
+  const hashToastHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load custom icon and window state on mount
   useEffect(() => {
     loadCustomIcon();
     restoreWindowState();
-    // Auto-download hashes first (if enabled), then preload them
-    autoDownloadHashesIfEnabled().then(() => {
+    // Always auto-sync hashes first, then preload them.
+    autoDownloadHashesOnStartup().then(() => {
       preloadHashesIfEnabled();
     });
     loadRecentFiles(); // Just load the list, don't open files
@@ -179,11 +206,18 @@ function App() {
     invoke<string>('get_preference', { key: 'CigaretteMode', defaultValue: 'false' })
       .then(val => setCigaretteMode(val === 'true'))
       .catch(() => {});
+    invoke<string>('get_preference', { key: 'CommunicateWithQuartz', defaultValue: 'True' })
+      .then(val => setQuartzInteropEnabled(val === 'True'))
+      .catch(() => setQuartzInteropEnabled(true));
 
     const handleCigaretteModeChanged = (e: Event) => {
       setCigaretteMode((e as CustomEvent<boolean>).detail);
     };
+    const handleQuartzInteropChanged = (e: Event) => {
+      setQuartzInteropEnabled((e as CustomEvent<boolean>).detail !== false);
+    };
     window.addEventListener('cigarette-mode-changed', handleCigaretteModeChanged);
+    window.addEventListener('quartz-interop-changed', handleQuartzInteropChanged);
 
     // Listen for open-file events from backend (file association double-click or single-instance)
     const openFileUnlisten = listen<string>('open-file', (event) => {
@@ -191,6 +225,49 @@ function App() {
       if (filePath && filePath.trim()) {
         console.log('[App] Received open-file event:', filePath);
         openFileFromPathRef.current?.(filePath);
+      }
+    });
+
+    const hashProgressUnlisten = listen<{
+      phase?: string;
+      current?: number;
+      total?: number;
+      downloaded?: number;
+      skipped?: number;
+      file?: string;
+      message?: string;
+    }>('hash-sync-progress', (event) => {
+      const payload = event.payload || {};
+      const phase = String(payload.phase || '');
+      const total = Number(payload.total || 0);
+      const current = Number(payload.current || 0);
+      const downloaded = Number(payload.downloaded || 0);
+
+      const skipped = Number(payload.skipped || 0);
+      if (phase === 'checking') {
+        setHashSyncToast({
+          visible: true,
+          status: 'checking',
+          message: payload.message || 'Checking hash updates...'
+        });
+      } else if (phase === 'downloading') {
+        setHashSyncToast({
+          visible: true,
+          status: 'downloading',
+          message: `Checked ${current}/${total} - Updated ${downloaded}${payload.file ? ` - ${payload.file}` : ''}`
+        });
+      } else if (phase === 'success') {
+        setHashSyncToast({
+          visible: true,
+          status: 'success',
+          message: payload.message || `Done - Updated ${downloaded}, Skipped ${skipped}`
+        });
+      } else if (phase === 'error') {
+        setHashSyncToast({
+          visible: true,
+          status: 'error',
+          message: payload.message || 'Hash update failed'
+        });
       }
     });
 
@@ -223,12 +300,12 @@ function App() {
     window.addEventListener('icon-changed', handleIconChange);
 
     // Event listeners for keyboard shortcuts
-    const handleAppOpen = () => handleOpen();
-    const handleAppSave = () => handleSave();
-    const handleAppSaveAs = () => handleSaveAs();
-    const handleAppFind = () => handleFind();
-    const handleAppReplace = () => handleReplace();
-    const handleAppCompare = () => handleCompareFiles();
+    const handleAppOpen = () => handleOpenRef.current?.();
+    const handleAppSave = () => handleSaveRef.current?.();
+    const handleAppSaveAs = () => handleSaveAsRef.current?.();
+    const handleAppFind = () => handleFindRef.current?.();
+    const handleAppReplace = () => handleReplaceRef.current?.();
+    const handleAppCompare = () => handleCompareRef.current?.();
     const handleAppCloseTab = () => {
       if (activeTabIdRef.current) {
         handleTabCloseRef.current?.(activeTabIdRef.current);
@@ -397,7 +474,7 @@ function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
 
-    let saveTimeout: number | null = null;
+    let saveTimeout: ReturnType<typeof setTimeout> | null = null;
     const debouncedSave = () => {
       if (saveTimeout) clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => {
@@ -465,9 +542,14 @@ function App() {
     setupFileDropListener().then(fn => { fileDropCleanup = fn; });
 
     return () => {
+      if (hashToastHideTimeoutRef.current) {
+        clearTimeout(hashToastHideTimeoutRef.current);
+        hashToastHideTimeoutRef.current = null;
+      }
       window.removeEventListener('icon-changed', handleIconChange);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('cigarette-mode-changed', handleCigaretteModeChanged);
+      window.removeEventListener('quartz-interop-changed', handleQuartzInteropChanged);
       window.removeEventListener('app-open', handleAppOpen);
       window.removeEventListener('app-save', handleAppSave);
       window.removeEventListener('app-save-as', handleAppSaveAs);
@@ -478,8 +560,9 @@ function App() {
       cleanup?.();
       fileDropCleanup?.();
       saveCurrentWindowState();
-      // Unlisten from Tauri open-file event
+      // Unlisten from Tauri open-file/hash-sync events
       openFileUnlisten.then(fn => fn());
+      hashProgressUnlisten.then(fn => fn());
     };
   }, [monacoInstance]);
 
@@ -584,43 +667,87 @@ function App() {
     }
   };
 
-  // Auto-download hashes on startup if setting is enabled
-  const autoDownloadHashesIfEnabled = async () => {
+  // Always auto-download/update hashes on startup.
+  const autoDownloadHashesOnStartup = async () => {
     try {
-      const autoDownloadEnabled = await invoke<string>('get_preference', {
-        key: 'AutoDownloadHashes',
-        defaultValue: 'False'
-      });
-
-      if (autoDownloadEnabled !== 'True') {
-        return;
+      // If hash files are already present, allow opening bins immediately.
+      const preStatus = await invoke<{ all_present: boolean }>('check_hashes').catch(() => ({ all_present: false }));
+      if (preStatus?.all_present) {
+        setHashesReady(true);
       }
-
+      setHashSyncBusy(true);
       const useBinaryFormat = await invoke<string>('get_preference', {
         key: 'UseBinaryHashFormat',
         defaultValue: 'False'
       }) === 'True';
 
-      // Always download latest hashes when auto-download is enabled
+      setHashSyncToast({
+        visible: true,
+        status: 'checking',
+        message: 'Checking hash updates...'
+      });
+
       allowHashStatusUpdateRef.current = false; // Block hash preload updates during download
       setStatusMessage('Auto-downloading latest hash files...');
       statusMessageRef.current = 'Auto-downloading latest hash files...';
       try {
-        await invoke('download_hashes', { useBinary: useBinaryFormat });
+        setHashSyncToast({
+          visible: true,
+          status: 'downloading',
+          message: 'Updating hash files...'
+        });
+
+        const downloaded = await invoke<string[]>('download_hashes', { useBinary: useBinaryFormat });
+        const downloadedCount = Array.isArray(downloaded) ? downloaded.length : 0;
+
+        setHashSyncToast({
+          visible: true,
+          status: 'success',
+          message: downloadedCount > 0
+            ? `Downloaded/updated ${downloadedCount} file(s).`
+            : 'Hashes are already up to date.'
+        });
+
+        if (hashToastHideTimeoutRef.current) {
+          clearTimeout(hashToastHideTimeoutRef.current);
+        }
+        hashToastHideTimeoutRef.current = setTimeout(() => {
+          setHashSyncToast((prev) => prev ? { ...prev, visible: false } : prev);
+        }, 4200);
+
         setStatusMessage('Latest hash files downloaded');
         statusMessageRef.current = 'Latest hash files downloaded';
+        const hashStatus = await invoke<{ all_present: boolean }>('check_hashes').catch(() => ({ all_present: false }));
+        setHashesReady(Boolean(hashStatus?.all_present));
+        setHashSyncBusy(false);
         // Re-enable hash status updates after a short delay
         setTimeout(() => {
           allowHashStatusUpdateRef.current = true;
         }, 500);
       } catch (error) {
         console.error('[App] Failed to auto-download hashes:', error);
+        setHashSyncToast({
+          visible: true,
+          status: 'error',
+          message: `Hash update failed: ${String(error)}`
+        });
+        const hashStatus = await invoke<{ all_present: boolean }>('check_hashes').catch(() => ({ all_present: false }));
+        setHashesReady(Boolean(hashStatus?.all_present));
+        setHashSyncBusy(false);
         setStatusMessage('Ready');
         statusMessageRef.current = 'Ready';
         allowHashStatusUpdateRef.current = true;
       }
     } catch (error) {
       console.error('[App] Failed to auto-download hashes:', error);
+      setHashSyncToast({
+        visible: true,
+        status: 'error',
+        message: `Hash update failed: ${String(error)}`
+      });
+      const hashStatus = await invoke<{ all_present: boolean }>('check_hashes').catch(() => ({ all_present: false }));
+      setHashesReady(Boolean(hashStatus?.all_present));
+      setHashSyncBusy(false);
       allowHashStatusUpdateRef.current = true;
     }
   };
@@ -748,9 +875,77 @@ function App() {
     }
   };
 
-  const normalizeQuartzMode = (mode: string | null | undefined): 'paint' | 'port' => {
-    return String(mode || 'paint').toLowerCase() === 'port' ? 'port' : 'paint';
+  const normalizeQuartzMode = (mode: string | null | undefined): 'paint' | 'port' | 'bineditor' | 'vfxhub' => {
+    const normalized = String(mode || 'paint').toLowerCase();
+    if (normalized === 'port') return 'port';
+    if (normalized === 'bineditor') return 'bineditor';
+    if (normalized === 'vfxhub') return 'vfxhub';
+    return 'paint';
   };
+
+  const ensureTrackedBinSession = useCallback((filePath: string, snapshotContent: string, mode: 'paint' | 'port' | 'bineditor' | 'vfxhub' = 'paint') => {
+    try {
+      if (!filePath || !filePath.toLowerCase().endsWith('.bin')) return;
+      const key = filePath.toLowerCase();
+      const existing = quartzSessionsRef.current.get(key);
+      if (existing) {
+        const effectiveMode = (mode === 'paint' && existing.mode && existing.mode !== 'paint')
+          ? existing.mode
+          : mode;
+        quartzSessionsRef.current.set(key, {
+          ...existing,
+          mode: effectiveMode,
+          snapshotContent,
+          pendingEntryId: null,
+          forceContentCheck: false,
+        });
+        invoke<number>('get_file_mtime', { path: filePath })
+          .then((mtime) => {
+            const latest = quartzSessionsRef.current.get(key);
+            if (!latest) return;
+            quartzSessionsRef.current.set(key, {
+              ...latest,
+              lastSeenMtime: mtime ?? latest.lastSeenMtime,
+            });
+            if (QUARTZ_INTEROP_DEBUG) {
+              console.log('[QuartzInterop][Jade] Refreshed existing session', { filePath, mode: effectiveMode, mtime });
+            }
+          })
+          .catch(() => { });
+        return;
+      }
+
+      invoke<number>('get_file_mtime', { path: filePath })
+        .then((mtime) => {
+          quartzSessionsRef.current.set(key, {
+            filePath,
+            mode,
+            snapshotContent,
+            lastSeenMtime: mtime ?? null,
+            pendingEntryId: null,
+            forceContentCheck: false,
+          });
+          if (QUARTZ_INTEROP_DEBUG) {
+            console.log('[QuartzInterop][Jade] Created session', { filePath, mode, mtime });
+          }
+        })
+        .catch(() => {
+          quartzSessionsRef.current.set(key, {
+            filePath,
+            mode,
+            snapshotContent,
+            lastSeenMtime: null,
+            pendingEntryId: null,
+            forceContentCheck: false,
+          });
+          if (QUARTZ_INTEROP_DEBUG) {
+            console.log('[QuartzInterop][Jade] Created session without mtime', { filePath, mode });
+          }
+        });
+    } catch {
+      // keep editor flow resilient; watcher registration is best-effort.
+    }
+  }, []);
 
   const getUseQuartzPyWorkflowPreference = useCallback(async (): Promise<boolean> => {
     try {
@@ -788,6 +983,38 @@ function App() {
     return content;
   }, [getPySidecarPath, getUseQuartzPyWorkflowPreference]);
 
+  // Quartz interop must be robust even if user preferences differ:
+  // resolve content from the freshest source between .bin and .py sidecar.
+  const readBinForQuartzInterop = useCallback(async (binPath: string, fallbackContent?: string): Promise<string> => {
+    const pySidecarPath = getPySidecarPath(binPath);
+    const pyExists = await invoke<boolean>('file_exists', { path: pySidecarPath }).catch(() => false);
+    if (!pyExists) {
+      const content = fallbackContent ?? await readBinDirect(binPath);
+      await invoke('write_text_file', { path: pySidecarPath, content }).catch(() => { });
+      return content;
+    }
+
+    const [binMtime, pyMtime] = await Promise.all([
+      invoke<number>('get_file_mtime', { path: binPath }).catch(() => 0),
+      invoke<number>('get_file_mtime', { path: pySidecarPath }).catch(() => 0),
+    ]);
+
+    // If bin is newer (or equal) treat bin as source of truth and refresh sidecar.
+    if ((binMtime ?? 0) >= (pyMtime ?? 0)) {
+      const content = fallbackContent ?? await readBinDirect(binPath);
+      await invoke('write_text_file', { path: pySidecarPath, content }).catch(() => { });
+      return content;
+    }
+
+    // Sidecar newer than bin: use sidecar.
+    return invoke<string>('read_text_file', { path: pySidecarPath });
+  }, [getPySidecarPath]);
+
+  const persistPySidecarForQuartzInterop = useCallback(async (binPath: string, content: string): Promise<void> => {
+    const pySidecarPath = getPySidecarPath(binPath);
+    await invoke('write_text_file', { path: pySidecarPath, content }).catch(() => { });
+  }, [getPySidecarPath]);
+
   const persistPySidecarIfNeeded = useCallback(async (binPath: string, content: string): Promise<void> => {
     const usePyWorkflow = await getUseQuartzPyWorkflowPreference();
     if (!usePyWorkflow) return;
@@ -797,6 +1024,10 @@ function App() {
   }, [getPySidecarPath, getUseQuartzPyWorkflowPreference]);
 
   const updateTabContentFromExternal = useCallback((tabId: string, nextContent: string) => {
+    const isActiveTab = activeTabIdRef.current === tabId;
+    const editor = editorRef.current;
+    const savedViewState = (isActiveTab && editor) ? editor.saveViewState() : null;
+
     const model = monacoModelsRef.current.get(tabId);
     if (model && !model.isDisposed()) {
       model.setValue(nextContent);
@@ -804,6 +1035,15 @@ function App() {
       const activeModel = editorRef.current.getModel();
       if (activeModel) {
         activeModel.setValue(nextContent);
+      }
+    }
+
+    // Preserve scroll/cursor when external updates rewrite active tab content.
+    if (isActiveTab && editor && savedViewState) {
+      try {
+        editor.restoreViewState(savedViewState);
+      } catch {
+        // best effort only
       }
     }
 
@@ -817,6 +1057,10 @@ function App() {
   }, []);
 
   const openFileFromPath = async (filePath: string) => {
+    if (!hashesReady) {
+      setStatusMessage('Hashes are not installed yet. Please wait.');
+      return;
+    }
     // Prevent duplicate concurrent opens (e.g. Tauri drag-drop firing twice,
     // or rapid re-drops of the same file before the first open completes).
     const normalizedPath = filePath.toLowerCase();
@@ -830,6 +1074,7 @@ function App() {
 
       const existingTab = tabs.find(t => t.filePath && t.filePath.toLowerCase() === filePath.toLowerCase());
       if (existingTab) {
+        ensureTrackedBinSession(filePath, existingTab.content, 'paint');
         setActiveTabId(existingTab.id);
         setStatusMessage(`Switched to ${getFileName(filePath)}`);
         statusMessageRef.current = `Switched to ${getFileName(filePath)}`;
@@ -890,12 +1135,22 @@ function App() {
   }, [activeTabId, saveCurrentViewState]);
 
   const handleTabClose = useCallback((tabId: string) => {
+    const recentlyRejected = lastRejectedTabCloseRef.current;
+    if (
+      recentlyRejected &&
+      recentlyRejected.tabId === tabId &&
+      Date.now() - recentlyRejected.at < 350
+    ) {
+      return;
+    }
+
     const tabToClose = tabs.find(t => t.id === tabId);
     if (!tabToClose) return;
 
     // Confirm if modified
     if (tabToClose.isModified) {
       if (!confirm(`"${tabToClose.fileName}" has unsaved changes. Close anyway?`)) {
+        lastRejectedTabCloseRef.current = { tabId, at: Date.now() };
         return;
       }
     }
@@ -903,8 +1158,14 @@ function App() {
     // Remove view state and LRU entry
     viewStatesRef.current.delete(tabId);
     modelLruRef.current = modelLruRef.current.filter(id => id !== tabId);
+    if (tabToClose.tabType === 'quartz-diff' && tabToClose.diffSourceFilePath) {
+      const sourceKey = tabToClose.diffSourceFilePath.toLowerCase();
+      setQuartzHistoryEntries(prev => prev.filter(entry => entry.filePath.toLowerCase() !== sourceKey));
+    }
     if (tabToClose.filePath) {
-      quartzSessionsRef.current.delete(tabToClose.filePath.toLowerCase());
+      const closingFileKey = tabToClose.filePath.toLowerCase();
+      quartzSessionsRef.current.delete(closingFileKey);
+      setQuartzHistoryEntries(prev => prev.filter(entry => entry.filePath.toLowerCase() !== closingFileKey));
     }
 
     const modelToDispose = monacoModelsRef.current.get(tabId);
@@ -912,7 +1173,11 @@ function App() {
     monacoModelsRef.current.delete(tabId);
 
     // Compute the next active tab now, before state updates
-    const newTabs = tabs.filter(t => t.id !== tabId);
+    const closedFileKey = tabToClose.filePath?.toLowerCase() || null;
+    let newTabs = tabs.filter(t => t.id !== tabId);
+    if (closedFileKey && tabToClose.tabType !== 'quartz-diff') {
+      newTabs = newTabs.filter(t => !(t.tabType === 'quartz-diff' && t.diffSourceFilePath?.toLowerCase() === closedFileKey));
+    }
     let nextActiveId: string | null = null;
     if (tabId === activeTabId) {
       if (newTabs.length > 0) {
@@ -1001,6 +1266,7 @@ function App() {
     viewStatesRef.current.clear();
     modelLruRef.current = [];
     quartzSessionsRef.current.clear();
+    setQuartzHistoryEntries([]);
 
     // Collect models for delayed disposal, then clear the map immediately so
     // no further renders reference them.  The 500ms delay lets Monaco's
@@ -1034,6 +1300,7 @@ function App() {
     if (filePath) {
       const existingTab = tabs.find(t => t.filePath === filePath);
       if (existingTab) {
+        ensureTrackedBinSession(filePath, existingTab.content || content, 'paint');
         setActiveTabId(existingTab.id);
         return existingTab;
       }
@@ -1043,8 +1310,11 @@ function App() {
     saveCurrentViewState();
     setTabs(prevTabs => [...prevTabs, newTab]);
     setActiveTabId(newTab.id);
+    if (filePath) {
+      ensureTrackedBinSession(filePath, content, 'paint');
+    }
     return newTab;
-  }, [tabs, saveCurrentViewState]);
+  }, [tabs, saveCurrentViewState, ensureTrackedBinSession]);
 
   // Monaco handlers
   function handleBeforeMount(monaco: Monaco) {
@@ -1068,7 +1338,7 @@ function App() {
     const activeTab = tabs.find(t => t.id === activeTabId);
     if (!activeTab) return;
 
-    // Texture-preview tabs don't have a Monaco model — skip model switching
+    // Texture-preview tabs don't have a Monaco model â€” skip model switching
     if (!isEditorTab(activeTab)) return;
 
     // Save view state of current model before switching
@@ -1159,7 +1429,7 @@ function App() {
     }
   };
 
-  // ── Texture hover helpers ──────────────────────────────────────────────────
+  // â”€â”€ Texture hover helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
    * Given a line of text and a column (1-based), extract a .tex path if the
@@ -1249,15 +1519,15 @@ function App() {
         const mtime = await invoke<number>('get_file_mtime', { path: filePath });
         const last = texMtimeRef.current.get(tabId);
         if (last === undefined) {
-          // First reading — just store it, don't reload
+          // First reading â€” just store it, don't reload
           texMtimeRef.current.set(tabId, mtime);
         } else if (mtime !== last) {
           texMtimeRef.current.set(tabId, mtime);
-          // File changed on disk — silently reload
+          // File changed on disk â€” silently reload
           await loadTextureIntoTab(tabId, filePath, true);
         }
       } catch {
-        // File temporarily locked while being written — ignore and retry next tick
+        // File temporarily locked while being written â€” ignore and retry next tick
       }
     }, 1500);
 
@@ -1424,7 +1694,7 @@ function App() {
       }
     });
 
-    // ── Texture path hover detection ──────────────────────────────────────
+    // â”€â”€ Texture path hover detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const texMoveHideTimeout = { current: null as ReturnType<typeof setTimeout> | null };
     let lastTexPath = '';
 
@@ -1492,7 +1762,7 @@ function App() {
       }, 280);
     });
     editorDisposablesRef.current.push(mouseLeaveDisposable);
-    // ── End texture hover detection ───────────────────────────────────────
+    // â”€â”€ End texture hover detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     // Restore view state for active tab (model-switching effect will handle this on tab changes)
     // On initial mount, trigger model setup for the first tab
@@ -1648,6 +1918,10 @@ function App() {
 
   // File Operations
   const handleOpen = async () => {
+    if (!hashesReady) {
+      setStatusMessage('Hashes are not installed yet. Please wait.');
+      return;
+    }
     try {
       // Block hash status updates while opening file
       allowHashStatusUpdateRef.current = false;
@@ -1736,6 +2010,18 @@ function App() {
         const content = editorRef.current?.getValue() || activeTab.content;
         await persistPySidecarIfNeeded(activeTab.filePath, content);
         await saveBinFile(content, activeTab.filePath);
+        try {
+          if (quartzInteropEnabled) {
+            const session = quartzSessionsRef.current.get(activeTab.filePath.toLowerCase());
+            const mode = session?.mode || 'paint';
+            await invoke('notify_quartz_bin_updated', {
+              binPath: activeTab.filePath,
+              mode,
+            });
+          }
+        } catch (interopErr) {
+          console.warn('[QuartzInterop][Jade] notify_quartz_bin_updated failed on save:', interopErr);
+        }
         setTabs(prevTabs =>
           prevTabs.map(t =>
             t.id === activeTabId ? { ...t, content, isModified: false } : t
@@ -1772,6 +2058,20 @@ function App() {
       const newPath = await saveBinFileAs(content);
       if (newPath) {
         await persistPySidecarIfNeeded(newPath, content);
+        try {
+          if (quartzInteropEnabled) {
+            const oldSession = activeTab.filePath
+              ? quartzSessionsRef.current.get(activeTab.filePath.toLowerCase())
+              : null;
+            const mode = oldSession?.mode || 'paint';
+            await invoke('notify_quartz_bin_updated', {
+              binPath: newPath,
+              mode,
+            });
+          }
+        } catch (interopErr) {
+          console.warn('[QuartzInterop][Jade] notify_quartz_bin_updated failed on save-as:', interopErr);
+        }
         setTabs(prevTabs =>
           prevTabs.map(t =>
             t.id === activeTabId ? {
@@ -1852,6 +2152,17 @@ function App() {
   };
 
   const handleCompareFiles = () => console.log('Compare Files');
+
+  handleOpenRef.current = handleOpen;
+  handleSaveRef.current = () => {
+    void handleSave();
+  };
+  handleSaveAsRef.current = () => {
+    void handleSaveAs();
+  };
+  handleFindRef.current = handleFind;
+  handleReplaceRef.current = handleReplace;
+  handleCompareRef.current = handleCompareFiles;
   const handleSelectAll = () => {
     if (!isEditorTab(activeTabRef.current)) return;
     editorRef.current?.trigger('keyboard', 'editor.action.selectAll', null);
@@ -1969,7 +2280,24 @@ function App() {
     setParticleDialogOpen(true);
   };
 
-  const handleSendToQuartz = async (mode: 'paint' | 'port') => {
+  const handleSendToQuartz = async (mode: 'paint' | 'port' | 'bineditor' | 'vfxhub') => {
+    if (!quartzInteropEnabled) {
+      setStatusMessage('Quartz communication is disabled in Settings > App Behavior.');
+      return;
+    }
+    try {
+      const quartzStatus = await invoke<{ installed: boolean; executable_path?: string | null }>('get_quartz_install_status');
+      if (!quartzStatus?.installed) {
+        setShowQuartzInstallModal(true);
+        setStatusMessage('Quartz is not installed');
+        return;
+      }
+    } catch {
+      setShowQuartzInstallModal(true);
+      setStatusMessage('Could not verify Quartz installation');
+      return;
+    }
+
     if (!activeTab || !activeTab.filePath || !isBinFileOpen()) {
       setStatusMessage('Open a .bin tab before sending to Quartz');
       return;
@@ -1998,6 +2326,7 @@ function App() {
         snapshotContent: currentContent,
         lastSeenMtime: currentMtime,
         pendingEntryId: null,
+        forceContentCheck: false,
       });
 
       await invoke('send_bin_to_quartz', {
@@ -2007,6 +2336,10 @@ function App() {
 
       setStatusMessage(`Sent ${activeTab.fileName} to Quartz (${mode})`);
     } catch (error) {
+      const errorText = String(error || '');
+      if (errorText.toLowerCase().includes('could not find quartz executable')) {
+        setShowQuartzInstallModal(true);
+      }
       setStatusMessage(`Failed to send to Quartz: ${error}`);
     } finally {
       setTimeout(() => {
@@ -2023,6 +2356,145 @@ function App() {
     )));
   }, []);
 
+  const getQuartzEntriesForFile = useCallback((filePath: string) => {
+    const normalized = filePath.toLowerCase();
+    return quartzHistoryEntries
+      .filter((item) => item.filePath.toLowerCase() === normalized)
+      .sort((a, b) => a.detectedAt - b.detectedAt);
+  }, [quartzHistoryEntries]);
+
+  const queueQuartzDiffForSession = useCallback((sessionKey: string, session: QuartzEditSession, afterContent: string) => {
+    if (!afterContent || afterContent === session.snapshotContent) {
+      if (QUARTZ_INTEROP_DEBUG) {
+        console.log('[QuartzInterop][Jade] queue diff skipped (no content delta)', { filePath: session.filePath });
+      }
+      return false;
+    }
+
+    const matchingTab = tabsRef.current.find(t => t.filePath?.toLowerCase() === session.filePath.toLowerCase());
+    if (!matchingTab) {
+      if (QUARTZ_INTEROP_DEBUG) {
+        console.log('[QuartzInterop][Jade] queue diff skipped (tab not open)', { filePath: session.filePath });
+      }
+      quartzSessionsRef.current.set(sessionKey, {
+        ...session,
+        snapshotContent: afterContent,
+        pendingEntryId: null,
+        forceContentCheck: false,
+      });
+      return false;
+    }
+
+    const entryId = `quartz-${matchingTab.id}-${Date.now()}`;
+    const newEntry: QuartzHistoryEntry = {
+      id: entryId,
+      tabId: matchingTab.id,
+      filePath: session.filePath,
+      fileName: getFileName(session.filePath),
+      mode: session.mode,
+      beforeContent: session.snapshotContent,
+      afterContent,
+      detectedAt: Date.now(),
+      status: 'pending',
+    };
+
+    updateTabContentFromExternal(matchingTab.id, afterContent);
+    setQuartzHistoryEntries(prev => {
+      const combined = [newEntry, ...prev];
+      const perFileCounts = new Map<string, number>();
+      const pruned: QuartzHistoryEntry[] = [];
+      for (const entry of combined) {
+        const key = entry.filePath.toLowerCase();
+        const count = perFileCounts.get(key) || 0;
+        if (count >= MAX_QUARTZ_HISTORY_PER_FILE) continue;
+        perFileCounts.set(key, count + 1);
+        pruned.push(entry);
+      }
+      return pruned;
+    });
+
+    setTabs(prevTabs => {
+      const existingDiffTab = prevTabs.find(tab =>
+        tab.tabType === 'quartz-diff' &&
+        tab.diffSourceFilePath?.toLowerCase() === session.filePath.toLowerCase()
+      );
+
+      if (existingDiffTab) {
+        return prevTabs.map(tab => (
+          tab.id === existingDiffTab.id
+            ? {
+              ...tab,
+              diffEntryId: entryId,
+              diffStatus: 'pending',
+              diffOriginalContent: session.snapshotContent,
+              diffModifiedContent: afterContent,
+              diffMode: session.mode,
+            }
+            : tab
+        ));
+      }
+
+      const diffTab = createQuartzDiffTab({
+        entryId,
+        sourceTabId: matchingTab.id,
+        sourceFilePath: session.filePath,
+        fileName: getFileName(session.filePath),
+        mode: session.mode,
+        originalContent: session.snapshotContent,
+        modifiedContent: afterContent,
+        status: 'pending',
+      });
+      return [...prevTabs, diffTab];
+    });
+
+    setStatusMessage(`Quartz updated ${getFileName(session.filePath)} (${session.mode}) - diff tab added`);
+    if (QUARTZ_INTEROP_DEBUG) {
+      console.log('[QuartzInterop][Jade] Diff entry created', {
+        filePath: session.filePath,
+        mode: session.mode,
+        entryId,
+      });
+    }
+    quartzSessionsRef.current.set(sessionKey, {
+      ...session,
+      snapshotContent: afterContent,
+      pendingEntryId: entryId,
+      forceContentCheck: false,
+    });
+    return true;
+  }, [updateTabContentFromExternal]);
+
+  const switchQuartzDiffRevision = useCallback((tabId: string, direction: 'prev' | 'next') => {
+    setTabs((prevTabs) => {
+      const diffTab = prevTabs.find((tab) => tab.id === tabId && tab.tabType === 'quartz-diff');
+      if (!diffTab || !diffTab.diffSourceFilePath) return prevTabs;
+
+      const entries = getQuartzEntriesForFile(diffTab.diffSourceFilePath);
+      if (entries.length <= 1) return prevTabs;
+
+      const currentIndex = Math.max(0, entries.findIndex((entry) => entry.id === diffTab.diffEntryId));
+      const targetIndex =
+        direction === 'prev'
+          ? (currentIndex <= 0 ? entries.length - 1 : currentIndex - 1)
+          : (currentIndex >= entries.length - 1 ? 0 : currentIndex + 1);
+      const targetEntry = entries[targetIndex];
+      if (!targetEntry) return prevTabs;
+
+      return prevTabs.map((tab) => (
+        tab.id === tabId
+          ? {
+            ...tab,
+            diffEntryId: targetEntry.id,
+            diffStatus: targetEntry.status,
+            diffOriginalContent: targetEntry.beforeContent,
+            diffModifiedContent: targetEntry.afterContent,
+            diffMode: targetEntry.mode,
+          }
+          : tab
+      ));
+    });
+  }, [getQuartzEntriesForFile]);
+
   const handleAcceptQuartzHistory = useCallback((entryId: string) => {
     const entry = quartzHistoryEntries.find(item => item.id === entryId);
     if (!entry) return;
@@ -2037,7 +2509,8 @@ function App() {
       quartzSessionsRef.current.set(sessionKey, {
         ...session,
         snapshotContent: entry.afterContent,
-        pendingEntryId: null,
+        pendingEntryId: session.pendingEntryId === entryId ? null : session.pendingEntryId,
+        forceContentCheck: false,
       });
       invoke<number>('get_file_mtime', { path: entry.filePath })
         .then((mtime) => {
@@ -2046,6 +2519,7 @@ function App() {
           quartzSessionsRef.current.set(sessionKey, {
             ...latest,
             lastSeenMtime: mtime,
+            forceContentCheck: false,
           });
         })
         .catch(() => { });
@@ -2060,21 +2534,26 @@ function App() {
 
     try {
       await persistPySidecarIfNeeded(entry.filePath, entry.beforeContent);
+      // Always sync sidecar for Quartz reject flow, independent of user preference.
+      await persistPySidecarForQuartzInterop(entry.filePath, entry.beforeContent);
       await writeBinDirect(entry.beforeContent, entry.filePath);
-      await invoke('notify_quartz_bin_updated', {
-        binPath: entry.filePath,
-        mode: entry.mode,
-      }).catch(() => null);
+      if (quartzInteropEnabled) {
+        await invoke('notify_quartz_bin_updated', {
+          binPath: entry.filePath,
+          mode: entry.mode,
+        }).catch(() => null);
+      }
       const mtimeAfterReject = await invoke<number>('get_file_mtime', { path: entry.filePath }).catch(() => null);
       const sessionKey = entry.filePath.toLowerCase();
       const session = quartzSessionsRef.current.get(sessionKey);
       if (session) {
-        quartzSessionsRef.current.set(sessionKey, {
-          ...session,
-          snapshotContent: entry.beforeContent,
-          pendingEntryId: null,
-          lastSeenMtime: mtimeAfterReject ?? session.lastSeenMtime,
-        });
+      quartzSessionsRef.current.set(sessionKey, {
+        ...session,
+        snapshotContent: entry.beforeContent,
+        pendingEntryId: session.pendingEntryId === entryId ? null : session.pendingEntryId,
+        lastSeenMtime: mtimeAfterReject ?? session.lastSeenMtime,
+        forceContentCheck: false,
+      });
       }
       updateTabContentFromExternal(entry.tabId, entry.beforeContent);
       setQuartzHistoryEntries(prev => prev.map(item =>
@@ -2085,46 +2564,111 @@ function App() {
     } catch (error) {
       setStatusMessage(`Failed to reject Quartz edit: ${error}`);
     }
-  }, [persistPySidecarIfNeeded, quartzHistoryEntries, updateQuartzDiffTabStatus, updateTabContentFromExternal]);
+  }, [persistPySidecarForQuartzInterop, persistPySidecarIfNeeded, quartzHistoryEntries, quartzInteropEnabled, updateQuartzDiffTabStatus, updateTabContentFromExternal]);
 
   useEffect(() => {
+    if (quartzInteropEnabled) return;
+    quartzSessionsRef.current.clear();
+    setQuartzHistoryEntries([]);
+  }, [quartzInteropEnabled]);
+
+  useEffect(() => {
+    if (!quartzInteropEnabled) {
+      return;
+    }
     let stopped = false;
 
     const consumeHandoff = async () => {
       if (stopped) return;
       try {
-        const handoff = await invoke<InteropHandoff | null>('consume_interop_handoff');
-        if (!handoff || !handoff.bin_path) return;
-
-        const mode = normalizeQuartzMode(handoff.mode);
-        const snapshot = await readBinForEditor(handoff.bin_path).catch(() => null);
-        await openFileFromPathRef.current?.(handoff.bin_path);
-        const currentMtime = await invoke<number>('get_file_mtime', { path: handoff.bin_path }).catch(() => null);
-        if (snapshot !== null) {
-          quartzSessionsRef.current.set(handoff.bin_path.toLowerCase(), {
-            filePath: handoff.bin_path,
-            mode,
-            snapshotContent: snapshot,
-            lastSeenMtime: currentMtime,
-            pendingEntryId: null,
-          });
+        const handoffs = await invoke<InteropHandoff[]>('consume_interop_handoff');
+        if (!Array.isArray(handoffs) || handoffs.length === 0) return;
+        if (QUARTZ_INTEROP_DEBUG) {
+          console.log('[QuartzInterop][Jade] Consumed handoffs', handoffs.map(h => ({
+            action: h?.action,
+            mode: h?.mode,
+            bin: h?.bin_path,
+            created: h?.created_at_unix,
+          })));
         }
-        setStatusMessage(`Opened ${getFileName(handoff.bin_path)} from Quartz (${mode})`);
+
+        for (const handoff of handoffs) {
+          if (!handoff?.bin_path) continue;
+
+          const mode = normalizeQuartzMode(handoff.mode);
+          const action = String(handoff.action || 'open-bin').toLowerCase();
+          const sessionKey = handoff.bin_path.toLowerCase();
+          const existingSession = quartzSessionsRef.current.get(sessionKey);
+
+          if (action === 'reload-bin' && existingSession) {
+            // Keep previous snapshot, but force a content check so rapid saves
+            // in the same timestamp window are never skipped.
+            quartzSessionsRef.current.set(sessionKey, {
+              ...existingSession,
+              mode,
+              forceContentCheck: true,
+            });
+            await openFileFromPathRef.current?.(handoff.bin_path);
+            const afterContent = await readBinForQuartzInterop(handoff.bin_path).catch(() => null);
+            if (afterContent) {
+              const latest = quartzSessionsRef.current.get(sessionKey) || {
+                ...existingSession,
+                mode,
+                forceContentCheck: false,
+              };
+              queueQuartzDiffForSession(sessionKey, latest, afterContent);
+            }
+            if (QUARTZ_INTEROP_DEBUG) {
+              console.log('[QuartzInterop][Jade] Queued reload for existing session', {
+                binPath: handoff.bin_path,
+                mode,
+              });
+            }
+            setStatusMessage(`Queued Quartz update for ${getFileName(handoff.bin_path)} (${mode})`);
+            continue;
+          }
+
+          const snapshot = await readBinForQuartzInterop(handoff.bin_path).catch(() => null);
+          await openFileFromPathRef.current?.(handoff.bin_path);
+          const currentMtime = await invoke<number>('get_file_mtime', { path: handoff.bin_path }).catch(() => null);
+          if (snapshot !== null) {
+            quartzSessionsRef.current.set(sessionKey, {
+              filePath: handoff.bin_path,
+              mode,
+              snapshotContent: snapshot,
+              lastSeenMtime: currentMtime,
+              pendingEntryId: null,
+              forceContentCheck: false,
+            });
+            if (QUARTZ_INTEROP_DEBUG) {
+              console.log('[QuartzInterop][Jade] Open handoff snapshot set', {
+                binPath: handoff.bin_path,
+                mode,
+                mtime: currentMtime,
+              });
+            }
+          }
+          setStatusMessage(`Opened ${getFileName(handoff.bin_path)} from Quartz (${mode})`);
+        }
       } catch {
         // Non-fatal: handoff polling should stay quiet on transient failures.
       }
     };
 
     consumeHandoff();
-    const timer = setInterval(consumeHandoff, 1200);
+    // Faster handoff responsiveness for Quartz -> Jade opens while keeping low overhead.
+    const timer = setInterval(consumeHandoff, 300);
 
     return () => {
       stopped = true;
       clearInterval(timer);
     };
-  }, []);
+  }, [quartzInteropEnabled]);
 
   useEffect(() => {
+    if (!quartzInteropEnabled) {
+      return;
+    }
     let stopped = false;
     let running = false;
 
@@ -2135,68 +2679,39 @@ function App() {
       try {
         const sessions = Array.from(quartzSessionsRef.current.entries());
         for (const [sessionKey, session] of sessions) {
-          if (session.pendingEntryId) {
-            continue;
-          }
-
           const currentMtime = await invoke<number>('get_file_mtime', { path: session.filePath }).catch(() => null);
           if (currentMtime === null) continue;
 
+          const shouldForceCheck = session.forceContentCheck === true;
           if (session.lastSeenMtime === null) {
             session.lastSeenMtime = currentMtime;
             quartzSessionsRef.current.set(sessionKey, session);
-            continue;
+            if (!shouldForceCheck) {
+              continue;
+            }
           }
 
-          if (currentMtime === session.lastSeenMtime) {
+          if (!shouldForceCheck && currentMtime === session.lastSeenMtime) {
             continue;
           }
 
           session.lastSeenMtime = currentMtime;
+          session.forceContentCheck = false;
           quartzSessionsRef.current.set(sessionKey, session);
 
-          const matchingTab = tabs.find(t => t.filePath?.toLowerCase() === session.filePath.toLowerCase());
-          if (!matchingTab) {
-            continue;
-          }
-
-          const afterContent = await readBinForEditor(session.filePath).catch(() => null);
+          const afterContent = await readBinForQuartzInterop(session.filePath).catch(() => null);
           if (!afterContent || afterContent === session.snapshotContent) {
+            if (QUARTZ_INTEROP_DEBUG) {
+              console.log('[QuartzInterop][Jade] Change check skipped (no content delta)', {
+                filePath: session.filePath,
+                shouldForceCheck,
+                currentMtime,
+                lastSeenMtime: session.lastSeenMtime,
+              });
+            }
             continue;
           }
-
-          const entryId = `quartz-${matchingTab.id}-${Date.now()}`;
-          const newEntry: QuartzHistoryEntry = {
-            id: entryId,
-            tabId: matchingTab.id,
-            filePath: session.filePath,
-            fileName: getFileName(session.filePath),
-            mode: session.mode,
-            beforeContent: session.snapshotContent,
-            afterContent,
-            detectedAt: Date.now(),
-            status: 'pending',
-          };
-
-          updateTabContentFromExternal(matchingTab.id, afterContent);
-          setQuartzHistoryEntries(prev => [newEntry, ...prev]);
-          const diffTab = createQuartzDiffTab({
-            entryId,
-            sourceTabId: matchingTab.id,
-            sourceFilePath: session.filePath,
-            fileName: getFileName(session.filePath),
-            mode: session.mode,
-            originalContent: session.snapshotContent,
-            modifiedContent: afterContent,
-            status: 'pending',
-          });
-          setTabs(prevTabs => [...prevTabs, diffTab]);
-          setActiveTabId(diffTab.id);
-          setStatusMessage(`Quartz updated ${getFileName(session.filePath)} (${session.mode})`);
-          quartzSessionsRef.current.set(sessionKey, {
-            ...session,
-            pendingEntryId: entryId,
-          });
+          queueQuartzDiffForSession(sessionKey, session, afterContent);
         }
       } finally {
         running = false;
@@ -2208,7 +2723,7 @@ function App() {
       stopped = true;
       clearInterval(timer);
     };
-  }, [readBinForEditor, tabs, updateTabContentFromExternal]);
+  }, [queueQuartzDiffForSession, quartzInteropEnabled, readBinForQuartzInterop, tabs]);
 
   // Scroll to line handler for particle editor
   const handleScrollToLine = (line: number) => {
@@ -2221,6 +2736,15 @@ function App() {
 
   // Build status message
   const statusText = `${statusMessage}${activeTab?.isModified ? ' (Modified)' : ''}`;
+  // Only block opening bins when hashes are actually unavailable.
+  // Background check/update must not lock the Open action once hashes exist.
+  const openFileDisabled = !hashesReady;
+  const activeDiffEntries = activeTab?.tabType === 'quartz-diff' && activeTab.diffSourceFilePath
+    ? getQuartzEntriesForFile(activeTab.diffSourceFilePath)
+    : [];
+  const activeDiffRevisionIndex = activeTab?.tabType === 'quartz-diff'
+    ? Math.max(0, activeDiffEntries.findIndex((entry) => entry.id === activeTab.diffEntryId))
+    : 0;
 
   return (
     <div className={`app-container ${isDragging ? 'dragging' : ''}`}>
@@ -2264,6 +2788,7 @@ function App() {
         onAbout={handleAbout}
         recentFiles={recentFiles}
         onOpenRecentFile={openFileFromPath}
+        openFileDisabled={openFileDisabled}
       />
 
       {tabs.length > 0 && (
@@ -2277,7 +2802,7 @@ function App() {
         />
       )}
 
-      {tabs.length === 0 && <WelcomeScreen onOpenFile={handleOpen} />}
+      {tabs.length === 0 && <WelcomeScreen onOpenFile={handleOpen} openFileDisabled={openFileDisabled} />}
 
       {/* Keep the editor container (and Monaco) always mounted.
           Unmounting Monaco while a requestAnimationFrame render is in-flight
@@ -2304,6 +2829,10 @@ function App() {
           status={activeTab.diffStatus ?? 'pending'}
           originalContent={activeTab.diffOriginalContent ?? ''}
           modifiedContent={activeTab.diffModifiedContent ?? ''}
+          revisionIndex={activeDiffRevisionIndex}
+          revisionCount={Math.max(1, activeDiffEntries.length)}
+          onPrevRevision={() => switchQuartzDiffRevision(activeTab.id, 'prev')}
+          onNextRevision={() => switchQuartzDiffRevision(activeTab.id, 'next')}
           onAccept={() => {
             if (activeTab.diffEntryId) {
               handleAcceptQuartzHistory(activeTab.diffEntryId);
@@ -2436,6 +2965,20 @@ function App() {
         />
       )}
 
+      {hashSyncToast?.visible && (
+        <HashSyncToast
+          status={hashSyncToast.status}
+          message={hashSyncToast.message}
+          onDismiss={() => {
+            if (hashToastHideTimeoutRef.current) {
+              clearTimeout(hashToastHideTimeoutRef.current);
+              hashToastHideTimeoutRef.current = null;
+            }
+            setHashSyncToast((prev) => prev ? { ...prev, visible: false } : prev);
+          }}
+        />
+      )}
+
       {activeTab && isEditorTab(activeTab) && particleDialogOpen && (
         <ParticleEditorDialog
           isOpen={particleDialogOpen}
@@ -2447,9 +2990,22 @@ function App() {
         />
       )}
 
+      <QuartzInstallModal
+        isOpen={showQuartzInstallModal}
+        onClose={() => setShowQuartzInstallModal(false)}
+        onDownload={async () => {
+          try {
+            await invoke('open_url', { url: 'https://github.com/LeagueToolkit/Quartz/releases' });
+          } catch {
+            window.open('https://github.com/LeagueToolkit/Quartz/releases', '_blank', 'noopener,noreferrer');
+          }
+        }}
+      />
+
       <SmokeOverlay active={cigaretteMode} />
     </div>
   );
 }
 
 export default App;
+

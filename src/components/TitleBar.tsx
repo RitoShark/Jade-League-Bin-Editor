@@ -13,7 +13,7 @@ interface TitleBarProps {
     onMaximize: () => void;
     onClose: () => void;
     onParticleEditor?: () => void;
-    onQuartzAction?: (mode: 'paint' | 'port') => void;
+    onQuartzAction?: (mode: 'paint' | 'port' | 'bineditor' | 'vfxhub') => void;
 }
 
 export default function TitleBar({
@@ -99,6 +99,24 @@ export default function TitleBar({
                                     }}
                                 >
                                     Port In Quartz
+                                </button>
+                                <button
+                                    className="toolbar-menu-item"
+                                    onClick={() => {
+                                        setShowQuartzMenu(false);
+                                        onQuartzAction?.('bineditor');
+                                    }}
+                                >
+                                    Open In BinEditor
+                                </button>
+                                <button
+                                    className="toolbar-menu-item"
+                                    onClick={() => {
+                                        setShowQuartzMenu(false);
+                                        onQuartzAction?.('vfxhub');
+                                    }}
+                                >
+                                    Open In VFXHub
                                 </button>
                             </div>
                         )}

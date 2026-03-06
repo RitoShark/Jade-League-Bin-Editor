@@ -10,16 +10,23 @@ export type QuartzDiffStatus = 'pending' | 'accepted' | 'rejected';
 
 interface QuartzDiffTabProps {
   fileName: string;
-  mode: 'paint' | 'port';
+  mode: 'paint' | 'port' | 'bineditor' | 'vfxhub';
   status: QuartzDiffStatus;
   originalContent: string;
   modifiedContent: string;
+  revisionIndex?: number;
+  revisionCount?: number;
+  onPrevRevision?: () => void;
+  onNextRevision?: () => void;
   onAccept: () => void;
   onReject: () => void;
 }
 
-function getModeLabel(mode: 'paint' | 'port'): string {
-  return mode === 'port' ? 'Port' : 'Paint';
+function getModeLabel(mode: 'paint' | 'port' | 'bineditor' | 'vfxhub'): string {
+  if (mode === 'port') return 'Port';
+  if (mode === 'bineditor') return 'BinEditor';
+  if (mode === 'vfxhub') return 'VFXHub';
+  return 'Paint';
 }
 
 function getStatusLabel(status: QuartzDiffStatus): string {
@@ -77,6 +84,10 @@ export default function QuartzDiffTab({
   status,
   originalContent,
   modifiedContent,
+  revisionIndex = 0,
+  revisionCount = 1,
+  onPrevRevision,
+  onNextRevision,
   onAccept,
   onReject,
 }: QuartzDiffTabProps) {
@@ -216,6 +227,27 @@ export default function QuartzDiffTab({
           </span>
         </div>
         <div className="quartz-diff-tab__header-controls">
+          <div className="quartz-diff-tab__nav">
+            <span className="quartz-diff-tab__change-indicator">
+              Revision {Math.max(1, revisionIndex + 1)}/{Math.max(1, revisionCount)}
+            </span>
+            <button
+              type="button"
+              className="quartz-diff-tab__btn quartz-diff-tab__btn--nav"
+              onClick={onPrevRevision}
+              disabled={revisionCount <= 1}
+            >
+              Prev Rev
+            </button>
+            <button
+              type="button"
+              className="quartz-diff-tab__btn quartz-diff-tab__btn--nav"
+              onClick={onNextRevision}
+              disabled={revisionCount <= 1}
+            >
+              Next Rev
+            </button>
+          </div>
           <div className="quartz-diff-tab__nav">
             <span className="quartz-diff-tab__change-indicator">
               {hasDiffChanges ? `Change ${selectedChangeIndex + 1}/${lineChanges.length}` : 'No changes'}

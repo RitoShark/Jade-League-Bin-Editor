@@ -1,0 +1,85 @@
+.quartz-install-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quartz-install-modal {
+  width: min(620px, calc(100vw - 48px));
+  background: linear-gradient(135deg, rgba(15, 20, 32, 0.96), rgba(22, 18, 40, 0.96));
+  border: 1px solid rgba(118, 93, 255, 0.45);
+  border-radius: 14px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55), 0 0 24px rgba(118, 93, 255, 0.24);
+  padding: 22px 22px 18px;
+  position: relative;
+}
+
+.quartz-install-accent {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  border-radius: 14px 14px 0 0;
+  background: linear-gradient(90deg, #6f5bff, #9f8bff, #6f5bff);
+  background-size: 200% 100%;
+  animation: quartzInstallShimmer 3s linear infinite;
+}
+
+@keyframes quartzInstallShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.quartz-install-title {
+  margin-top: 6px;
+  color: #f7f9ff;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.quartz-install-text {
+  margin-top: 14px;
+  color: #d9def2;
+  line-height: 1.62;
+  font-size: 14px;
+}
+
+.quartz-install-subtext {
+  margin-top: 10px;
+  color: #aeb8dd;
+  font-size: 13px;
+}
+
+.quartz-install-actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.quartz-install-btn {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.quartz-install-btn-secondary {
+  color: #e3e7fa;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.quartz-install-btn-primary {
+  color: #fff;
+  font-weight: 600;
+  background: linear-gradient(135deg, #6f5bff, #9f8bff);
+}
+

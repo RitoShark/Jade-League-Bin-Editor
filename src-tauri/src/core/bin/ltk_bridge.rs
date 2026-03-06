@@ -7,6 +7,7 @@ use std::io::Cursor;
 use std::sync::OnceLock;
 use parking_lot::RwLock;
 use ltk_meta::{BinTree, BinTreeObject};
+use crate::core::hash::get_frogtools_hash_dir;
 
 /// Maximum allowed BIN file size (50MB - no legitimate BIN should be larger)
 pub const MAX_BIN_SIZE: usize = 50 * 1024 * 1024;
@@ -182,15 +183,13 @@ pub fn tree_to_text_with_hashes<H: ltk_ritobin::HashProvider>(
 pub fn load_bin_hashes() -> HashMapProvider {
     let mut hashes = HashMapProvider::new();
 
-    // Get the LeagueToolkit hash directory
-    let hash_dir = if let Ok(appdata) = std::env::var("APPDATA") {
-        std::path::PathBuf::from(appdata)
-            .join("LeagueToolkit")
-            .join("Requirements")
-            .join("Hashes")
-    } else {
-        eprintln!("[ltk_bridge] APPDATA not set, cannot load hash files");
-        return hashes;
+    // Get the shared FrogTools hash directory.
+    let hash_dir = match get_frogtools_hash_dir() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[ltk_bridge] cannot resolve hash dir: {}", e);
+            return hashes;
+        }
     };
 
     if !hash_dir.exists() {
@@ -307,6 +306,14 @@ pub fn get_cached_bin_hashes() -> &'static RwLock<HashMapProvider> {
         println!("[ltk_bridge] Global BIN hash cache initialized with {} hashes", hashes.total_count());
         RwLock::new(hashes)
     })
+}
+
+/// Reload the existing cached BIN hashes from disk and return total loaded count.
+pub fn reload_cached_bin_hashes() -> usize {
+    let cache = get_cached_bin_hashes();
+    let mut guard = cache.write();
+    *guard = load_bin_hashes();
+    guard.total_count()
 }
 
 /// Convert a Bin to ritobin text format using the cached hash provider

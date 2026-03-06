@@ -2,16 +2,17 @@ import './WelcomeScreen.css';
 
 interface WelcomeScreenProps {
     onOpenFile: () => void;
+    openFileDisabled?: boolean;
 }
 
-export default function WelcomeScreen({ onOpenFile }: WelcomeScreenProps) {
+export default function WelcomeScreen({ onOpenFile, openFileDisabled = false }: WelcomeScreenProps) {
     return (
         <div className="welcome-screen">
             <div className="welcome-content">
                 <h1 className="welcome-title">Jade BIN Editor</h1>
                 <p className="welcome-subtitle">Open a bin file to start editing</p>
                 
-                <button className="welcome-open-btn" onClick={onOpenFile}>
+                <button className="welcome-open-btn" onClick={onOpenFile} disabled={openFileDisabled}>
                     <span>Open File</span>
                     <span className="shortcut">Ctrl+O</span>
                 </button>
