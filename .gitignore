@@ -45,11 +45,11 @@ App.xaml
 App.xaml.cs
 Jade.csproj
 JadeCS/
-Core/
-Editor/
-Services/
-Themes/
-Windows/
+/Core/
+/Editor/
+/Services/
+/Themes/
+/Windows/
 
 # Local testing - PowerShell scripts
 *.ps1
