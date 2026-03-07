@@ -74,6 +74,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
     const [isPreloading, setIsPreloading] = useState(false);
 
     const [autoCheckUpdates, setAutoCheckUpdates] = useState(true);
+    const [autoDownloadUpdates, setAutoDownloadUpdates] = useState(false);
     const [silentUpdate, setSilentUpdate] = useState(false);
     const [updateState, setUpdateState] = useState<UpdateCheckState>('idle');
     const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -111,6 +112,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             setCommunicateWithQuartz((await invoke<string>('get_preference', { key: 'CommunicateWithQuartz', defaultValue: 'True' })) === 'True');
             setIsRegistered(await invoke<boolean>('get_bin_association_status'));
             setAutoCheckUpdates((await invoke<string>('get_preference', { key: 'AutoCheckUpdates', defaultValue: 'True' })) === 'True');
+            setAutoDownloadUpdates((await invoke<string>('get_preference', { key: 'AutoDownloadUpdates', defaultValue: 'False' })) === 'True');
             setSilentUpdate((await invoke<string>('get_preference', { key: 'SilentUpdate', defaultValue: 'False' })) === 'True');
             setConverterEngine(await invoke<string>('get_preference', { key: 'ConverterEngine', defaultValue: 'jade' }));
             setEngineChanged(false);
@@ -382,9 +384,19 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                 checked={autoCheckUpdates}
                 onChange={v => { setAutoCheckUpdates(v); savePref('AutoCheckUpdates', v); }}
             />
+            {autoCheckUpdates && (
+                <div style={{ paddingLeft: 16, borderLeft: '2px solid var(--border-color, #333)' }}>
+                    <ToggleRow
+                        label="Auto-download updates"
+                        description="Automatically download the update when one is found. If off, you'll just be notified."
+                        checked={autoDownloadUpdates}
+                        onChange={v => { setAutoDownloadUpdates(v); savePref('AutoDownloadUpdates', v); }}
+                    />
+                </div>
+            )}
             <ToggleRow
-                label="Silent update"
-                description="Download and install updates silently in the background without any prompts."
+                label="Silent install"
+                description="Install updates silently and restart the app. If off, the installer wizard will open instead."
                 checked={silentUpdate}
                 onChange={v => { setSilentUpdate(v); savePref('SilentUpdate', v); }}
             />

@@ -285,12 +285,20 @@ function App() {
         try {
           const info = await invoke<UpdateInfo>('check_for_update');
           if (!info.available) return;
+          const autoDownload = await invoke<string>('get_preference', { key: 'AutoDownloadUpdates', defaultValue: 'False' });
+          if (autoDownload !== 'True') {
+            // Just notify the user, don't download
+            setUpdateToastVersion(info.version);
+            return;
+          }
           const silent = await invoke<string>('get_preference', { key: 'SilentUpdate', defaultValue: 'False' });
           if (silent === 'True') {
             // Download and install with no UI
             await invoke('start_update_download');
             await invoke('run_installer', { silent: true });
           } else {
+            // Download but let user click install
+            await invoke('start_update_download');
             setUpdateToastVersion(info.version);
           }
         } catch (e) {
