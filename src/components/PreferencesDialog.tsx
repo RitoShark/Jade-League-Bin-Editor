@@ -5,6 +5,7 @@ import './PreferencesDialog.css';
 interface PreferencesDialogProps {
     isOpen: boolean;
     onClose: () => void;
+    onEmitterHintsChange?: (enabled: boolean) => void;
 }
 
 interface ImageEditorStatus {
@@ -13,10 +14,11 @@ interface ImageEditorStatus {
     gimp: boolean;
 }
 
-const PreferencesDialog: React.FC<PreferencesDialogProps> = ({ isOpen, onClose }) => {
+const PreferencesDialog: React.FC<PreferencesDialogProps> = ({ isOpen, onClose, onEmitterHintsChange }) => {
     const [importLinkedBins, setImportLinkedBins] = useState(false);
     const [recursiveLinkedBins, setRecursiveLinkedBins] = useState(false);
     const [useQuartzPyWorkflow, setUseQuartzPyWorkflow] = useState(false);
+    const [emitterNameHints, setEmitterNameHints] = useState(true);
     const [texEditorApp, setTexEditorApp] = useState<string>('default');
     const [imageEditors, setImageEditors] = useState<ImageEditorStatus>({
         paintnet: false,
@@ -56,6 +58,12 @@ const PreferencesDialog: React.FC<PreferencesDialogProps> = ({ isOpen, onClose }
             });
             setTexEditorApp(texEditor);
 
+            const emitterHints = await invoke<string>('get_preference', {
+                key: 'EmitterNameHints',
+                defaultValue: 'True',
+            });
+            setEmitterNameHints(emitterHints !== 'False');
+
             const editors = await invoke<ImageEditorStatus>('detect_image_editors');
             setImageEditors(editors);
         } catch (e) {
@@ -93,6 +101,12 @@ const PreferencesDialog: React.FC<PreferencesDialogProps> = ({ isOpen, onClose }
     const handleQuartzPyWorkflowChange = (checked: boolean) => {
         setUseQuartzPyWorkflow(checked);
         savePreference('UseQuartzPyWorkflow', checked ? 'True' : 'False');
+    };
+
+    const handleEmitterNameHintsChange = (checked: boolean) => {
+        setEmitterNameHints(checked);
+        savePreference('EmitterNameHints', checked ? 'True' : 'False');
+        onEmitterHintsChange?.(checked);
     };
 
     if (!isOpen) return null;
@@ -152,6 +166,20 @@ const PreferencesDialog: React.FC<PreferencesDialogProps> = ({ isOpen, onClose }
                         </label>
                         <p className="preference-description">
                             Keeps an adjacent .py text copy for each opened .bin and uses it when available, matching Quartz's fake .py flow.
+                        </p>
+                    </div>
+
+                    <div className="preference-group">
+                        <label className="preference-checkbox">
+                            <input
+                                type="checkbox"
+                                checked={emitterNameHints}
+                                onChange={(e) => handleEmitterNameHintsChange(e.target.checked)}
+                            />
+                            <span className="checkbox-label">Show Emitter Name Hints</span>
+                        </label>
+                        <p className="preference-description">
+                            Displays emitter names inline next to collapsed VfxEmitterDefinitionData blocks in the editor.
                         </p>
                     </div>
 

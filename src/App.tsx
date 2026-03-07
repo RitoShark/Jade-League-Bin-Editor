@@ -24,6 +24,7 @@ import UpdateToast from "./components/UpdateToast";
 import HashSyncToast from "./components/HashSyncToast";
 import QuartzInstallModal from "./components/QuartzInstallModal";
 import TexHoverPopup from "./components/TexHoverPopup";
+import EditorContextMenu from "./components/EditorContextMenu";
 import TexturePreviewTab from "./components/TexturePreviewTab";
 import QuartzDiffTab from "./components/QuartzDiffTab";
 import SmokeOverlay from "./components/SmokeOverlay";
@@ -106,6 +107,7 @@ function App() {
   const [particlePanelOpen, setParticlePanelOpen] = useState(false);
   const [particleDialogOpen, setParticleDialogOpen] = useState(false);
   const [monacoInstance, setMonacoInstance] = useState<Monaco | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
   const [lineCount, setLineCount] = useState(0);
   const [caretPosition, setCaretPosition] = useState({ line: 1, column: 1 });
@@ -146,6 +148,9 @@ function App() {
 
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
   const editorDisposablesRef = useRef<MonacoType.IDisposable[]>([]);
+  const emitterDecorationIds = useRef<string[]>([]);
+  const emitterDecorDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const emitterHintsEnabled = useRef(true);
   const mutationObserverRef = useRef<MutationObserver | null>(null);
   const mutationSetupTimeoutRef = useRef<number | null>(null);
   const undoCheckIntervalRef = useRef<number | null>(null);
@@ -209,6 +214,9 @@ function App() {
     invoke<string>('get_preference', { key: 'CommunicateWithQuartz', defaultValue: 'True' })
       .then(val => setQuartzInteropEnabled(val === 'True'))
       .catch(() => setQuartzInteropEnabled(true));
+    invoke<string>('get_preference', { key: 'EmitterNameHints', defaultValue: 'True' })
+      .then(val => { emitterHintsEnabled.current = val !== 'False'; })
+      .catch(() => {});
 
     const handleCigaretteModeChanged = (e: Event) => {
       setCigaretteMode((e as CustomEvent<boolean>).detail);
@@ -1440,6 +1448,9 @@ function App() {
 
     // Update line count
     try { setLineCount(model!.getLineCount()); } catch (_) { }
+
+    // Update emitter name decorations for this model
+    updateEmitterNameDecorations(editor);
   }, [activeTabId]); // Only re-run when active tab changes
 
   const handleThemeApplied = () => {
@@ -1718,6 +1729,68 @@ function App() {
     }
   }, []);
 
+  // Add inline decorations showing emitterName on VfxEmitterDefinitionData lines
+  const updateEmitterNameDecorations = useCallback((editor: MonacoType.editor.IStandaloneCodeEditor) => {
+    const model = editor.getModel();
+    if (!model || model.isDisposed()) return;
+
+    if (!emitterHintsEnabled.current) {
+      // Clear existing decorations and CSS
+      emitterDecorationIds.current = model.deltaDecorations(emitterDecorationIds.current, []);
+      const styleEl = document.getElementById('emitter-hint-styles');
+      if (styleEl) styleEl.textContent = '';
+      return;
+    }
+
+    const text = model.getValue();
+    const lines = text.split('\n');
+    const decorations: MonacoType.editor.IModelDeltaDecoration[] = [];
+    const cssRules: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      if (/VfxEmitterDefinitionData\s*\{/.test(lines[i])) {
+        let braceDepth = 0;
+        let emitterName = '';
+        for (let j = i; j < Math.min(i + 80, lines.length); j++) {
+          for (const c of lines[j]) {
+            if (c === '{') braceDepth++;
+            else if (c === '}') braceDepth--;
+          }
+          const nameMatch = lines[j].match(/emitterName:\s*string\s*=\s*"([^"]+)"/);
+          if (nameMatch) {
+            emitterName = nameMatch[1];
+            break;
+          }
+          if (braceDepth <= 0 && j > i) break;
+        }
+        if (emitterName) {
+          const lineNum = i + 1;
+          const className = `emitter-hint-${lineNum}`;
+          const escapedName = emitterName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          cssRules.push(`.${className}::after { content: "  // ${escapedName}"; color: var(--syntax-comment-color, #6a9955); font-style: italic; opacity: 0.8; }`);
+          decorations.push({
+            range: { startLineNumber: lineNum, startColumn: 1, endLineNumber: lineNum, endColumn: 1 },
+            options: {
+              afterContentClassName: className,
+              isWholeLine: true,
+            },
+          });
+        }
+      }
+    }
+
+    // Inject dynamic CSS for emitter name hints
+    let styleEl = document.getElementById('emitter-hint-styles');
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = 'emitter-hint-styles';
+      document.head.appendChild(styleEl);
+    }
+    styleEl.textContent = cssRules.join('\n');
+
+    emitterDecorationIds.current = model.deltaDecorations(emitterDecorationIds.current, decorations);
+  }, []);
+
   const handleEditorMount = (editor: MonacoType.editor.IStandaloneCodeEditor) => {
     // Clean up any previous subscriptions before creating new ones
     editorDisposablesRef.current.forEach(disposable => {
@@ -1778,6 +1851,14 @@ function App() {
         if (caretUpdateTimeoutRef.current) clearTimeout(caretUpdateTimeoutRef.current);
       }
     });
+
+    // Custom right-click context menu
+    const contextMenuDisposable = editor.onContextMenu((e) => {
+      e.event.preventDefault();
+      e.event.stopPropagation();
+      setCtxMenu({ x: e.event.posx, y: e.event.posy });
+    });
+    editorDisposablesRef.current.push(contextMenuDisposable);
 
     // â”€â”€ Texture path hover detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const texMoveHideTimeout = { current: null as ReturnType<typeof setTimeout> | null };
@@ -1875,6 +1956,7 @@ function App() {
             editor.restoreViewState(savedState.viewState);
           }
           setLineCount(model.getLineCount());
+          updateEmitterNameDecorations(editor);
         }
       }, 0);
     }
@@ -1993,6 +2075,11 @@ function App() {
       if (model) {
         setLineCount(model.getLineCount());
       }
+      // Debounced emitter name decoration update
+      if (emitterDecorDebounce.current) clearTimeout(emitterDecorDebounce.current);
+      emitterDecorDebounce.current = setTimeout(() => {
+        if (editorRef.current) updateEmitterNameDecorations(editorRef.current);
+      }, 500);
     }
   };
 
@@ -2256,6 +2343,53 @@ function App() {
     if (!isEditorTab(activeTabRef.current)) return;
     editorRef.current?.trigger('keyboard', 'editor.action.selectAll', null);
   };
+
+  // Fold/unfold all VfxEmitterDefinitionData blocks via folding controller
+  const setEmittersFolded = (collapse: boolean) => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+
+    // Collect 1-based line numbers of emitter blocks
+    const text = model.getValue();
+    const lines = text.split('\n');
+    const emitterLineSet = new Set<number>();
+    for (let i = 0; i < lines.length; i++) {
+      if (/VfxEmitterDefinitionData\s*\{/.test(lines[i])) {
+        emitterLineSet.add(i + 1);
+      }
+    }
+    if (emitterLineSet.size === 0) return;
+
+    // Access Monaco's internal folding controller
+    const foldingCtrl = (editor as any).getContribution('editor.contrib.folding');
+    if (!foldingCtrl?.getFoldingModel) return;
+
+    foldingCtrl.getFoldingModel().then((foldingModel: any) => {
+      if (!foldingModel) return;
+      const regions = foldingModel.regions;
+      if (!regions) return;
+
+      for (let i = 0; i < regions.length; i++) {
+        const startLine = regions.getStartLineNumber(i);
+        if (emitterLineSet.has(startLine) && regions.isCollapsed(i) !== collapse) {
+          regions.setCollapsed(i, collapse);
+        }
+      }
+      // Notify the editor to re-render folded regions
+      foldingModel.update(regions);
+    });
+  };
+
+  const foldAllEmitters = () => setEmittersFolded(true);
+  const unfoldAllEmitters = () => setEmittersFolded(false);
+
+  // Check if current content has emitters (for context menu)
+  const hasEmitters = useCallback(() => {
+    const content = editorRef.current?.getValue() || '';
+    return /VfxEmitterDefinitionData\s*\{/.test(content);
+  }, []);
+
   const handleGeneralEdit = () => {
     if (!isEditorTab(activeTabRef.current)) return;
     setFindWidgetOpen(false);
@@ -2958,6 +3092,7 @@ function App() {
             fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
             lineNumbersMinChars: 6,
             fixedOverflowWidgets: true,
+            contextmenu: false,
             find: {
               addExtraSpaceOnTop: false,
               autoFindInSelection: 'never',
@@ -2989,6 +3124,21 @@ function App() {
           />
         )}
       </div>
+
+      {ctxMenu && (
+        <EditorContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          onCut={handleCut}
+          onCopy={handleCopy}
+          onPaste={handlePaste}
+          onSelectAll={handleSelectAll}
+          onFoldEmitters={foldAllEmitters}
+          onUnfoldEmitters={unfoldAllEmitters}
+          hasEmitters={hasEmitters()}
+        />
+      )}
 
       {/* Texture hover popup */}
       {texPopup && (
@@ -3045,6 +3195,10 @@ function App() {
       <PreferencesDialog
         isOpen={showPreferencesDialog}
         onClose={() => setShowPreferencesDialog(false)}
+        onEmitterHintsChange={(enabled) => {
+          emitterHintsEnabled.current = enabled;
+          if (editorRef.current) updateEmitterNameDecorations(editorRef.current);
+        }}
       />
 
       {updateToastVersion && (

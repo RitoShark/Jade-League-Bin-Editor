@@ -272,6 +272,7 @@ export function createMonacoTheme(monaco: Monaco, themeId: string, syntaxThemeId
     // Expose syntax colors as CSS variables so non-Monaco UI (e.g. texture
     // preview filename) can stay in sync with the active syntax theme.
     document.documentElement.style.setProperty('--syntax-string-color', colors.stringColor);
+    document.documentElement.style.setProperty('--syntax-comment-color', colors.comment);
 
     const editorBg = theme?.editorBg || '#1E1E1E';
     const textColor = theme?.text || '#D4D4D4';
