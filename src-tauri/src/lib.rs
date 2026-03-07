@@ -27,7 +27,12 @@ pub fn run() {
             // focus the existing window and emit the file path to the frontend
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
+                let _ = window.unminimize();
                 let _ = window.set_focus();
+                // On Windows, SetForegroundWindow may not work if we don't have
+                // the foreground lock — request_user_attention flashes the taskbar
+                // as a fallback to get the user's attention.
+                let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
             }
             // Find any file path argument (skip the exe path at index 0)
             let file_path = args.iter().skip(1).find(|a| {

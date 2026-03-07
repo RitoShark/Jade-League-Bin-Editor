@@ -220,10 +220,17 @@ function App() {
     window.addEventListener('quartz-interop-changed', handleQuartzInteropChanged);
 
     // Listen for open-file events from backend (file association double-click or single-instance)
-    const openFileUnlisten = listen<string>('open-file', (event) => {
+    const openFileUnlisten = listen<string>('open-file', async (event) => {
       const filePath = event.payload;
       if (filePath && filePath.trim()) {
         console.log('[App] Received open-file event:', filePath);
+        // Bring window to front when a file is opened externally
+        const win = getCurrentWindow();
+        try {
+          await win.unminimize();
+          await win.show();
+          await win.setFocus();
+        } catch (_) { /* best-effort */ }
         openFileFromPathRef.current?.(filePath);
       }
     });
@@ -1087,6 +1094,10 @@ function App() {
 
       const content = await readBinForEditor(filePath);
       const newTab = createTab(filePath, content);
+      // Store initial mtime so the auto-reload poller doesn't fire immediately
+      invoke<number>('get_file_mtime', { path: filePath })
+        .then(mtime => editorMtimeRef.current.set(newTab.id, mtime))
+        .catch(() => {});
       setTabs(prev => [...prev, newTab]);
       setActiveTabId(newTab.id);
 
@@ -1538,6 +1549,72 @@ function App() {
       }
     };
   }, [activeTabId, tabs, loadTextureIntoTab]);
+
+  // Auto-reload: poll open editor tabs for external file changes every 2s
+  const editorMtimeRef = useRef<Map<string, number>>(new Map());
+  const editorPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (editorPollIntervalRef.current) {
+      clearInterval(editorPollIntervalRef.current);
+      editorPollIntervalRef.current = null;
+    }
+
+    // Only poll tabs that are regular editor tabs with a file path
+    const editorTabs = tabs.filter(t => (!t.tabType || t.tabType === 'editor') && t.filePath);
+    if (editorTabs.length === 0) return;
+
+    editorPollIntervalRef.current = setInterval(async () => {
+      for (const tab of editorTabs) {
+        if (!tab.filePath) continue;
+        try {
+          const mtime = await invoke<number>('get_file_mtime', { path: tab.filePath });
+          const last = editorMtimeRef.current.get(tab.id);
+          if (last === undefined) {
+            // First reading — just store it
+            editorMtimeRef.current.set(tab.id, mtime);
+          } else if (mtime !== last) {
+            editorMtimeRef.current.set(tab.id, mtime);
+            // File changed on disk — reload the bin content
+            console.log('[AutoReload] File changed externally:', tab.filePath);
+            try {
+              const newContent = await readBinDirect(tab.filePath);
+              setTabs(prev => prev.map(t =>
+                t.id === tab.id ? { ...t, content: newContent, isModified: false } : t
+              ));
+              if (tab.id === activeTabId && editorRef.current) {
+                const model = editorRef.current.getModel();
+                if (model) {
+                  model.setValue(newContent);
+                }
+              }
+              setStatusMessage(`Reloaded ${tab.fileName} (changed externally)`);
+              statusMessageRef.current = `Reloaded ${tab.fileName} (changed externally)`;
+            } catch {
+              // File might be locked during write — will retry next poll
+            }
+          }
+        } catch {
+          // File temporarily inaccessible — ignore
+        }
+      }
+    }, 2000);
+
+    return () => {
+      if (editorPollIntervalRef.current) {
+        clearInterval(editorPollIntervalRef.current);
+        editorPollIntervalRef.current = null;
+      }
+    };
+  }, [tabs, activeTabId]);
+
+  // Clean up mtime tracking when tabs are closed
+  useEffect(() => {
+    const openTabIds = new Set(tabs.map(t => t.id));
+    for (const id of editorMtimeRef.current.keys()) {
+      if (!openTabIds.has(id)) editorMtimeRef.current.delete(id);
+    }
+  }, [tabs]);
 
   /**
    * Resolve a .tex asset path and decode it for the hover popup.
@@ -2022,6 +2099,10 @@ function App() {
         } catch (interopErr) {
           console.warn('[QuartzInterop][Jade] notify_quartz_bin_updated failed on save:', interopErr);
         }
+        // Update mtime so auto-reload poller doesn't trigger on our own save
+        invoke<number>('get_file_mtime', { path: activeTab.filePath })
+          .then(mtime => editorMtimeRef.current.set(activeTab.id, mtime))
+          .catch(() => {});
         setTabs(prevTabs =>
           prevTabs.map(t =>
             t.id === activeTabId ? { ...t, content, isModified: false } : t
