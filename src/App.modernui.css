@@ -281,7 +281,8 @@
 }
 
 [data-ui-mode="modern"] .welcome-card,
-[data-ui-mode="modern"] .welcome-content {
+[data-ui-mode="modern"] .welcome-content,
+[data-ui-mode="modern"] .welcome-recent-popup {
   background: var(--modern-glass-bg) !important;
   backdrop-filter: var(--modern-blur);
   -webkit-backdrop-filter: var(--modern-blur);

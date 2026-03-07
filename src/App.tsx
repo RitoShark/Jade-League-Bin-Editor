@@ -2891,7 +2891,7 @@ function App() {
         />
       )}
 
-      {tabs.length === 0 && <WelcomeScreen onOpenFile={handleOpen} openFileDisabled={openFileDisabled} />}
+      {tabs.length === 0 && <WelcomeScreen onOpenFile={handleOpen} openFileDisabled={openFileDisabled} recentFiles={recentFiles} onOpenRecentFile={openFileFromPath} />}
 
       {/* Keep the editor container (and Monaco) always mounted.
           Unmounting Monaco while a requestAnimationFrame render is in-flight
