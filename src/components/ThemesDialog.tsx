@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ChangeEvent } from 'react';
+import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
     THEMES,
@@ -6,10 +6,12 @@ import {
     getTheme,
     getSyntaxColors,
     getBracketColors,
-    type ThemeColors
+    type ThemeColors,
+    type SyntaxColors,
+    type BracketColors
 } from '../lib/themes';
 import { applyTheme, applyRoundedCorners, applyModernUI, applyCustomBackground } from '../lib/themeApplicator';
-import { PaletteIcon, SparklesIcon, EyeIcon, ImageIcon, SettingsIcon } from './Icons';
+import { PaletteIcon, SparklesIcon, ImageIcon, SettingsIcon } from './Icons';
 import './ThemesDialog.css';
 
 interface ThemesDialogProps {
@@ -28,12 +30,11 @@ interface CustomTheme {
     selectedTab: string;
 }
 
-type NavSection = 'ui' | 'syntax' | 'preview' | 'background' | 'options';
+type NavSection = 'ui' | 'syntax' | 'background' | 'options';
 
 const NAV_ITEMS: { id: NavSection; label: string; icon: React.ReactNode }[] = [
     { id: 'ui',         label: 'UI Theme',      icon: <PaletteIcon size={15} />  },
     { id: 'syntax',     label: 'Syntax Colors',  icon: <SparklesIcon size={15} /> },
-    { id: 'preview',    label: 'Live Preview',   icon: <EyeIcon size={15} />     },
     { id: 'background', label: 'Background',     icon: <ImageIcon size={15} />   },
     { id: 'options',    label: 'Options',         icon: <SettingsIcon size={15} />},
 ];
@@ -56,6 +57,8 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
     const [customBackgroundOpacity, setCustomBackgroundOpacity] = useState(100);
     const [customBackgroundVignette, setCustomBackgroundVignette] = useState(0);
     const backgroundInputRef = useRef<HTMLInputElement | null>(null);
+    const uiPreviewRef = useRef<HTMLIFrameElement | null>(null);
+    const uiPreviewContainerRef = useRef<HTMLDivElement | null>(null);
 
     const [customTheme, setCustomTheme] = useState<CustomTheme>({
         windowBg: '#0F1928',
@@ -66,6 +69,73 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
         tabBg: '#1E1E1E',
         selectedTab: '#007ACC'
     });
+
+    const [useCustomSyntaxTheme, setUseCustomSyntaxTheme] = useState(false);
+    const [customSyntax, setCustomSyntax] = useState<SyntaxColors>({
+        keyword: '#569CD6',
+        comment: '#6A9955',
+        stringColor: '#CE9178',
+        number: '#B5CEA8',
+        propertyColor: '#569CD6'
+    });
+    const [customBrackets, setCustomBrackets] = useState<BracketColors>({
+        color1: '#FFD700',
+        color2: '#DA70D6',
+        color3: '#87CEEB'
+    });
+
+    const buildSrcdoc = useCallback(() => {
+        const styles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+            .map(el => el.outerHTML).join('\n');
+        const bodyClone = document.body.cloneNode(true) as HTMLElement;
+        bodyClone.querySelectorAll('.themes-dialog-overlay').forEach(el => el.remove());
+        const bodyHTML = bodyClone.innerHTML;
+        const rootStyles = document.documentElement.getAttribute('style') || '';
+        const dataAttrs = Array.from(document.documentElement.attributes)
+            .filter(a => a.name.startsWith('data-'))
+            .map(a => `${a.name}="${a.value}"`)
+            .join(' ');
+        return `<!DOCTYPE html><html style="${rootStyles}" ${dataAttrs}><head>${styles}</head><body>${bodyHTML}</body></html>`;
+    }, []);
+
+    const [srcdoc, setSrcdoc] = useState('');
+
+    useEffect(() => {
+        if (isOpen && activeSection === 'ui') {
+            setSrcdoc(buildSrcdoc());
+        }
+    }, [isOpen, activeSection, buildSrcdoc]);
+
+    const syncThemeToIframe = useCallback(() => {
+        const iframe = uiPreviewRef.current;
+        if (!iframe?.contentDocument) return;
+        const root = iframe.contentDocument.documentElement;
+
+        const theme = useCustomTheme ? customTheme : (getTheme(selectedTheme) || THEMES[0]);
+        root.style.setProperty('--window-bg', theme.windowBg);
+        root.style.setProperty('--editor-bg', theme.editorBg);
+        root.style.setProperty('--title-bar-bg', theme.titleBar);
+        root.style.setProperty('--status-bar-bg', theme.statusBar);
+        root.style.setProperty('--text-color', theme.text);
+        root.style.setProperty('--tab-bg', theme.tabBg);
+        root.style.setProperty('--selected-tab-bg', theme.selectedTab);
+    }, [useCustomTheme, customTheme, selectedTheme]);
+
+    useEffect(() => {
+        syncThemeToIframe();
+    }, [syncThemeToIframe]);
+
+    useEffect(() => {
+        const container = uiPreviewContainerRef.current;
+        if (!container) return;
+        const observer = new ResizeObserver(([entry]) => {
+            const w = entry.contentRect.width;
+            const scale = w / 1280;
+            container.style.setProperty('--ui-preview-scale', String(scale));
+        });
+        observer.observe(container);
+        return () => observer.disconnect();
+    }, [isOpen, activeSection]);
 
     useEffect(() => {
         if (isOpen) loadPreferences();
@@ -176,6 +246,21 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
                 setCustomTheme({ windowBg: customBg, editorBg: customEditorBg, titleBar: customTitleBar,
                     statusBar: customStatusBar, text: customText, tabBg: customTabBg, selectedTab: customSelectedTab });
             }
+
+            const useCustomSyntaxRaw = await invoke<string>('get_preference', { key: 'UseCustomSyntaxTheme', defaultValue: 'false' });
+            setUseCustomSyntaxTheme(useCustomSyntaxRaw === 'true');
+            if (useCustomSyntaxRaw === 'true') {
+                const csKeyword  = await invoke<string>('get_preference', { key: 'CustomSyntax_Keyword',  defaultValue: '#569CD6' });
+                const csComment  = await invoke<string>('get_preference', { key: 'CustomSyntax_Comment',  defaultValue: '#6A9955' });
+                const csString   = await invoke<string>('get_preference', { key: 'CustomSyntax_String',   defaultValue: '#CE9178' });
+                const csNumber   = await invoke<string>('get_preference', { key: 'CustomSyntax_Number',   defaultValue: '#B5CEA8' });
+                const csProperty = await invoke<string>('get_preference', { key: 'CustomSyntax_Property', defaultValue: '#569CD6' });
+                const csBracket1 = await invoke<string>('get_preference', { key: 'CustomSyntax_Bracket1', defaultValue: '#FFD700' });
+                const csBracket2 = await invoke<string>('get_preference', { key: 'CustomSyntax_Bracket2', defaultValue: '#DA70D6' });
+                const csBracket3 = await invoke<string>('get_preference', { key: 'CustomSyntax_Bracket3', defaultValue: '#87CEEB' });
+                setCustomSyntax({ keyword: csKeyword, comment: csComment, stringColor: csString, number: csNumber, propertyColor: csProperty });
+                setCustomBrackets({ color1: csBracket1, color2: csBracket2, color3: csBracket3 });
+            }
         } catch (error) {
             console.error('Failed to load theme preferences:', error);
         }
@@ -202,6 +287,18 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
 
             await invoke('set_preference', { key: 'SyntaxTheme',   value: selectedSyntaxTheme        });
             await invoke('set_preference', { key: 'OverrideSyntax', value: overrideSyntax.toString() });
+            await invoke('set_preference', { key: 'UseCustomSyntaxTheme', value: useCustomSyntaxTheme.toString() });
+
+            if (useCustomSyntaxTheme) {
+                await invoke('set_preference', { key: 'CustomSyntax_Keyword',  value: customSyntax.keyword });
+                await invoke('set_preference', { key: 'CustomSyntax_Comment',  value: customSyntax.comment });
+                await invoke('set_preference', { key: 'CustomSyntax_String',   value: customSyntax.stringColor });
+                await invoke('set_preference', { key: 'CustomSyntax_Number',   value: customSyntax.number });
+                await invoke('set_preference', { key: 'CustomSyntax_Property', value: customSyntax.propertyColor });
+                await invoke('set_preference', { key: 'CustomSyntax_Bracket1', value: customBrackets.color1 });
+                await invoke('set_preference', { key: 'CustomSyntax_Bracket2', value: customBrackets.color2 });
+                await invoke('set_preference', { key: 'CustomSyntax_Bracket3', value: customBrackets.color3 });
+            }
             await invoke('set_preference', { key: 'RoundedCorners', value: roundedCorners.toString()  });
             await invoke('set_preference', { key: 'ModernUI',       value: modernUI.toString()         });
             await invoke('set_preference', { key: 'CigaretteMode',  value: cigaretteMode.toString()    });
@@ -258,22 +355,30 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
         useCustomTheme ? customTheme : (getTheme(selectedTheme) || THEMES[0]);
 
     const currentTheme  = getCurrentDisplayTheme();
-    const currentSyntax = getSyntaxColors(selectedSyntaxTheme);
-    const currentBrackets = getBracketColors(selectedSyntaxTheme);
+    const activeSyntaxId = useCustomSyntaxTheme ? 'CustomSyntax' : selectedSyntaxTheme;
+    const currentSyntax = getSyntaxColors(activeSyntaxId, customSyntax);
+    const currentBrackets = getBracketColors(activeSyntaxId, customBrackets);
 
     if (!isOpen) return null;
 
     /* ── Section renderers ── */
+    const uiPreview = (
+        <div className="ui-preview-container" ref={uiPreviewContainerRef}>
+            <iframe
+                ref={uiPreviewRef}
+                className="ui-preview-iframe"
+                srcDoc={srcdoc}
+                sandbox="allow-same-origin"
+                title="Theme Preview"
+                onLoad={syncThemeToIframe}
+            />
+        </div>
+    );
+
     const renderUI = () => (
         <>
-            <p className="current-theme">
-                Current: <strong style={{ color: 'rgba(255,255,255,0.85)' }}>
-                    {useCustomTheme ? 'Custom Theme' : (getTheme(selectedTheme)?.displayName || 'Unknown')}
-                </strong>
-            </p>
-
             <div className="section-header">
-                <h4>Select Theme</h4>
+                <h4>UI Theme</h4>
                 <label className="checkbox-label">
                     <input type="checkbox" checked={useCustomTheme}
                         onChange={e => handleCustomThemeToggle(e.target.checked)} />
@@ -281,111 +386,153 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
                 </label>
             </div>
 
-            {!useCustomTheme ? (
-                <div className="theme-list">
-                    {THEMES.map(theme => (
-                        <div
-                            key={theme.id}
-                            className={`theme-item${selectedTheme === theme.id ? ' selected' : ''}`}
-                            onClick={() => handleThemeSelect(theme.id)}
-                        >
-                            <span>{theme.displayName}</span>
-                            <div className="theme-preview-dots">
-                                <div className="preview-dot" style={{ backgroundColor: theme.windowBg }} />
-                                <div className="preview-dot" style={{ backgroundColor: theme.statusBar }} />
+            <div className="syntax-split-layout">
+                {!useCustomTheme ? (
+                    <div className="theme-list">
+                        {THEMES.map(theme => (
+                            <div
+                                key={theme.id}
+                                className={`theme-item${selectedTheme === theme.id ? ' selected' : ''}`}
+                                onClick={() => handleThemeSelect(theme.id)}
+                            >
+                                <span>{theme.displayName}</span>
+                                <div className="theme-preview-dots">
+                                    <div className="preview-dot" style={{ backgroundColor: theme.windowBg }} />
+                                    <div className="preview-dot" style={{ backgroundColor: theme.statusBar }} />
+                                </div>
                             </div>
-                        </div>
-                    ))}
-                </div>
-            ) : (
-                <div className="custom-theme-editor">
-                    {([
-                        ['Window Background', 'windowBg'],
-                        ['Editor Background', 'editorBg'],
-                        ['Title Bar',         'titleBar'],
-                        ['Status Bar',        'statusBar'],
-                        ['Foreground Text',   'text'],
-                        ['Tab Background',    'tabBg'],
-                        ['Selected Tab',      'selectedTab'],
-                    ] as [string, keyof CustomTheme][]).map(([label, key]) => (
-                        <div key={key} className="color-input-group">
-                            <label>{label}</label>
-                            <input type="color" value={customTheme[key]}
-                                onChange={e => setCustomTheme({ ...customTheme, [key]: e.target.value })} />
-                            <input type="text" value={customTheme[key]}
-                                onChange={e => setCustomTheme({ ...customTheme, [key]: e.target.value })} />
-                        </div>
-                    ))}
-                </div>
-            )}
+                        ))}
+                    </div>
+                ) : (
+                    <div className="custom-theme-editor compact">
+                        {([
+                            ['Window Bg',  'windowBg'],
+                            ['Editor Bg',  'editorBg'],
+                            ['Title Bar',  'titleBar'],
+                            ['Status Bar', 'statusBar'],
+                            ['Text',       'text'],
+                            ['Tab Bg',     'tabBg'],
+                            ['Selected Tab', 'selectedTab'],
+                        ] as [string, keyof CustomTheme][]).map(([label, key]) => (
+                            <div key={key} className="color-input-group">
+                                <label>{label}</label>
+                                <input type="color" value={customTheme[key]}
+                                    onChange={e => setCustomTheme({ ...customTheme, [key]: e.target.value })} />
+                                <input type="text" value={customTheme[key]}
+                                    onChange={e => setCustomTheme({ ...customTheme, [key]: e.target.value })} />
+                            </div>
+                        ))}
+                    </div>
+                )}
+                {uiPreview}
+            </div>
         </>
+    );
+
+    const handleCustomSyntaxToggle = (checked: boolean) => {
+        setUseCustomSyntaxTheme(checked);
+        if (checked) {
+            const base = getSyntaxColors(selectedSyntaxTheme);
+            const baseBrackets = getBracketColors(selectedSyntaxTheme);
+            setCustomSyntax({ ...base });
+            setCustomBrackets({ ...baseBrackets });
+        }
+    };
+
+    const syntaxPreview = (
+        <div className="syntax-preview" style={{ backgroundColor: currentTheme.editorBg, color: currentTheme.text }}>
+            <pre>
+                <code>
+                    <span style={{ color: currentBrackets.color1 }}>{'{'}</span>{'\n'}
+                    {'  '}<span style={{ color: currentSyntax.comment }}># This is a comment</span>{'\n'}
+                    {'  '}<span style={{ color: currentSyntax.propertyColor }}>skinScale</span>: <span style={{ color: currentSyntax.keyword }}>f32</span> = <span style={{ color: currentSyntax.number }}>1.0</span>{'\n'}
+                    {'  '}<span style={{ color: currentSyntax.propertyColor }}>name</span>: <span style={{ color: currentSyntax.keyword }}>string</span> = <span style={{ color: currentSyntax.stringColor }}>"Example"</span>{'\n'}
+                    {'  '}<span style={{ color: currentSyntax.propertyColor }}>enabled</span>: <span style={{ color: currentSyntax.keyword }}>bool</span> = <span style={{ color: currentSyntax.keyword }}>true</span>{'\n'}
+                    {'  '}<span style={{ color: currentSyntax.propertyColor }}>data</span>: <span style={{ color: currentSyntax.keyword }}>hash</span> = <span style={{ color: currentSyntax.number }}>0xDEADBEEF</span>{'\n'}
+                    {'  '}<span style={{ color: currentSyntax.propertyColor }}>items</span>: <span style={{ color: currentSyntax.keyword }}>list</span><span style={{ color: currentBrackets.color2 }}>{'['}</span><span style={{ color: currentSyntax.keyword }}>embed</span><span style={{ color: currentBrackets.color2 }}>{']'}</span> = <span style={{ color: currentBrackets.color2 }}>{'{'}</span>{'\n'}
+                    {'    '}<span style={{ color: currentSyntax.keyword }}>EntryData</span> <span style={{ color: currentBrackets.color3 }}>{'{'}</span>{'\n'}
+                    {'      '}<span style={{ color: currentSyntax.propertyColor }}>path</span>: <span style={{ color: currentSyntax.keyword }}>string</span> = <span style={{ color: currentSyntax.stringColor }}>"ASSETS/Example/File.bin"</span>{'\n'}
+                    {'      '}<span style={{ color: currentSyntax.propertyColor }}>offset</span>: <span style={{ color: currentSyntax.keyword }}>vec3</span> = <span style={{ color: currentBrackets.color1 }}>{'('}</span> <span style={{ color: currentSyntax.number }}>1.0</span> <span style={{ color: currentSyntax.number }}>2.5</span> <span style={{ color: currentSyntax.number }}>3.0</span> <span style={{ color: currentBrackets.color1 }}>{')'}</span>{'\n'}
+                    {'    '}<span style={{ color: currentBrackets.color3 }}>{'}'}</span>{'\n'}
+                    {'  '}<span style={{ color: currentBrackets.color2 }}>{'}'}</span>{'\n'}
+                    <span style={{ color: currentBrackets.color1 }}>{'}'}</span>
+                </code>
+            </pre>
+        </div>
     );
 
     const renderSyntax = () => (
         <>
             <div className="section-header">
                 <h4>Syntax Color Scheme</h4>
-                <label className="checkbox-label">
-                    <input type="checkbox" checked={overrideSyntax}
-                        onChange={e => setOverrideSyntax(e.target.checked)} />
-                    Override
-                </label>
+                <div className="section-header-checks">
+                    <label className="checkbox-label">
+                        <input type="checkbox" checked={overrideSyntax}
+                            onChange={e => setOverrideSyntax(e.target.checked)} />
+                        Override
+                    </label>
+                    <label className="checkbox-label">
+                        <input type="checkbox" checked={useCustomSyntaxTheme}
+                            onChange={e => handleCustomSyntaxToggle(e.target.checked)} />
+                        Custom
+                    </label>
+                </div>
             </div>
 
-            <div className="theme-list">
-                {SYNTAX_THEME_OPTIONS.map(theme => (
-                    <div
-                        key={theme.id}
-                        className={`theme-item${selectedSyntaxTheme === theme.id ? ' selected' : ''}`}
-                        onClick={() => setSelectedSyntaxTheme(theme.id)}
-                    >
-                        <span>{theme.displayName}</span>
-                        <div className="theme-preview-dots">
-                            <div className="preview-dot" style={{ backgroundColor: getBracketColors(theme.id).color1 }} />
-                            <div className="preview-dot" style={{ backgroundColor: getBracketColors(theme.id).color2 }} />
-                        </div>
+            <div className="syntax-split-layout">
+                {!useCustomSyntaxTheme ? (
+                    <div className="theme-list">
+                        {SYNTAX_THEME_OPTIONS.map(theme => (
+                            <div
+                                key={theme.id}
+                                className={`theme-item${selectedSyntaxTheme === theme.id ? ' selected' : ''}`}
+                                onClick={() => setSelectedSyntaxTheme(theme.id)}
+                            >
+                                <span>{theme.displayName}</span>
+                                <div className="theme-preview-dots">
+                                    <div className="preview-dot" style={{ backgroundColor: getBracketColors(theme.id).color1 }} />
+                                    <div className="preview-dot" style={{ backgroundColor: getBracketColors(theme.id).color2 }} />
+                                </div>
+                            </div>
+                        ))}
                     </div>
-                ))}
+                ) : (
+                    <div className="custom-theme-editor compact">
+                        <h5 className="custom-syntax-group-title">Token Colors</h5>
+                        {([
+                            ['Keywords',   'keyword'],
+                            ['Comments',   'comment'],
+                            ['Strings',    'stringColor'],
+                            ['Numbers',    'number'],
+                            ['Properties', 'propertyColor'],
+                        ] as [string, keyof SyntaxColors][]).map(([label, key]) => (
+                            <div key={key} className="color-input-group">
+                                <label>{label}</label>
+                                <input type="color" value={customSyntax[key]}
+                                    onChange={e => setCustomSyntax({ ...customSyntax, [key]: e.target.value })} />
+                                <input type="text" value={customSyntax[key]}
+                                    onChange={e => setCustomSyntax({ ...customSyntax, [key]: e.target.value })} />
+                            </div>
+                        ))}
+                        <h5 className="custom-syntax-group-title">Bracket Colors</h5>
+                        {([
+                            ['Curly Braces { }',     'color1'],
+                            ['Square Brackets [ ]',  'color2'],
+                            ['Parentheses ( )',      'color3'],
+                        ] as [string, keyof BracketColors][]).map(([label, key]) => (
+                            <div key={key} className="color-input-group">
+                                <label>{label}</label>
+                                <input type="color" value={customBrackets[key]}
+                                    onChange={e => setCustomBrackets({ ...customBrackets, [key]: e.target.value })} />
+                                <input type="text" value={customBrackets[key]}
+                                    onChange={e => setCustomBrackets({ ...customBrackets, [key]: e.target.value })} />
+                            </div>
+                        ))}
+                    </div>
+                )}
+                {syntaxPreview}
             </div>
         </>
-    );
-
-    const renderPreview = () => (
-        <div className="preview-column">
-            <h4>Color Palette</h4>
-            <div className="color-palette">
-                {([
-                    ['Window Background', 'windowBg'],
-                    ['Editor Background', 'editorBg'],
-                    ['Title Bar',         'titleBar'],
-                    ['Status Bar',        'statusBar'],
-                    ['Foreground Text',   'text'],
-                    ['Tab Background',    'tabBg'],
-                    ['Selected Tab',      'selectedTab'],
-                ] as [string, keyof typeof currentTheme][]).map(([label, key]) => (
-                    <div key={key} className="palette-item">
-                        <div className="palette-color" style={{ backgroundColor: currentTheme[key] as string }} />
-                        <span>{label}</span>
-                    </div>
-                ))}
-            </div>
-
-            <h5>Syntax Preview</h5>
-            <div className="syntax-preview" style={{ backgroundColor: currentTheme.editorBg, color: currentTheme.text }}>
-                <pre>
-                    <code>
-                        <span style={{ color: currentBrackets.color1 }}>{'{'}</span>{'\n'}
-                        {'  '}<span style={{ color: currentSyntax.comment }}># This is a comment</span>{'\n'}
-                        {'  '}<span style={{ color: currentSyntax.propertyColor }}>skinScale</span> : <span style={{ color: currentSyntax.keyword }}>f32</span> = <span style={{ color: currentSyntax.number }}>1.0</span>{'\n'}
-                        {'  '}<span style={{ color: currentSyntax.propertyColor }}>name</span> : <span style={{ color: currentSyntax.keyword }}>string</span> = <span style={{ color: currentSyntax.stringColor }}>"Example"</span>{'\n'}
-                        {'  '}<span style={{ color: currentBrackets.color2 }}>{'['}</span>{'\n'}
-                        {'    '}<span style={{ color: currentSyntax.number }}>i32</span> <span style={{ color: currentBrackets.color3 }}>(</span> <span style={{ color: currentSyntax.stringColor }}>"value"</span> <span style={{ color: currentBrackets.color3 }}>)</span>{'\n'}
-                        {'  '}<span style={{ color: currentBrackets.color2 }}>{']'}</span>{'\n'}
-                        <span style={{ color: currentBrackets.color1 }}>{'}'}</span>
-                    </code>
-                </pre>
-            </div>
-        </div>
     );
 
     const renderBackground = () => (
@@ -601,7 +748,6 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
     const sectionContent: Record<NavSection, () => React.ReactElement> = {
         ui:      renderUI,
         syntax:  renderSyntax,
-        preview: renderPreview,
         background: renderBackground,
         options: renderOptions,
     };

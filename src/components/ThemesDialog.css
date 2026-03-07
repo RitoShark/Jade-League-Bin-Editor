@@ -150,12 +150,6 @@
     margin: 0 0 16px 0;
 }
 
-.current-theme {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin: 0 0 16px 0;
-}
-
 /* ── Section header (title + checkbox) ── */
 .section-header {
     display: flex;
@@ -169,6 +163,12 @@
     font-size: 14px;
     font-weight: 600;
     color: var(--text-color);
+}
+
+.section-header-checks {
+    display: flex;
+    align-items: center;
+    gap: 14px;
 }
 
 /* ── Theme list ── */
@@ -276,45 +276,85 @@
     border-color: var(--status-bar-bg);
 }
 
-/* ── Live preview section ── */
-.preview-column h4 {
-    margin: 0 0 12px 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-color);
+/* ── Compact color editor (inline rows) ── */
+.custom-theme-editor.compact {
+    gap: 4px;
+    padding: 10px;
 }
 
-.preview-column h5 {
-    margin: 14px 0 8px 0;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-muted);
-}
-
-.color-palette {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    padding: 12px;
-    background: var(--tab-bg);
-    border: 1px solid #3E3E42;
-    border-radius: var(--border-radius);
-}
-
-.palette-item {
-    display: flex;
+.custom-theme-editor.compact .color-input-group {
+    flex-direction: row;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+}
+
+.custom-theme-editor.compact .color-input-group label {
+    min-width: 110px;
+    flex-shrink: 0;
+}
+
+.custom-theme-editor.compact .color-input-group input[type="color"] {
+    width: 32px;
+    height: 26px;
+    flex-shrink: 0;
+    padding: 1px;
+}
+
+.custom-theme-editor.compact .color-input-group input[type="text"] {
+    width: 80px;
+    flex-shrink: 0;
+    padding: 4px 8px;
+    font-size: 11px;
+}
+
+/* ── Custom syntax group title ── */
+.custom-syntax-group-title {
+    margin: 8px 0 4px 0;
     font-size: 12px;
+    font-weight: 600;
     color: var(--text-muted);
 }
 
-.palette-color {
-    width: 30px;
-    height: 22px;
-    border-radius: var(--border-radius);
+.custom-syntax-group-title:first-child {
+    margin-top: 0;
+}
+
+/* ── Syntax split layout (picker + preview 50/50) ── */
+.syntax-split-layout {
+    display: flex;
+    gap: 12px;
+    flex: 1;
+    min-height: 0;
+}
+
+.syntax-split-layout > .theme-list,
+.syntax-split-layout > .custom-theme-editor {
+    flex: 1 1 50%;
+    min-width: 0;
+}
+
+.syntax-split-layout > .syntax-preview,
+.syntax-split-layout > .ui-preview-container {
+    flex: 1 1 50%;
+    min-width: 0;
+}
+
+/* ── UI theme live iframe preview (camera style) ── */
+.ui-preview-container {
+    overflow: hidden;
     border: 1px solid #3E3E42;
-    flex-shrink: 0;
+    border-radius: var(--border-radius);
+    position: relative;
+    align-self: start;
+}
+
+.ui-preview-iframe {
+    width: 1280px;
+    height: 800px;
+    border: none;
+    zoom: var(--ui-preview-scale, 0.3);
+    pointer-events: none;
+    display: block;
 }
 
 .syntax-preview {

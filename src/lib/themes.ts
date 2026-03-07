@@ -285,10 +285,12 @@ export function getTheme(id: string): ThemeColors | undefined {
     return THEMES.find(t => t.id === id);
 }
 
-export function getSyntaxColors(id: string): SyntaxColors {
+export function getSyntaxColors(id: string, customSyntax?: SyntaxColors): SyntaxColors {
+    if (id === 'CustomSyntax' && customSyntax) return customSyntax;
     return SYNTAX_COLORS[id] || SYNTAX_COLORS.Default;
 }
 
-export function getBracketColors(id: string): BracketColors {
+export function getBracketColors(id: string, customBrackets?: BracketColors): BracketColors {
+    if (id === 'CustomSyntax' && customBrackets) return customBrackets;
     return BRACKET_COLORS[id] || BRACKET_COLORS.Default;
 }

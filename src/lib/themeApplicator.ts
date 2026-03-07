@@ -2,7 +2,13 @@
 // Applies themes dynamically to the application
 
 import { getTheme, getSyntaxColors, getBracketColors } from './themes';
+import type { SyntaxColors, BracketColors } from './themes';
 import type { Monaco } from '@monaco-editor/react';
+
+interface CustomSyntaxOptions {
+    customSyntax?: SyntaxColors;
+    customBrackets?: BracketColors;
+}
 
 interface CustomThemeColors {
     windowBg: string;
@@ -258,9 +264,9 @@ export function applyCustomBackground(options: CustomBackgroundOptions) {
 /**
  * Create and register a Monaco editor theme from syntax colors
  */
-export function createMonacoTheme(monaco: Monaco, themeId: string, syntaxThemeId: string) {
-    const colors = getSyntaxColors(syntaxThemeId);
-    const brackets = getBracketColors(syntaxThemeId);
+export function createMonacoTheme(monaco: Monaco, themeId: string, syntaxThemeId: string, syntaxOpts?: CustomSyntaxOptions) {
+    const colors = getSyntaxColors(syntaxThemeId, syntaxOpts?.customSyntax);
+    const brackets = getBracketColors(syntaxThemeId, syntaxOpts?.customBrackets);
     const theme = getTheme(themeId);
 
     // Expose syntax colors as CSS variables so non-Monaco UI (e.g. texture
@@ -357,9 +363,10 @@ export function createMonacoTheme(monaco: Monaco, themeId: string, syntaxThemeId
 export function applyMonacoTheme(
     monaco: Monaco,
     themeId: string,
-    syntaxThemeId: string
+    syntaxThemeId: string,
+    syntaxOpts?: CustomSyntaxOptions
 ) {
-    const themeName = createMonacoTheme(monaco, themeId, syntaxThemeId);
+    const themeName = createMonacoTheme(monaco, themeId, syntaxThemeId, syntaxOpts);
     monaco.editor.setTheme(themeName);
 
     // Monaco resets inline background styles during setTheme, so we
@@ -447,16 +454,33 @@ export async function loadSavedTheme(
             vignette: parsePercent(customBackgroundVignetteRaw, 0),
         });
 
+        // Load custom syntax theme if enabled
+        const useCustomSyntax = await invoke('get_preference', { key: 'UseCustomSyntaxTheme', defaultValue: 'false' }) as string;
+        let customSyntaxOpts: CustomSyntaxOptions | undefined;
+        if (useCustomSyntax === 'true') {
+            const cs: SyntaxColors = {
+                keyword: await invoke('get_preference', { key: 'CustomSyntax_Keyword', defaultValue: '#569CD6' }) as string,
+                comment: await invoke('get_preference', { key: 'CustomSyntax_Comment', defaultValue: '#6A9955' }) as string,
+                stringColor: await invoke('get_preference', { key: 'CustomSyntax_String', defaultValue: '#CE9178' }) as string,
+                number: await invoke('get_preference', { key: 'CustomSyntax_Number', defaultValue: '#B5CEA8' }) as string,
+                propertyColor: await invoke('get_preference', { key: 'CustomSyntax_Property', defaultValue: '#569CD6' }) as string,
+            };
+            const cb: BracketColors = {
+                color1: await invoke('get_preference', { key: 'CustomSyntax_Bracket1', defaultValue: '#FFD700' }) as string,
+                color2: await invoke('get_preference', { key: 'CustomSyntax_Bracket2', defaultValue: '#DA70D6' }) as string,
+                color3: await invoke('get_preference', { key: 'CustomSyntax_Bracket3', defaultValue: '#87CEEB' }) as string,
+            };
+            customSyntaxOpts = { customSyntax: cs, customBrackets: cb };
+        }
+
         // Apply Monaco theme if instance is available
         if (monaco) {
-            // Determine syntax theme: if override is false, we might want to match UI theme
-            // But for now, let's use the saved SyntaxTheme or fallback to UI theme if Default
-            let activeSyntaxTheme = syntaxTheme;
+            let activeSyntaxTheme = useCustomSyntax === 'true' ? 'CustomSyntax' : syntaxTheme;
             if (activeSyntaxTheme === 'Default') {
                 activeSyntaxTheme = (activeThemeId === 'Custom') ? 'Dark Emptiness' : activeThemeId;
             }
 
-            applyMonacoTheme(monaco, activeThemeId, activeSyntaxTheme);
+            applyMonacoTheme(monaco, activeThemeId, activeSyntaxTheme, customSyntaxOpts);
         }
 
         return {
