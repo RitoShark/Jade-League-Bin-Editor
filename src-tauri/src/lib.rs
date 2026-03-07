@@ -198,6 +198,7 @@ pub fn run() {
             extra_commands::check_for_update,
             extra_commands::start_update_download,
             extra_commands::run_installer,
+            extra_commands::auto_material_override,
             // Texture preview
             app_commands::get_file_mtime,
             app_commands::read_file_base64,

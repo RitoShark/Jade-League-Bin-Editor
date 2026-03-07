@@ -277,8 +277,23 @@
   opacity: 0.7;
 }
 
-/* Icon characters */
+/* Icon characters — no emojis, pure text/unicode symbols */
 .gep-icon-check::before { content: '✓'; }
 .gep-icon-add::before { content: '+'; }
-.gep-icon-texture::before { content: '🖼'; font-size: 11px; }
-.gep-icon-material::before { content: '●'; }
+.gep-icon-texture::before { content: '◻'; font-size: 10px; }
+.gep-icon-material::before { content: '◆'; font-size: 9px; }
+.gep-icon-auto::before { content: '↻'; font-size: 12px; }
+
+/* Auto from SKN button - same style as Texture/Material */
+.gep-btn-auto:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Status text overflow control */
+.gep-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}

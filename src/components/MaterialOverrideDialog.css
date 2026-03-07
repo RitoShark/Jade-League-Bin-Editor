@@ -200,3 +200,65 @@
 .mod-btn-cancel:hover {
   background-color: #606060;
 }
+
+/* ── Suggestions from SKN ── */
+.mod-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 100px;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+
+.mod-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid #3E3E42;
+  border-radius: var(--border-radius, 3px);
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--text-color, #cccccc);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.1s ease;
+  font-family: inherit;
+}
+
+.mod-suggestion:hover {
+  border-color: var(--vscode-focusBorder, #007acc);
+  background: var(--selected-tab-bg, #2a2d2e);
+}
+
+.mod-suggestion.active {
+  border-color: var(--vscode-focusBorder, #007acc);
+  background: rgba(14, 99, 156, 0.25);
+}
+
+.mod-suggestion-name {
+  font-weight: 500;
+}
+
+.mod-suggestion-match {
+  font-size: 10px;
+  color: #4ec9b0;
+  opacity: 0.8;
+}
+
+.mod-suggestion-nomatch {
+  font-size: 10px;
+  color: #e8a520;
+  opacity: 0.8;
+}
+
+.mod-suggestions::-webkit-scrollbar {
+  width: 4px;
+}
+.mod-suggestions::-webkit-scrollbar-track {
+  background: transparent;
+}
+.mod-suggestions::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #555);
+  border-radius: 2px;
+}

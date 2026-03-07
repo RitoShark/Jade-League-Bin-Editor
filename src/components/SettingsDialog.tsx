@@ -89,6 +89,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
     const [isRegistered, setIsRegistered] = useState(false);
     const [converterEngine, setConverterEngine] = useState<string>('jade');
     const [engineChanged, setEngineChanged] = useState(false);
+    const [materialMatchMode, setMaterialMatchMode] = useState<number>(3);
 
     useEffect(() => {
         if (isOpen) {
@@ -115,6 +116,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             setAutoDownloadUpdates((await invoke<string>('get_preference', { key: 'AutoDownloadUpdates', defaultValue: 'False' })) === 'True');
             setSilentUpdate((await invoke<string>('get_preference', { key: 'SilentUpdate', defaultValue: 'False' })) === 'True');
             setConverterEngine(await invoke<string>('get_preference', { key: 'ConverterEngine', defaultValue: 'jade' }));
+            setMaterialMatchMode(parseInt(await invoke<string>('get_preference', { key: 'MaterialMatchMode', defaultValue: '3' })) || 3);
             setEngineChanged(false);
         } catch (e) { console.error(e); }
     };
@@ -290,6 +292,38 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                     window.dispatchEvent(new CustomEvent('quartz-interop-changed', { detail: v }));
                 }}
             />
+
+            <div className="settings-divider" />
+
+            <h3 className="settings-section-title" style={{ fontSize: 16 }}>Material Override</h3>
+            <p className="settings-section-subtitle">Controls how Auto from SKN matches materials to textures.</p>
+
+            <div className="settings-row">
+                <div className="settings-row-header">
+                    <span className="settings-row-title">Match Exactness</span>
+                </div>
+                <div className="settings-match-mode-selector">
+                    {[3, 2, 1].map(mode => (
+                        <button
+                            key={mode}
+                            className={`settings-match-mode-btn ${materialMatchMode === mode ? 'active' : ''}`}
+                            onClick={async () => {
+                                setMaterialMatchMode(mode);
+                                try { await invoke('set_preference', { key: 'MaterialMatchMode', value: String(mode) }); }
+                                catch (e) { console.error(e); }
+                            }}
+                        >
+                            {mode === 1 && <span className="match-mode-warning" title="May produce inaccurate matches">&#9888;</span>}
+                            {mode}
+                        </button>
+                    ))}
+                </div>
+                <p className="settings-match-mode-desc">
+                    {materialMatchMode === 3 && 'Exact — material name must match texture filename exactly (e.g. Body → Body.tex).'}
+                    {materialMatchMode === 2 && 'Loose — strips trailing numbers and checks partial containment (e.g. Body2 → Body.tex).'}
+                    {materialMatchMode === 1 && <><span className="match-mode-warning-text">&#9888; Fuzzy</span> — picks the closest texture by character overlap. May produce inaccurate matches.</>}
+                </p>
+            </div>
 
             <div className="settings-divider" />
 

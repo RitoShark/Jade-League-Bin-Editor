@@ -1,19 +1,33 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import './GeneralEditPanel.css';
 import MaterialOverrideDialog from './MaterialOverrideDialog';
+
+interface MaterialMatch {
+  material: string;
+  texture: string;
+}
+
+interface AutoMaterialResult {
+  matches: MaterialMatch[];
+  skn_path: string;
+  unmatched: string[];
+}
 
 interface GeneralEditPanelProps {
   isOpen: boolean;
   onClose: () => void;
   editorContent: string;
   onContentChange: (newContent: string) => void;
+  filePath?: string;
 }
 
 export default function GeneralEditPanel({
   isOpen,
   onClose,
   editorContent,
-  onContentChange
+  onContentChange,
+  filePath
 }: GeneralEditPanelProps) {
   // Animation state - for slide down animation like Monaco
   const [isVisible, setIsVisible] = useState(false);
@@ -34,6 +48,10 @@ export default function GeneralEditPanel({
   const [materialDialogType, setMaterialDialogType] = useState<'texture' | 'material'>('texture');
   const [defaultTexturePath, setDefaultTexturePath] = useState('');
   
+  // Auto-material state
+  const [autoMaterialLoading, setAutoMaterialLoading] = useState(false);
+  const [dialogSuggestions, setDialogSuggestions] = useState<{ material: string; texture: string }[]>([]);
+
   // Section collapse state
   const [skinScaleCollapsed, setSkinScaleCollapsed] = useState(false);
   const [materialOverrideCollapsed, setMaterialOverrideCollapsed] = useState(false);
@@ -165,6 +183,192 @@ export default function GeneralEditPanel({
     }
     return '';
   }, [editorContent]);
+
+  // Extract simpleSkin path from editor content
+  const extractSimpleSkinPath = useCallback(() => {
+    if (!editorContent) return '';
+    const lines = editorContent.split('\n');
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (trimmedLine.toLowerCase().startsWith('simpleskin:')) {
+        const parts = trimmedLine.split('=');
+        if (parts.length >= 2) {
+          let pathPart = parts[1].trim();
+          pathPart = pathPart.replace(/^["']|["']$/g, '');
+          return pathPart;
+        }
+      }
+    }
+    return '';
+  }, [editorContent]);
+
+  // Auto-populate material overrides from SKN
+  const autoPopulateMaterials = async () => {
+    if (!editorContent || !filePath) {
+      setMaterialOverrideStatus('No file loaded');
+      return;
+    }
+
+    const simpleSkinPath = extractSimpleSkinPath();
+    if (!simpleSkinPath) {
+      setMaterialOverrideStatus('simpleSkin not found in file');
+      return;
+    }
+
+    const texturePath = extractTexturePath();
+    if (!texturePath) {
+      setMaterialOverrideStatus('texture path not found in file');
+      return;
+    }
+
+    setAutoMaterialLoading(true);
+    setMaterialOverrideStatus('Reading SKN...');
+
+    try {
+      // Load match mode preference (1=fuzzy, 2=loose, 3=exact)
+      const matchModeStr = await invoke<string>('get_preference', {
+        key: 'MaterialMatchMode',
+        defaultValue: '3',
+      });
+      const matchMode = parseInt(matchModeStr) || 3;
+
+      const result = await invoke<AutoMaterialResult>('auto_material_override', {
+        binFilePath: filePath,
+        simpleSkinPath,
+        texturePath,
+        matchMode,
+      });
+
+      const totalMaterials = result.matches.length + result.unmatched.length;
+
+      if (result.matches.length === 0) {
+        setMaterialOverrideStatus(
+          `Matches: 0/${totalMaterials} — insert manually`
+        );
+        setAutoMaterialLoading(false);
+        return;
+      }
+
+      // Find which materials are already present in overrides
+      const existingSubmeshes = new Set<string>();
+      const lines = editorContent.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        if (trimmed.toLowerCase().startsWith('submesh:')) {
+          const parts = trimmed.split('=');
+          if (parts.length >= 2) {
+            const val = parts[1].trim().replace(/^["']|["']$/g, '');
+            existingSubmeshes.add(val.toLowerCase());
+          }
+        }
+      }
+
+      // Filter out already-present materials
+      const newMatches = result.matches.filter(
+        m => !existingSubmeshes.has(m.material.toLowerCase())
+      );
+
+      if (newMatches.length === 0) {
+        setMaterialOverrideStatus(`Matches: ${result.matches.length}/${totalMaterials} — all already present`);
+        setAutoMaterialLoading(false);
+        return;
+      }
+
+      // Ensure materialOverride structure exists, then insert entries
+      let content = editorContent;
+      if (!content.includes('materialOverride:')) {
+        const contentLines = content.split('\n');
+        const newLines: string[] = [];
+        let added = false;
+        for (let i = 0; i < contentLines.length; i++) {
+          newLines.push(contentLines[i]);
+          if (!added && contentLines[i].includes('skinMeshProperties:') &&
+              contentLines[i].includes('embed') &&
+              contentLines[i].includes('SkinMeshDataProperties')) {
+            let indent = '        ';
+            if (i + 1 < contentLines.length) {
+              const match = contentLines[i + 1].match(/^(\s*)/);
+              if (match) indent = match[1];
+            }
+            newLines.push(`${indent}materialOverride: list[embed] = {`);
+            newLines.push(`${indent}}`);
+            added = true;
+          }
+        }
+        content = newLines.join('\n');
+      }
+
+      // Now insert entries before closing brace of materialOverride
+      const contentLines = content.split('\n');
+      let matOverrideIdx = -1;
+      for (let i = 0; i < contentLines.length; i++) {
+        if (contentLines[i].includes('materialOverride:') && contentLines[i].includes('list[embed]')) {
+          matOverrideIdx = i;
+          break;
+        }
+      }
+
+      if (matOverrideIdx === -1) {
+        setMaterialOverrideStatus('materialOverride structure not found');
+        setAutoMaterialLoading(false);
+        return;
+      }
+
+      // Find closing brace
+      let braceDepth = 0;
+      let insertIdx = -1;
+      for (let j = matOverrideIdx; j < contentLines.length; j++) {
+        for (const c of contentLines[j]) {
+          if (c === '{') braceDepth++;
+          else if (c === '}') braceDepth--;
+        }
+        if (braceDepth === 0 && j > matOverrideIdx) {
+          insertIdx = j;
+          break;
+        }
+      }
+
+      if (insertIdx === -1) {
+        setMaterialOverrideStatus('Could not find closing brace');
+        setAutoMaterialLoading(false);
+        return;
+      }
+
+      // Get indent
+      let indent = '            ';
+      if (matOverrideIdx + 1 < contentLines.length && contentLines[matOverrideIdx + 1].trim()) {
+        const match = contentLines[matOverrideIdx + 1].match(/^(\s*)/);
+        if (match) indent = match[1];
+      }
+
+      // Build entries
+      const entryLines: string[] = [];
+      for (const m of newMatches) {
+        entryLines.push(`${indent}SkinMeshDataProperties_MaterialOverride {`);
+        entryLines.push(`${indent}    texture: string = "${m.texture}"`);
+        entryLines.push(`${indent}    Submesh: string = "${m.material}"`);
+        entryLines.push(`${indent}}`);
+      }
+
+      // Insert before closing brace
+      const finalLines = [
+        ...contentLines.slice(0, insertIdx),
+        ...entryLines,
+        ...contentLines.slice(insertIdx),
+      ];
+
+      onContentChange(finalLines.join('\n'));
+
+      setMaterialOverrideStatus(
+        `Matches: ${result.matches.length}/${totalMaterials} — added ${newMatches.length}`
+      );
+      setMaterialOverrideExists(true);
+    } catch (err) {
+      setMaterialOverrideStatus(`Error: ${err}`);
+    } finally {
+      setAutoMaterialLoading(false);
+    }
+  };
 
   // Ref for debouncing content parsing
   const parseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -472,11 +676,63 @@ export default function GeneralEditPanel({
     setMaterialOverrideStatus(`Added ${entryType} entry`);
   };
 
-  // Open material dialog
-  const openMaterialDialog = (type: 'texture' | 'material') => {
+  // Open material dialog — fetch SKN suggestions for unused materials
+  const openMaterialDialog = async (type: 'texture' | 'material') => {
     setMaterialDialogType(type);
     setDefaultTexturePath(extractTexturePath());
+    setDialogSuggestions([]);
     setShowMaterialDialog(true);
+
+    // Try to load suggestions from SKN in the background
+    if (filePath) {
+      const simpleSkinPath = extractSimpleSkinPath();
+      const texturePath = extractTexturePath();
+      if (simpleSkinPath && texturePath) {
+        try {
+          const matchModeStr = await invoke<string>('get_preference', {
+            key: 'MaterialMatchMode',
+            defaultValue: '3',
+          });
+          const matchMode = parseInt(matchModeStr) || 3;
+          const result = await invoke<AutoMaterialResult>('auto_material_override', {
+            binFilePath: filePath,
+            simpleSkinPath,
+            texturePath,
+            matchMode,
+          });
+
+          // Find already-present submeshes
+          const existingSubmeshes = new Set<string>();
+          const lines = editorContent.split('\n');
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.toLowerCase().startsWith('submesh:')) {
+              const parts = trimmed.split('=');
+              if (parts.length >= 2) {
+                const val = parts[1].trim().replace(/^["']|["']$/g, '');
+                existingSubmeshes.add(val.toLowerCase());
+              }
+            }
+          }
+
+          // Build suggestions: matched materials first, then unmatched
+          const suggestions: { material: string; texture: string }[] = [];
+          for (const m of result.matches) {
+            if (!existingSubmeshes.has(m.material.toLowerCase())) {
+              suggestions.push({ material: m.material, texture: m.texture });
+            }
+          }
+          for (const u of result.unmatched) {
+            if (!existingSubmeshes.has(u.toLowerCase())) {
+              suggestions.push({ material: u, texture: '' });
+            }
+          }
+          setDialogSuggestions(suggestions);
+        } catch {
+          // Silently fall back to no suggestions
+        }
+      }
+    }
   };
 
   // Handle material dialog submit
@@ -608,6 +864,15 @@ export default function GeneralEditPanel({
                       <span className="gep-icon-material" />
                       <span>Material</span>
                     </button>
+                    <button
+                      className="gep-btn gep-btn-half"
+                      onClick={autoPopulateMaterials}
+                      disabled={autoMaterialLoading || !filePath}
+                      title="Auto-populate overrides from SKN materials"
+                    >
+                      <span className="gep-icon-auto" />
+                      <span>{autoMaterialLoading ? 'Reading...' : 'Auto'}</span>
+                    </button>
                   </div>
                 )}
                 {materialOverrideStatus && (
@@ -625,6 +890,7 @@ export default function GeneralEditPanel({
           defaultPath={defaultTexturePath}
           onSubmit={handleMaterialDialogSubmit}
           onCancel={() => setShowMaterialDialog(false)}
+          suggestions={dialogSuggestions}
         />
       )}
     </>

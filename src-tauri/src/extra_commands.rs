@@ -1,8 +1,10 @@
-/// Extra commands: file association, autostart, updater
+/// Extra commands: file association, autostart, updater, SKN reader
 use serde::{Deserialize, Serialize};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use futures::StreamExt;
+use byteorder::{LittleEndian, ReadBytesExt};
+use std::io::{Cursor, Seek, SeekFrom};
 
 // ============================================================
 // File Association (Windows Registry)
@@ -391,4 +393,269 @@ echo [%date% %time%] Installer finished with errorlevel %errorlevel% >> \"{log}\
     app.exit(0);
 
     Ok(())
+}
+
+// ============================================================
+// SKN Reader — extract submesh material names
+// ============================================================
+
+const SKN_MAGIC: u32 = 0x00112233;
+
+/// Read submesh material names from an SKN file.
+fn read_skn_materials(skn_path: &std::path::Path) -> Result<Vec<String>, String> {
+    let data = std::fs::read(skn_path)
+        .map_err(|e| format!("Failed to read SKN file: {}", e))?;
+    let mut cur = Cursor::new(&data);
+
+    let magic = cur.read_u32::<LittleEndian>()
+        .map_err(|_| "SKN too short: no magic")?;
+    if magic != SKN_MAGIC {
+        return Err(format!("Not a valid SKN file (magic: {:#010x})", magic));
+    }
+
+    let major = cur.read_u16::<LittleEndian>()
+        .map_err(|_| "SKN too short: no version")?;
+    let minor = cur.read_u16::<LittleEndian>()
+        .map_err(|_| "SKN too short: no minor version")?;
+
+    if major == 0 {
+        // Version 0: no submesh table, just index/vertex counts
+        return Err("SKN version 0 has no submesh table".to_string());
+    }
+
+    let num_submeshes = cur.read_u32::<LittleEndian>()
+        .map_err(|_| "Failed to read submesh count")? as usize;
+
+    if num_submeshes == 0 || num_submeshes > 1000 {
+        return Err(format!("Invalid submesh count: {}", num_submeshes));
+    }
+
+    let mut materials = Vec::with_capacity(num_submeshes);
+
+    for _ in 0..num_submeshes {
+        // Each submesh header starts with a 64-byte null-padded ASCII name
+        let mut name_buf = [0u8; 64];
+        std::io::Read::read_exact(&mut cur, &mut name_buf)
+            .map_err(|_| "Failed to read submesh name")?;
+
+        let name = std::str::from_utf8(&name_buf)
+            .unwrap_or("")
+            .trim_end_matches('\0')
+            .to_string();
+
+        // Skip rest of submesh header: startVertex(u32) + vertexCount(u32) + startIndex(u32) + indexCount(u32) = 16 bytes
+        cur.seek(SeekFrom::Current(16))
+            .map_err(|_| "Failed to skip submesh header fields")?;
+
+        // Version >= 4 has an extra u32 field (unique flag / startFace)
+        if major >= 4 || (major == 2 && minor == 1) {
+            cur.seek(SeekFrom::Current(4))
+                .map_err(|_| "Failed to skip extra submesh field")?;
+        }
+
+        if !name.is_empty() {
+            materials.push(name);
+        }
+    }
+
+    Ok(materials)
+}
+
+#[derive(Debug, Serialize)]
+pub struct MaterialMatch {
+    pub material: String,
+    pub texture: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AutoMaterialResult {
+    pub matches: Vec<MaterialMatch>,
+    pub skn_path: String,
+    pub unmatched: Vec<String>,
+}
+
+/// Given the bin file path and the simpleSkin asset path, resolve the SKN,
+/// read its materials, and scan the texture folder for matching .tex/.dds files.
+///
+/// match_mode controls matching strictness:
+///   3 = exact (material "Body2" only matches "Body2.tex")
+///   2 = loose (strip trailing digits: "Body2" matches "Body.tex")
+///   1 = fuzzy (best substring overlap if no better match exists)
+#[tauri::command]
+pub async fn auto_material_override(
+    bin_file_path: String,
+    simple_skin_path: String,
+    texture_path: String,
+    match_mode: Option<u32>,
+) -> Result<AutoMaterialResult, String> {
+    let mode = match_mode.unwrap_or(3).clamp(1, 3);
+
+    // Resolve the SKN path relative to the bin file (walk up looking for the asset)
+    let skn_resolved = crate::app_commands::resolve_asset_path(
+        bin_file_path.clone(),
+        simple_skin_path.clone(),
+    ).await?
+        .ok_or_else(|| format!("Could not find SKN file: {}", simple_skin_path))?;
+
+    let skn_path = std::path::Path::new(&skn_resolved);
+    let materials = read_skn_materials(skn_path)?;
+
+    // Resolve the texture path to find the texture folder
+    let tex_resolved = crate::app_commands::resolve_asset_path(
+        bin_file_path,
+        texture_path,
+    ).await?;
+
+    let tex_folder = tex_resolved
+        .as_ref()
+        .and_then(|p| std::path::Path::new(p).parent())
+        .map(|p| p.to_path_buf())
+        .ok_or("Could not resolve texture folder")?;
+
+    // Scan the texture folder for .tex and .dds files
+    let mut tex_files: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(&tex_folder) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                let ext_lower = ext.to_lowercase();
+                if ext_lower == "tex" || ext_lower == "dds" {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        let stem_lower = stem.to_lowercase();
+                        let asset_path = path.to_string_lossy().replace('\\', "/");
+                        // Prefer .tex over .dds
+                        if !tex_files.contains_key(&stem_lower) || ext_lower == "tex" {
+                            tex_files.insert(stem_lower, asset_path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let tex_stems: Vec<String> = tex_files.keys().cloned().collect();
+
+    let mut matches = Vec::new();
+    let mut unmatched = Vec::new();
+
+    for mat in &materials {
+        let mat_lower = mat.to_lowercase();
+
+        // Mode 3: exact match
+        if let Some(tex_path) = tex_files.get(&mat_lower) {
+            matches.push(MaterialMatch {
+                material: mat.clone(),
+                texture: extract_asset_relative(tex_path),
+            });
+            continue;
+        }
+
+        // Mode 2: strip trailing digits from material name
+        if mode <= 2 {
+            let stripped = mat_lower.trim_end_matches(|c: char| c.is_ascii_digit());
+            if !stripped.is_empty() && stripped != mat_lower {
+                if let Some(tex_path) = tex_files.get(stripped) {
+                    matches.push(MaterialMatch {
+                        material: mat.clone(),
+                        texture: extract_asset_relative(tex_path),
+                    });
+                    continue;
+                }
+            }
+            // Also try: texture stem contains material base or vice versa
+            if let Some(tex_path) = find_contains_match(stripped, &tex_stems, &tex_files) {
+                matches.push(MaterialMatch {
+                    material: mat.clone(),
+                    texture: extract_asset_relative(&tex_path),
+                });
+                continue;
+            }
+        }
+
+        // Mode 1: fuzzy — find best common-character overlap
+        if mode <= 1 {
+            if let Some(tex_path) = find_fuzzy_match(&mat_lower, &tex_stems, &tex_files) {
+                matches.push(MaterialMatch {
+                    material: mat.clone(),
+                    texture: extract_asset_relative(&tex_path),
+                });
+                continue;
+            }
+        }
+
+        unmatched.push(mat.clone());
+    }
+
+    Ok(AutoMaterialResult {
+        matches,
+        skn_path: skn_resolved,
+        unmatched,
+    })
+}
+
+/// Mode 2 helper: find a texture whose stem contains the material base or vice versa.
+fn find_contains_match(
+    mat_base: &str,
+    tex_stems: &[String],
+    tex_files: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    // Prefer textures that contain the material name
+    for stem in tex_stems {
+        if stem.contains(mat_base) || mat_base.contains(stem.as_str()) {
+            if let Some(path) = tex_files.get(stem) {
+                return Some(path.clone());
+            }
+        }
+    }
+    None
+}
+
+/// Mode 1 helper: find the texture with the most character overlap.
+fn find_fuzzy_match(
+    mat_lower: &str,
+    tex_stems: &[String],
+    tex_files: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let mut best_score = 0usize;
+    let mut best_path: Option<String> = None;
+
+    for stem in tex_stems {
+        let score = common_char_score(mat_lower, stem);
+        if score > best_score {
+            best_score = score;
+            if let Some(path) = tex_files.get(stem) {
+                best_path = Some(path.clone());
+            }
+        }
+    }
+
+    // Only accept if at least 1 character matches
+    if best_score > 0 { best_path } else { None }
+}
+
+/// Count how many characters from `a` appear in `b` (order-independent).
+fn common_char_score(a: &str, b: &str) -> usize {
+    let mut score = 0;
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut used = vec![false; b_chars.len()];
+    for ac in a.chars() {
+        for (i, &bc) in b_chars.iter().enumerate() {
+            if !used[i] && ac == bc {
+                used[i] = true;
+                score += 1;
+                break;
+            }
+        }
+    }
+    score
+}
+
+/// Try to extract the "ASSETS/..." portion from an absolute path.
+fn extract_asset_relative(path: &str) -> String {
+    let lower = path.to_lowercase();
+    if let Some(idx) = lower.find("assets/") {
+        return path[idx..].to_string();
+    }
+    // Fallback: return the full path
+    path.to_string()
 }

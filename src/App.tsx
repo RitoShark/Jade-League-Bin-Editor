@@ -2975,6 +2975,7 @@ function App() {
             onClose={() => setGeneralEditPanelOpen(false)}
             editorContent={editorRef.current?.getValue() || activeTab.content}
             onContentChange={handleGeneralEditContentChange}
+            filePath={activeTab.filePath ?? undefined}
           />
         )}
         {activeTab && isEditorTab(activeTab) && (
