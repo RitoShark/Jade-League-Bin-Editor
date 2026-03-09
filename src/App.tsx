@@ -292,6 +292,8 @@ function App() {
         if (pref !== 'True') return;
         try {
           const info = await invoke<UpdateInfo>('check_for_update');
+          // Broadcast to SettingsDialog so it can show the result without re-fetching
+          window.dispatchEvent(new CustomEvent('update-check-result', { detail: info }));
           if (!info.available) return;
           const autoDownload = await invoke<string>('get_preference', { key: 'AutoDownloadUpdates', defaultValue: 'False' });
           if (autoDownload !== 'True') {

@@ -431,57 +431,173 @@
 }
 
 /* ── Updates section ── */
+.update-toggles {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.update-toggle-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    background: var(--tab-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+}
+
+.update-toggle-item.update-toggle-nested {
+    margin-left: 16px;
+}
+
+.update-toggle-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.update-toggle-label {
+    font-size: 13px;
+    color: var(--text-color);
+}
+
+.update-toggle-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    opacity: 0.8;
+}
+
 .update-check-row {
     display: flex;
     align-items: center;
     gap: 12px;
     flex-wrap: wrap;
-    margin-bottom: 8px;
 }
 
 .update-check-row .action-button {
     margin: 0;
 }
 
-.update-info-box {
-    padding: 14px;
-    background: rgba(14, 99, 156, 0.08);
-    border: 1px solid rgba(14, 99, 156, 0.25);
+/* ── Update card (shown when update is available) ── */
+.update-card {
+    border: 1px solid var(--border-color, #3E3E42);
     border-radius: var(--border-radius);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    margin-top: 8px;
+    overflow: hidden;
+    background: var(--tab-bg);
 }
 
-.update-version-row {
+.update-card-header {
     display: flex;
     align-items: center;
     gap: 10px;
-    flex-wrap: wrap;
+    padding: 12px 14px;
+    background: color-mix(in srgb, var(--jade-accent, var(--status-bar-bg)) 8%, transparent);
+    border-bottom: 1px solid var(--border-color, #3E3E42);
 }
 
-.update-version-label {
-    color: var(--text-muted);
-    font-size: 12px;
+.update-card-badge {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--jade-accent-text, var(--jade-accent, var(--status-bar-bg)));
+    background: color-mix(in srgb, var(--jade-accent, var(--status-bar-bg)) 15%, transparent);
+    padding: 3px 8px;
+    border-radius: 4px;
+    flex-shrink: 0;
 }
 
-.update-version-num {
+.update-card-badge-current {
+    color: var(--text-muted) !important;
+    background: rgba(255, 255, 255, 0.05) !important;
+}
+
+.update-card-version {
     font-size: 15px;
     font-weight: 700;
-    color: #60cd18;
+    color: var(--text-color);
 }
 
 .update-changelog-btn {
-    margin: 0 !important;
+    margin-left: auto !important;
     padding: 4px 10px !important;
     font-size: 12px !important;
 }
 
+/* ── Release notes (rendered markdown) ── */
+.update-release-notes {
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-color, #3E3E42);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+}
+
+.update-release-notes > *:first-child { margin-top: 0; }
+.update-release-notes > *:last-child { margin-bottom: 0; }
+
+.update-release-notes h1,
+.update-release-notes h2,
+.update-release-notes h3 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-color);
+    margin: 10px 0 4px;
+}
+
+.update-release-notes h1:first-child,
+.update-release-notes h2:first-child,
+.update-release-notes h3:first-child { margin-top: 0; }
+
+.update-release-notes p { margin: 4px 0; }
+
+.update-release-notes ul,
+.update-release-notes ol {
+    margin: 4px 0;
+    padding-left: 18px;
+}
+
+.update-release-notes li { margin: 2px 0; }
+
+.update-release-notes code {
+    font-size: 11px;
+    background: rgba(255, 255, 255, 0.06);
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+.update-release-notes a {
+    color: var(--jade-accent-text, var(--jade-accent, #1177bb));
+    text-decoration: none;
+}
+.update-release-notes a:hover { text-decoration: underline; }
+
+.update-release-notes::-webkit-scrollbar { width: 5px; }
+.update-release-notes::-webkit-scrollbar-track { background: transparent; }
+.update-release-notes::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 3px;
+}
+
+/* ── Card actions ── */
+.update-card-actions {
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* ── Progress bar ── */
 .update-progress-wrap {
     display: flex;
     flex-direction: column;
     gap: 5px;
+    flex: 1;
 }
 
 .update-progress-bar-track {

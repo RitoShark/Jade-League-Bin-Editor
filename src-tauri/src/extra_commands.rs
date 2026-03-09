@@ -251,9 +251,7 @@ pub async fn check_for_update() -> Result<UpdateInfo, String> {
     let available = is_newer_version(&tag, current);
 
     // Cache the release so download doesn't need another API call
-    if available {
-        *CACHED_RELEASE.lock() = Some(json);
-    }
+    *CACHED_RELEASE.lock() = Some(json);
 
     Ok(UpdateInfo {
         available,

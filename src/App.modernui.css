@@ -382,6 +382,8 @@
 
 /* Settings rows and inner containers */
 [data-ui-mode="modern"] .settings-row,
+[data-ui-mode="modern"] .update-toggle-item,
+[data-ui-mode="modern"] .update-card,
 [data-ui-mode="modern"] .preference-group,
 [data-ui-mode="modern"] .about-app-info,
 [data-ui-mode="modern"] .about-info-card,
@@ -389,13 +391,21 @@
   border-radius: 8px !important;
 }
 
-[data-ui-mode="modern"] .settings-row {
+[data-ui-mode="modern"] .settings-row,
+[data-ui-mode="modern"] .update-toggle-item,
+[data-ui-mode="modern"] .update-card {
   background: rgba(255, 255, 255, 0.03) !important;
   border-color: rgba(255, 255, 255, 0.07) !important;
   transition: border-color 0.15s ease;
 }
 
-[data-ui-mode="modern"] .settings-row:hover {
+[data-ui-mode="modern"] .update-card-header,
+[data-ui-mode="modern"] .update-release-notes {
+  border-color: rgba(255, 255, 255, 0.07) !important;
+}
+
+[data-ui-mode="modern"] .settings-row:hover,
+[data-ui-mode="modern"] .update-toggle-item:hover {
   border-color: rgba(255, 255, 255, 0.12) !important;
 }
 
@@ -851,6 +861,7 @@
 }
 
 [data-ui-mode="modern"] .settings-row:hover,
+[data-ui-mode="modern"] .update-toggle-item:hover,
 [data-ui-mode="modern"] .preferences-row:hover {
   background: rgba(255, 255, 255, 0.05) !important;
   border-radius: 6px !important;

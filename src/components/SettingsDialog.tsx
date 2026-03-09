@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { marked } from 'marked';
 import { HashIcon, SettingsIcon, ArrowUpIcon, ConverterIcon } from './Icons';
 import './SettingsDialog.css';
 
@@ -96,8 +97,23 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             loadPreferences();
             checkHashStatus();
             checkPreloadStatus();
+            // Auto-fetch update info when opening settings if we don't have it yet
+            if (!updateInfo && updateState === 'idle') {
+                handleCheckForUpdate();
+            }
         }
     }, [isOpen]);
+
+    // Listen for auto-check results broadcast from App.tsx
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const info = (e as CustomEvent<UpdateInfo>).detail;
+            setUpdateInfo(info);
+            setUpdateState(info.available ? 'available' : 'up-to-date');
+        };
+        window.addEventListener('update-check-result', handler);
+        return () => window.removeEventListener('update-check-result', handler);
+    }, []);
 
     const checkPreloadStatus = async () => {
         try { setPreloadStatus(await invoke<PreloadStatus>('get_preload_status')); }
@@ -407,102 +423,152 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         </>
     );
 
-    const renderUpdates = () => (
-        <>
-            <h2 className="settings-section-title">Updates</h2>
-            <p className="settings-section-subtitle">Keep Jade up to date with the latest features and fixes.</p>
+    const renderUpdates = () => {
+        const pct = downloadProgress && downloadProgress.total > 0
+            ? (downloadProgress.downloaded / downloadProgress.total * 100) : 0;
 
-            <ToggleRow
-                label="Auto-check on startup"
-                description="Automatically check for new versions when Jade launches."
-                checked={autoCheckUpdates}
-                onChange={v => { setAutoCheckUpdates(v); savePref('AutoCheckUpdates', v); }}
-            />
-            {autoCheckUpdates && (
-                <div style={{ paddingLeft: 16, borderLeft: '2px solid var(--border-color, #333)' }}>
-                    <ToggleRow
-                        label="Auto-download updates"
-                        description="Automatically download the update when one is found. If off, you'll just be notified."
-                        checked={autoDownloadUpdates}
-                        onChange={v => { setAutoDownloadUpdates(v); savePref('AutoDownloadUpdates', v); }}
-                    />
-                </div>
-            )}
-            <ToggleRow
-                label="Silent install"
-                description="Install updates silently and restart the app. If off, the installer wizard will open instead."
-                checked={silentUpdate}
-                onChange={v => { setSilentUpdate(v); savePref('SilentUpdate', v); }}
-            />
+        return (
+            <>
+                <h2 className="settings-section-title">Updates</h2>
+                <p className="settings-section-subtitle">Keep Jade up to date with the latest features and fixes.</p>
 
-            <div className="settings-divider" />
-
-            <div className="update-check-row">
-                <button
-                    className="action-button blue"
-                    onClick={handleCheckForUpdate}
-                    disabled={['checking','downloading','installing'].includes(updateState)}
-                >
-                    {updateState === 'checking' ? 'Checking…' : 'Check for Updates'}
-                </button>
-                {updateState === 'up-to-date' && <span className="success-text">Jade is up to date</span>}
-                {updateState === 'error'      && <span className="warning-text">{updateError}</span>}
-            </div>
-
-            {(['available','downloading','ready','installing'].includes(updateState)) && updateInfo && (
-                <div className="update-info-box">
-                    <div className="update-version-row">
-                        <span className="update-version-label">New version:</span>
-                        <span className="update-version-num">v{updateInfo.version}</span>
-                        <button className="action-button gray update-changelog-btn"
-                            onClick={() => invoke('open_url', { url: updateInfo!.release_url })}>
-                            Changelog
-                        </button>
+                <div className="update-toggles">
+                    <div className="update-toggle-item">
+                        <div className="update-toggle-text">
+                            <span className="update-toggle-label">Auto-check on startup</span>
+                            <span className="update-toggle-desc">Check for new versions when Jade launches</span>
+                        </div>
+                        <label className="settings-toggle">
+                            <input type="checkbox" checked={autoCheckUpdates}
+                                onChange={e => { setAutoCheckUpdates(e.target.checked); savePref('AutoCheckUpdates', e.target.checked); }} />
+                            <span className="settings-toggle-track" />
+                        </label>
                     </div>
-
-                    {updateState === 'available' && (
-                        <button className="action-button blue" onClick={handleDownloadUpdate}>
-                            Download Update
-                        </button>
-                    )}
-
-                    {updateState === 'downloading' && downloadProgress && (
-                        <div className="update-progress-wrap">
-                            <div className="update-progress-bar-track">
-                                <div
-                                    className="update-progress-bar-fill"
-                                    style={{ width: `${downloadProgress.total > 0 ? (downloadProgress.downloaded / downloadProgress.total * 100) : 0}%` }}
-                                />
+                    {autoCheckUpdates && (
+                        <div className="update-toggle-item update-toggle-nested">
+                            <div className="update-toggle-text">
+                                <span className="update-toggle-label">Auto-download updates</span>
+                                <span className="update-toggle-desc">Download automatically when an update is found</span>
                             </div>
-                            <div className="update-progress-text">
-                                {(downloadProgress.downloaded / 1024 / 1024).toFixed(1)} MB
-                                {downloadProgress.total > 0 && ` / ${(downloadProgress.total / 1024 / 1024).toFixed(1)} MB`}
-                                {downloadProgress.total > 0 && (
-                                    <span className="update-progress-pct">
-                                        {' '}({(downloadProgress.downloaded / downloadProgress.total * 100).toFixed(0)}%)
-                                    </span>
-                                )}
-                            </div>
+                            <label className="settings-toggle">
+                                <input type="checkbox" checked={autoDownloadUpdates}
+                                    onChange={e => { setAutoDownloadUpdates(e.target.checked); savePref('AutoDownloadUpdates', e.target.checked); }} />
+                                <span className="settings-toggle-track" />
+                            </label>
                         </div>
                     )}
-
-                    {updateState === 'downloading' && !downloadProgress && (
-                        <p className="download-status">Connecting…</p>
-                    )}
-
-                    {updateState === 'ready' && (
-                        <button className="action-button green" onClick={handleInstall}>
-                            Install Update — app will close and installer will open
-                        </button>
-                    )}
-
-                    {updateState === 'installing' && (
-                        <p className="download-status">Launching installer…</p>
-                    )}
+                    <div className="update-toggle-item">
+                        <div className="update-toggle-text">
+                            <span className="update-toggle-label">Silent install</span>
+                            <span className="update-toggle-desc">Install quietly and restart instead of showing the wizard</span>
+                        </div>
+                        <label className="settings-toggle">
+                            <input type="checkbox" checked={silentUpdate}
+                                onChange={e => { setSilentUpdate(e.target.checked); savePref('SilentUpdate', e.target.checked); }} />
+                            <span className="settings-toggle-track" />
+                        </label>
+                    </div>
                 </div>
-            )}
-        </>
-    );
+
+                {/* Update card — always visible once we have info */}
+                {(updateState === 'checking' || updateState === 'idle') && !updateInfo && (
+                    <div className="update-check-row">
+                        <span className="download-status">
+                            {updateState === 'checking' ? 'Checking for updates…' : 'Loading…'}
+                        </span>
+                    </div>
+                )}
+
+                {updateState === 'error' && !updateInfo && (
+                    <div className="update-check-row">
+                        <button className="action-button blue" onClick={handleCheckForUpdate}>
+                            Retry
+                        </button>
+                        <span className="warning-text">{updateError}</span>
+                    </div>
+                )}
+
+                {updateInfo && (
+                    <div className="update-card">
+                        <div className="update-card-header">
+                            <div className={`update-card-badge ${updateInfo.available ? '' : 'update-card-badge-current'}`}>
+                                {updateInfo.available ? 'Update Available' : 'Latest Release'}
+                            </div>
+                            <span className="update-card-version">v{updateInfo.version}</span>
+                            {!updateInfo.available && (
+                                <span className="success-text" style={{ fontSize: 11 }}>You're up to date</span>
+                            )}
+                            <button className="action-button gray update-changelog-btn"
+                                onClick={() => invoke('open_url', { url: updateInfo!.release_url })}>
+                                Open on GitHub
+                            </button>
+                        </div>
+
+                        {/* Release notes */}
+                        {updateInfo.notes && (
+                            <div className="update-release-notes"
+                                dangerouslySetInnerHTML={{ __html: marked.parse(updateInfo.notes, { async: false }) as string }}
+                            />
+                        )}
+
+                        {/* Action area */}
+                        <div className="update-card-actions">
+                            {updateInfo.available && updateState === 'available' && (
+                                <button className="action-button blue" onClick={handleDownloadUpdate}>
+                                    Download Update
+                                </button>
+                            )}
+
+                            {!updateInfo.available && (
+                                <button className="action-button gray" onClick={handleDownloadUpdate}
+                                    disabled={['downloading', 'installing'].includes(updateState)}>
+                                    Redownload
+                                </button>
+                            )}
+
+                            {updateState === 'downloading' && (
+                                <div className="update-progress-wrap">
+                                    <div className="update-progress-bar-track">
+                                        <div className="update-progress-bar-fill" style={{ width: `${pct}%` }} />
+                                    </div>
+                                    <div className="update-progress-text">
+                                        {downloadProgress
+                                            ? <>
+                                                {(downloadProgress.downloaded / 1024 / 1024).toFixed(1)} MB
+                                                {downloadProgress.total > 0 && ` / ${(downloadProgress.total / 1024 / 1024).toFixed(1)} MB`}
+                                                {downloadProgress.total > 0 && (
+                                                    <span className="update-progress-pct"> ({pct.toFixed(0)}%)</span>
+                                                )}
+                                            </>
+                                            : 'Connecting…'
+                                        }
+                                    </div>
+                                </div>
+                            )}
+
+                            {updateState === 'ready' && (
+                                <button className="action-button green" onClick={handleInstall}>
+                                    Install &amp; Restart
+                                </button>
+                            )}
+
+                            {updateState === 'installing' && (
+                                <span className="download-status">Launching installer…</span>
+                            )}
+
+                            {updateState === 'error' && <span className="warning-text">{updateError}</span>}
+
+                            <button className="action-button gray update-changelog-btn" style={{ marginLeft: 'auto' }}
+                                onClick={handleCheckForUpdate}
+                                disabled={updateState === 'checking'}>
+                                {updateState === 'checking' ? 'Checking…' : 'Recheck'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </>
+        );
+    };
 
     const sectionContent: Record<NavSection, () => React.ReactElement> = {
         hashes: renderHashes,
