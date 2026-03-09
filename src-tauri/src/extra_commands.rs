@@ -335,22 +335,37 @@ pub async fn run_installer(silent: bool, app: tauri::AppHandle) -> Result<(), St
         return Err("Installer file no longer exists on disk".to_string());
     }
 
-    let install_dir = std::env::current_exe()
+    // Resolve the real install directory.
+    // If running from a dev/debug build, don't pass /D so the installer
+    // uses its own default (or the user's previous install location).
+    let current_dir = std::env::current_exe()
         .map(|p| p.parent().unwrap_or(std::path::Path::new(".")).to_path_buf())
         .unwrap_or_default();
 
-    let exe_path = install_dir.join("jade-rust.exe");
+    let is_dev_build = current_dir.to_string_lossy().contains("target\\debug")
+        || current_dir.to_string_lossy().contains("target\\release")
+        || current_dir.to_string_lossy().contains("target/debug")
+        || current_dir.to_string_lossy().contains("target/release");
+
+    let install_dir = if is_dev_build { None } else { Some(current_dir) };
+    let exe_path = install_dir.as_ref()
+        .map(|d| d.join("jade-rust.exe"))
+        .unwrap_or_else(|| std::path::PathBuf::from("jade-rust.exe"));
 
     let bat_path = std::env::temp_dir().join("jade_update.bat");
     let log_path = std::env::temp_dir().join("jade_update.log");
 
+    let dir_flag = install_dir.as_ref()
+        .map(|d| format!(" /D={}", d.display()))
+        .unwrap_or_default();
+
     let installer_cmd = if silent {
-        format!("\"{}\" /S /D={}", path.display(), install_dir.display())
+        format!("\"{}\" /S{}", path.display(), dir_flag)
     } else {
-        format!("\"{}\" /D={}", path.display(), install_dir.display())
+        format!("\"{}\"{}", path.display(), dir_flag)
     };
 
-    let relaunch_line = if silent {
+    let relaunch_line = if silent && !is_dev_build {
         format!("start \"\" \"{}\"\r\n", exe_path.display())
     } else {
         String::new()
