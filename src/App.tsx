@@ -1436,13 +1436,20 @@ function App() {
         ? monaco.Uri.file(activeTab.filePath)
         : monaco.Uri.parse(`inmemory://tab/${activeTabId}`);
 
-      // Check if a model with this URI already exists (e.g. from a previous session)
+      // Dispose any orphaned model with this URI (e.g. from a previously closed
+      // tab whose delayed 500ms disposal hasn't fired yet). Without this, reopening
+      // the same file would pick up the stale model with old edits instead of fresh
+      // content from disk.
       const existing = monaco.editor.getModel(uri);
       if (existing && !existing.isDisposed()) {
-        model = existing;
-      } else {
-        model = monaco.editor.createModel(activeTab.content, RITOBIN_LANGUAGE_ID, uri);
+        let isTracked = false;
+        monacoModelsRef.current.forEach((m) => { if (m === existing) isTracked = true; });
+        if (!isTracked) {
+          try { existing.dispose(); } catch (_) { }
+        }
       }
+
+      model = monaco.editor.createModel(activeTab.content, RITOBIN_LANGUAGE_ID, uri);
       monacoModelsRef.current.set(activeTabId, model!);
     }
 

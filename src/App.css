@@ -153,6 +153,56 @@ body {
   margin-top: 6px;
 }
 
+/* ── Inverse-corner concave selection curves ──
+   Monaco creates inverse (concave) corners using a 10px blue piece + a white
+   overlay with border-radius.  Modern-UI mode forces the overlay transparent,
+   breaking the mask and leaving a stray square.  Fix: hide the original blue
+   piece, make the overlay transparent, and use pseudo-elements to render ONLY
+   the tiny concave curve in the selection color — no background dependency. */
+
+/* 1. Hide the blue inverse-corner piece */
+.monaco-editor .cslr.selected-text:has(+ .cslr.monaco-editor-background) {
+  display: none !important;
+}
+
+/* 2. Make the overlay invisible (keep it in DOM for pseudo-element anchoring) */
+.monaco-editor .cslr.monaco-editor-background {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* 3. Shared pseudo-element base — 3px curve rendered via radial-gradient mask */
+.monaco-editor .cslr.monaco-editor-background::before,
+.monaco-editor .cslr.monaco-editor-background::after {
+  content: '';
+  display: none;
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  -webkit-mask-image: radial-gradient(circle 3px at var(--cx) var(--cy), transparent 3px, black 3.5px);
+}
+.monaco-editor .focused .cslr.monaco-editor-background::before,
+.monaco-editor .focused .cslr.monaco-editor-background::after {
+  background: var(--vscode-editor-selectionBackground);
+}
+
+/* 4. Corner positions — ::before for top corners, ::after for bottom corners */
+/*    Right-side overlay (left-side inverse corner): top-right / bottom-right   */
+.monaco-editor .cslr.monaco-editor-background.top-right-radius::before {
+  display: block; top: 0; right: 0; --cx: 0px; --cy: 3px;
+}
+.monaco-editor .cslr.monaco-editor-background.bottom-right-radius::after {
+  display: block; bottom: 0; right: 0; --cx: 0px; --cy: 0px;
+}
+/*    Left-side overlay (right-side inverse corner): top-left / bottom-left     */
+.monaco-editor .cslr.monaco-editor-background.top-left-radius::before {
+  display: block; top: 0; left: 0; --cx: 3px; --cy: 3px;
+}
+.monaco-editor .cslr.monaco-editor-background.bottom-left-radius::after {
+  display: block; bottom: 0; left: 0; --cx: 3px; --cy: 0px;
+}
+
 /* Syntax checker — quick fix / code action menu styling */
 .monaco-editor .action-widget {
   background-color: var(--editor-bg, #1e1e1e) !important;
