@@ -231,9 +231,6 @@ pub async fn get_custom_icon_data(app: tauri::AppHandle) -> Result<Option<String
     let icon_path = get_custom_icon_path(app.clone()).await?;
     
     if let Some(path) = icon_path {
-        // Apply to window immediately (persistence fix)
-        let _ = update_window_icon(&app, &path);
-
         // Read the icon file and convert to base64 data URL
         let icon_data = fs::read(&path)
             .map_err(|e| format!("Failed to read icon file: {}", e))?;
