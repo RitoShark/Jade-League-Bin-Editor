@@ -23,10 +23,13 @@ export interface TexHoverPopupProps {
   error: string | null;
   onOpenFull: () => void;
   onEditImage: () => void;
-  /** Called when the mouse leaves the popup area */
-  onDismiss: () => void;
-  /** Called when the mouse enters the popup area (to cancel pending dismissal) */
+  onShowInExplorer: () => void;
+  /** Called to close the popup */
+  onClose: () => void;
+  /** Called when mouse enters the popup */
   onMouseEnter?: () => void;
+  /** Called when mouse leaves the popup */
+  onMouseLeave?: () => void;
 }
 
 export default function TexHoverPopup({
@@ -40,10 +43,57 @@ export default function TexHoverPopup({
   error,
   onOpenFull,
   onEditImage,
-  onDismiss,
-  onMouseEnter,
+  onShowInExplorer,
+  onClose,
+  onMouseEnter: onMouseEnterProp,
+  onMouseLeave: onMouseLeaveProp,
 }: TexHoverPopupProps) {
   const popupRef = useRef<HTMLDivElement>(null);
+  const dismissTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isOverPopup = useRef(false);
+
+  const cancelDismiss = () => {
+    if (dismissTimeout.current) { clearTimeout(dismissTimeout.current); dismissTimeout.current = null; }
+  };
+
+  const scheduleDismiss = () => {
+    cancelDismiss();
+    dismissTimeout.current = setTimeout(() => {
+      if (!isOverPopup.current) onClose();
+    }, 350);
+  };
+
+  // Dismiss when mouse leaves the popup (with forgiving delay)
+  useEffect(() => {
+    const popup = popupRef.current;
+    if (!popup) return;
+    const onEnter = () => {
+      isOverPopup.current = true;
+      cancelDismiss();
+      onMouseEnterProp?.();
+    };
+    const onLeave = () => {
+      isOverPopup.current = false;
+      onMouseLeaveProp?.();
+      scheduleDismiss();
+    };
+    popup.addEventListener('mouseenter', onEnter);
+    popup.addEventListener('mouseleave', onLeave);
+    return () => {
+      popup.removeEventListener('mouseenter', onEnter);
+      popup.removeEventListener('mouseleave', onLeave);
+      cancelDismiss();
+    };
+  });
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
 
   // Position: anchored below or above the line, clamped to viewport
   const POPUP_W = 260;
@@ -85,8 +135,6 @@ export default function TexHoverPopup({
       ref={popupRef}
       className="tex-hover-popup"
       style={style}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onDismiss}
     >
       <div className="tex-hover-popup__header">
         <span className="tex-hover-popup__filename" title={resolvedPath || rawPath}>
@@ -136,6 +184,16 @@ export default function TexHoverPopup({
           title="Open in Paint.NET"
         >
           Edit Image
+        </button>
+        <button
+          className="tex-hover-popup__btn tex-hover-popup__btn--secondary tex-hover-popup__btn--icon"
+          onClick={onShowInExplorer}
+          disabled={!resolvedPath}
+          title="Show in Explorer"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h3.879a1.5 1.5 0 0 1 1.06.44l1.122 1.12A.5.5 0 0 0 8.914 4H13.5A1.5 1.5 0 0 1 15 5.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9z"/>
+          </svg>
         </button>
       </div>
     </div>

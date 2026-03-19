@@ -1365,6 +1365,20 @@ pub async fn detect_image_editors() -> Result<ImageEditorStatus, String> {
 /// Reads the `TexEditorApp` preference (default|paintnet|photoshop|gimp) and
 /// launches the appropriate application. Falls back to the OS default handler.
 #[tauri::command]
+pub fn show_in_explorer(file_path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let native_path = file_path.replace('/', "\\");
+        std::process::Command::new("explorer.exe")
+            .raw_arg(format!("/select,\"{}\"", native_path))
+            .spawn()
+            .map_err(|e| format!("Failed to open Explorer: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn open_tex_for_edit(app: tauri::AppHandle, file_path: String) -> Result<(), String> {
     let pref = get_preference(app, "TexEditorApp".to_string(), "default".to_string())
         .await

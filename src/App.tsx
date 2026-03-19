@@ -121,7 +121,7 @@ function App() {
   const [quartzHistoryEntries, setQuartzHistoryEntries] = useState<QuartzHistoryEntry[]>([]);
   const quartzSessionsRef = useRef<Map<string, QuartzEditSession>>(new Map());
 
-  // Texture hover popup state
+  // Texture click-to-preview popup state
   interface TexPopupState {
     top: number;
     left: number;
@@ -138,9 +138,7 @@ function App() {
   const [texPopup, setTexPopup] = useState<TexPopupState | null>(null);
   const texPopupRef = useRef<TexPopupState | null>(null);
   texPopupRef.current = texPopup;
-  // Whether the mouse is currently over the popup (prevents premature dismissal)
-  const isMouseOverPopupRef = useRef(false);
-  const texHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isOverTexPopupRef = useRef(false);
 
   // Track normal window dimensions (when not maximized/fullscreen)
   const normalWindowSize = useRef<{ width: number; height: number; x: number; y: number }>({
@@ -1554,7 +1552,7 @@ function App() {
     return null;
   }
 
-  /** Find all image paths in the model, for decorations */
+  /** Find all image paths in the model, for decorations (pointer cursor + inline swatch box) */
   function findAllImagePaths(model: MonacoType.editor.ITextModel): MonacoType.editor.IModelDeltaDecoration[] {
     const decorations: MonacoType.editor.IModelDeltaDecoration[] = [];
     const lineCount = model.getLineCount();
@@ -1574,7 +1572,12 @@ function App() {
               startLineNumber: ln, startColumn: qStart + 1,
               endLineNumber: ln, endColumn: qEnd + 2,
             },
-            options: { inlineClassName: 'image-path-hover-target' },
+            options: {
+              before: {
+                content: '\u00A0',
+                inlineClassName: 'image-path-swatch',
+              },
+            },
           });
         }
         i = qEnd + 1;
@@ -1815,14 +1818,9 @@ function App() {
     }
   }, []);
 
-  /** Schedule dismissal of the hover popup (can be cancelled if mouse re-enters) */
-  const scheduleTexPopupHide = useCallback(() => {
-    if (texHideTimeoutRef.current) clearTimeout(texHideTimeoutRef.current);
-    texHideTimeoutRef.current = setTimeout(() => {
-      if (!isMouseOverPopupRef.current) {
-        setTexPopup(null);
-      }
-    }, 280);
+  /** Close the texture popup */
+  const closeTexPopup = useCallback(() => {
+    setTexPopup(null);
   }, []);
 
   /** Open a full-size texture preview tab for the currently shown popup */
@@ -1854,6 +1852,17 @@ function App() {
       await invoke('open_tex_for_edit', { filePath: path });
     } catch (err) {
       setStatusMessage(`Edit Image: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, []);
+
+  /** Show the file in Windows Explorer, highlighted */
+  const handleTexShowInExplorer = useCallback(async (resolvedPath: string | null | undefined) => {
+    const path = resolvedPath ?? texPopupRef.current?.resolvedPath;
+    if (!path) return;
+    try {
+      await invoke('show_in_explorer', { filePath: path });
+    } catch (err) {
+      setStatusMessage(`Show in Explorer: ${err instanceof Error ? err.message : String(err)}`);
     }
   }, []);
 
@@ -2042,112 +2051,132 @@ function App() {
     });
     editorDisposablesRef.current.push(contextMenuDisposable);
 
-    // â”€â”€ Texture path hover detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    let texDwellTimeout: ReturnType<typeof setTimeout> | null = null;
-    let texDismissTimeout: ReturnType<typeof setTimeout> | null = null;
-    let lastTexPath = '';
-
+    // â”€â”€ Texture path click-to-preview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     /** Compute fixed popup position anchored below (or above) the editor line */
-    const computeAnchorPos = (lineNumber: number, column: number) => {
-      const editorDom = editor.getDomNode();
-      if (!editorDom) return null;
-      const pos = editor.getScrolledVisiblePosition({ lineNumber, column });
-      if (!pos) return null;
-      const editorRect = editorDom.getBoundingClientRect();
-      // pos.left is relative to the content area (after line numbers/gutter)
-      const left = editorRect.left + editor.getLayoutInfo().contentLeft + pos.left;
-      const lineBottom = editorRect.top + pos.top + pos.height;
-      const lineTop = editorRect.top + pos.top;
+    /** Compute popup anchor from the swatch element — above by default, below if no space */
+    const computeAnchorFromSwatch = (swatchEl: HTMLElement) => {
+      const rect = swatchEl.getBoundingClientRect();
       const POPUP_H = 320;
-      const spaceBelow = window.innerHeight - lineBottom;
-      const above = spaceBelow < POPUP_H + 8 && lineTop > POPUP_H + 8;
-      const top = above ? lineTop : lineBottom;
+      const swatchTop = rect.top;
+      const swatchBottom = rect.bottom;
+      const left = rect.left;
+      const above = swatchTop > POPUP_H + 8;
+      const top = above ? swatchTop : swatchBottom;
       return { top, left, above };
     };
 
-    const clearDwell = () => { if (texDwellTimeout) { clearTimeout(texDwellTimeout); texDwellTimeout = null; } };
-    const clearDismiss = () => { if (texDismissTimeout) { clearTimeout(texDismissTimeout); texDismissTimeout = null; } };
-
-    const scheduleDismiss = () => {
-      clearDwell();
-      clearDismiss();
-      texDismissTimeout = setTimeout(() => {
-        if (!isMouseOverPopupRef.current) {
-          setTexPopup(null);
-          lastTexPath = '';
-        }
-      }, 200);
+    /** Given a swatch DOM element, find the image path on its line */
+    const findImagePathFromSwatch = (swatchEl: HTMLElement) => {
+      const model = editor.getModel();
+      if (!model) return null;
+      const rect = swatchEl.getBoundingClientRect();
+      // Offset past the swatch itself to hit actual text content
+      const probeX = rect.right + 4;
+      const probeY = rect.top + rect.height / 2;
+      const pos = editor.getTargetAtClientPoint(probeX, probeY);
+      if (!pos?.position) return null;
+      const line = model.getLineContent(pos.position.lineNumber);
+      const imgMatch = extractImagePathAtColumn(line, pos.position.column);
+      if (!imgMatch) return null;
+      return { ...imgMatch, lineNumber: pos.position.lineNumber };
     };
 
-    const mouseMoveDisposable = editor.onMouseMove((e) => {
-      if (!e.target.position) {
-        scheduleDismiss();
+    /** Open the texture popup for a given swatch */
+    const openPopupFromSwatch = (swatchEl: HTMLElement) => {
+      const match = findImagePathFromSwatch(swatchEl);
+      if (!match) return;
+
+      // Toggle off if same path
+      if (texPopupRef.current?.rawPath === match.path) {
+        setTexPopup(null);
         return;
       }
 
-      const model = editor.getModel();
-      if (!model) return;
+      const anchor = computeAnchorFromSwatch(swatchEl);
 
-      const line = model.getLineContent(e.target.position.lineNumber);
-      const imgMatch = extractImagePathAtColumn(line, e.target.position.column);
+      const baseFile = activeTabRef.current?.filePath ?? null;
+      setTexPopup({
+        top: anchor.top,
+        left: anchor.left,
+        above: anchor.above,
+        rawPath: match.path,
+        resolvedPath: null,
+        imageDataUrl: null,
+        texWidth: 0,
+        texHeight: 0,
+        formatStr: '',
+        formatNum: 0,
+        error: null,
+      });
+      loadTextureForPopup(match.path, baseFile);
+    };
 
-      if (imgMatch) {
-        clearDismiss();
+    // Click on swatch to open popup — use Monaco's onMouseDown which always works
+    const mouseDownDisposable = editor.onMouseDown((e) => {
+      const browserTarget = e.event.browserEvent.target as HTMLElement | null;
+      if (!browserTarget?.classList.contains('image-path-swatch')) return;
+      e.event.preventDefault();
+      e.event.stopPropagation();
+      openPopupFromSwatch(browserTarget);
+    });
+    editorDisposablesRef.current.push(mouseDownDisposable);
 
-        if (imgMatch.path !== lastTexPath) {
-          // New path — clear any previous dwell and start fresh
-          clearDwell();
-          lastTexPath = imgMatch.path;
-          const anchorLine = e.target.position.lineNumber;
-          const anchorCol = imgMatch.startCol;
-
-          texDwellTimeout = setTimeout(() => {
-            texDwellTimeout = null;
-            const anchor = computeAnchorPos(anchorLine, anchorCol);
-            if (!anchor) return;
-            const baseFile = activeTabRef.current?.filePath ?? null;
-            setTexPopup({
-              top: anchor.top,
-              left: anchor.left,
-              above: anchor.above,
-              rawPath: imgMatch.path,
-              resolvedPath: null,
-              imageDataUrl: null,
-              texWidth: 0,
-              texHeight: 0,
-              formatStr: '',
-              formatNum: 0,
-              error: null,
-            });
-            loadTextureForPopup(imgMatch.path, baseFile);
-          }, 400);
+    // Hover on swatch: open popup after dwell, dismiss when leaving swatch area
+    let swatchHoverTimeout: ReturnType<typeof setTimeout> | null = null;
+    let swatchDismissTimeout: ReturnType<typeof setTimeout> | null = null;
+    let hoveredSwatchEl: HTMLElement | null = null;
+    const clearSwatchHover = () => {
+      if (swatchHoverTimeout) { clearTimeout(swatchHoverTimeout); swatchHoverTimeout = null; }
+      hoveredSwatchEl = null;
+    };
+    const clearSwatchDismiss = () => {
+      if (swatchDismissTimeout) { clearTimeout(swatchDismissTimeout); swatchDismissTimeout = null; }
+    };
+    const scheduleSwatchDismiss = () => {
+      clearSwatchDismiss();
+      swatchDismissTimeout = setTimeout(() => {
+        if (!isOverTexPopupRef.current) setTexPopup(null);
+      }, 350);
+    };
+    const mouseMoveDisposable = editor.onMouseMove((e) => {
+      const browserTarget = e.event.browserEvent.target as HTMLElement | null;
+      if (!browserTarget?.classList.contains('image-path-swatch')) {
+        if (hoveredSwatchEl) {
+          clearSwatchHover();
+          // Mouse left the swatch — schedule dismiss (popup's own mouseenter will cancel via its own logic)
+          if (texPopupRef.current) scheduleSwatchDismiss();
         }
-        // Same path — popup is already anchored, do nothing (static position)
-      } else {
-        scheduleDismiss();
+        return;
       }
+      // Mouse is over a swatch — cancel any pending dismiss
+      clearSwatchDismiss();
+      if (browserTarget === hoveredSwatchEl) return;
+      clearSwatchHover();
+      hoveredSwatchEl = browserTarget;
+      swatchHoverTimeout = setTimeout(() => {
+        swatchHoverTimeout = null;
+        if (hoveredSwatchEl === browserTarget && !texPopupRef.current) {
+          openPopupFromSwatch(browserTarget);
+        }
+      }, 400);
     });
     editorDisposablesRef.current.push(mouseMoveDisposable);
 
     const mouseLeaveDisposable = editor.onMouseLeave(() => {
-      scheduleDismiss();
+      if (hoveredSwatchEl) clearSwatchHover();
+      if (texPopupRef.current) scheduleSwatchDismiss();
     });
     editorDisposablesRef.current.push(mouseLeaveDisposable);
+    editorDisposablesRef.current.push({ dispose: () => { clearSwatchHover(); clearSwatchDismiss(); } });
 
     // Dismiss on scroll so it doesn't float detached from the text
     const scrollDisposable = editor.onDidScrollChange(() => {
-      if (texPopupRef.current && !isMouseOverPopupRef.current) {
-        clearDwell();
+      if (texPopupRef.current) {
         setTexPopup(null);
-        lastTexPath = '';
       }
     });
     editorDisposablesRef.current.push(scrollDisposable);
-
-    editorDisposablesRef.current.push({
-      dispose: () => { clearDwell(); clearDismiss(); }
-    });
-    // â”€â”€ End texture hover detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // â”€â”€ End texture path click-to-preview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     // â”€â”€ Image path pointer-cursor decorations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let imgPathDecorations: string[] = [];
@@ -3320,6 +3349,7 @@ function App() {
           error={activeTab.textureError ?? null}
           isReloading={reloadingTexTabId === activeTab.id}
           onEditImage={() => handleTexEditImage(activeTab.filePath)}
+          onShowInExplorer={() => handleTexShowInExplorer(activeTab.filePath)}
           onReload={handleTexReload}
         />
       )}
@@ -3435,17 +3465,10 @@ function App() {
           error={texPopup.error}
           onOpenFull={handleTexOpenFull}
           onEditImage={() => handleTexEditImage(texPopup.resolvedPath)}
-          onDismiss={() => {
-            isMouseOverPopupRef.current = false;
-            scheduleTexPopupHide();
-          }}
-          onMouseEnter={() => {
-            isMouseOverPopupRef.current = true;
-            if (texHideTimeoutRef.current) {
-              clearTimeout(texHideTimeoutRef.current);
-              texHideTimeoutRef.current = null;
-            }
-          }}
+          onShowInExplorer={() => handleTexShowInExplorer(texPopup.resolvedPath)}
+          onClose={closeTexPopup}
+          onMouseEnter={() => { isOverTexPopupRef.current = true; }}
+          onMouseLeave={() => { isOverTexPopupRef.current = false; }}
         />
       )}
 

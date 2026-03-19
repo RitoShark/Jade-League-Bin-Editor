@@ -224,9 +224,23 @@ body {
   display: block; bottom: 0; left: 0; --cx: 3px; --cy: 0px;
 }
 
-/* Image path hover — pointer cursor on hoverable texture/image paths */
-.monaco-editor .image-path-hover-target {
+/* Inline swatch box before image paths (like Monaco color swatches) */
+.monaco-editor .image-path-swatch {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 0.2em;
+  vertical-align: middle;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 0;
+  background:
+    repeating-conic-gradient(#808080 0% 25%, #c0c0c0 0% 50%) 0 0 / 50% 50%;
   cursor: pointer !important;
+  transition: border-color 0.1s;
+}
+
+.monaco-editor .image-path-swatch:hover {
+  border-color: var(--jade-accent);
 }
 
 /* Syntax checker — quick fix / code action menu styling */

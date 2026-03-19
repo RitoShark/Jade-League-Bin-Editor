@@ -11,6 +11,7 @@ interface TexturePreviewTabProps {
   error: string | null;
   isReloading?: boolean;
   onEditImage: () => void;
+  onShowInExplorer: () => void;
   onReload: () => void;
 }
 
@@ -23,6 +24,7 @@ export default function TexturePreviewTab({
   error,
   isReloading = false,
   onEditImage,
+  onShowInExplorer,
   onReload,
 }: TexturePreviewTabProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -112,6 +114,16 @@ export default function TexturePreviewTab({
             title="Open in image editor"
           >
             Edit Image
+          </button>
+          <button
+            className="tex-preview-tab__ctrl-btn"
+            onClick={onShowInExplorer}
+            title="Show in Explorer"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ verticalAlign: 'middle', marginRight: 4 }}>
+              <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h3.879a1.5 1.5 0 0 1 1.06.44l1.122 1.12A.5.5 0 0 0 8.914 4H13.5A1.5 1.5 0 0 1 15 5.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9z"/>
+            </svg>
+            Show in Explorer
           </button>
         </div>
       </div>

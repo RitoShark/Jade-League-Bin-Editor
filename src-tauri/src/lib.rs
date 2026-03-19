@@ -207,6 +207,7 @@ pub fn run() {
             app_commands::resolve_asset_path,
             app_commands::detect_image_editors,
             app_commands::open_tex_for_edit,
+            app_commands::show_in_explorer,
             app_commands::file_exists,
             app_commands::read_text_file,
             app_commands::write_text_file,
