@@ -263,7 +263,13 @@ pub fn migrate_preferences_if_needed(app: &tauri::AppHandle) -> Result<(), Strin
     Ok(())
 }
 
-/// Write content to file atomically to prevent corruption
+/// Write content to file atomically to prevent corruption.
+///
+/// On Windows `std::fs::rename` cannot overwrite an existing file, so we
+/// use the Win32 `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` which performs
+/// an atomic replace.  The old delete-then-rename approach had a window
+/// where the target file didn't exist — if the process was killed in that
+/// gap (e.g. `app.exit(0)` during a silent update) the file was lost.
 fn write_file_atomic(path: &Path, content: &str) -> std::io::Result<()> {
     // Ensure parent directory exists (defensive: get_config_dir should already do this,
     // but guard against races or first-run situations)
@@ -273,18 +279,90 @@ fn write_file_atomic(path: &Path, content: &str) -> std::io::Result<()> {
     // Write to a temporary file first
     let temp_path = path.with_extension("tmp");
     fs::write(&temp_path, content)?;
-    
-    // Then atomically rename to the target file
-    // On Windows, we need to remove the target file first if it exists
+
+    // Atomically replace the target file
     #[cfg(windows)]
     {
-        if path.exists() {
-            fs::remove_file(path)?;
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING};
+        use windows::core::PCWSTR;
+
+        let src: Vec<u16> = temp_path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let dst: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+
+        unsafe {
+            MoveFileExW(PCWSTR(src.as_ptr()), PCWSTR(dst.as_ptr()), MOVEFILE_REPLACE_EXISTING)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("MoveFileExW failed: {}", e)))?;
         }
     }
-    
-    fs::rename(&temp_path, path)?;
+
+    #[cfg(not(windows))]
+    {
+        fs::rename(&temp_path, path)?;
+    }
+
     Ok(())
+}
+
+/// If a previous write was interrupted, the `.tmp` sidecar may contain valid
+/// data while the main file is missing or corrupt.  Call this once on startup.
+pub fn recover_preferences_if_needed() {
+    if let Ok(config_dir) = get_config_dir() {
+        let pref_file = config_dir.join("preferences.json");
+        let temp_file = config_dir.join("preferences.tmp");
+
+        if temp_file.exists() && !pref_file.exists() {
+            // The main file was deleted but the temp was never promoted — recover.
+            eprintln!("[Prefs] Recovering preferences from leftover .tmp file");
+            if let Err(e) = fs::rename(&temp_file, &pref_file) {
+                eprintln!("[Prefs] Failed to recover from .tmp: {}", e);
+            }
+        } else if temp_file.exists() {
+            // Main file exists; the .tmp is stale — clean it up.
+            let _ = fs::remove_file(&temp_file);
+        }
+    }
+}
+
+const LAST_VERSION_KEY: &str = "last_app_version";
+
+/// Compare the running app version against the one stored in preferences.
+/// If they differ (i.e. first launch after an update), stamp the new version
+/// and return `true` so callers can run post-update fixups.
+pub fn check_and_stamp_version() -> bool {
+    let current = env!("CARGO_PKG_VERSION");
+
+    let config_dir = match get_config_dir() {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    let pref_file = config_dir.join("preferences.json");
+
+    let mut prefs: serde_json::Value = if pref_file.exists() {
+        fs::read_to_string(&pref_file)
+            .ok()
+            .and_then(|c| serde_json::from_str(&c).ok())
+            .unwrap_or_else(|| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    let stored = prefs.get(LAST_VERSION_KEY)
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if stored == current {
+        return false;
+    }
+
+    println!("[Setup] Version changed: {:?} -> {:?}, running post-update fixups", stored, current);
+    prefs[LAST_VERSION_KEY] = serde_json::Value::String(current.to_string());
+
+    if let Ok(content) = serde_json::to_string_pretty(&prefs) {
+        let _ = write_file_atomic(&pref_file, &content);
+    }
+
+    true
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -542,6 +620,16 @@ fn update_shortcut_icon_at(shortcut_path: &Path, icon_path: Option<&str>) -> Res
         println!("[Icon] Updated shortcut icon at {:?}", shortcut_path);
     }
 
+    Ok(())
+}
+
+/// Re-apply tile PNGs and Start Menu shortcut icon from a saved custom icon.
+/// Called on startup to undo the NSIS installer overwriting these with defaults.
+#[cfg(target_os = "windows")]
+pub fn reapply_tile_and_shortcut_icon(icon_path: &str) -> Result<(), String> {
+    update_tile_pngs(icon_path)?;
+    update_shortcut_icon(Some(icon_path))?;
+    println!("[Icon] Restored Start Menu tiles and shortcut icon on startup");
     Ok(())
 }
 

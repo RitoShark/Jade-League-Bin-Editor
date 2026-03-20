@@ -1,6 +1,6 @@
 [package]
 name = "jade-rust"
-version = "0.7.0"
+version = "0.7.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -42,7 +42,7 @@ indexmap = "2.13.0"
 # Windows registry for file association
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
-windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com"] }
+windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com", "Win32_Storage_FileSystem"] }
 
 # League Toolkit for BIN file parsing (crates.io for compatible ltk_primitives version)
 ltk_meta = { version = "0.3.3", features = ["serde"] }

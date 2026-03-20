@@ -52,6 +52,10 @@ pub fn run() {
                 eprintln!("[Setup] Failed to write Jade PID file: {}", e);
             }
 
+            // Recover preferences.json from leftover .tmp if a previous write
+            // was interrupted (e.g. process killed during a silent update).
+            app_commands::recover_preferences_if_needed();
+
             // Migrate preferences from old location if needed
             if let Err(e) = app_commands::migrate_preferences_if_needed(&app_handle) {
                 eprintln!("[Setup] Failed to migrate preferences: {}", e);
@@ -97,6 +101,12 @@ pub fn run() {
                 });
             }
 
+            // Detect first launch after an update: compare running version
+            // against the version stored in preferences.  When they differ,
+            // the NSIS installer will have overwritten the Start Menu tile
+            // PNGs and shortcut icon with defaults — regenerate them once.
+            let just_updated = app_commands::check_and_stamp_version();
+
             // Load and apply custom icon on startup if one was saved
             let app_handle2 = app.handle().clone();
             std::thread::spawn(move || {
@@ -115,6 +125,16 @@ pub fn run() {
                                 Err(e) => {
                                     eprintln!("[Icon] Failed to apply saved icon: {}", e);
                                 }
+                            }
+                        }
+
+                        // After an update the NSIS installer overwrites the
+                        // Start Menu tile PNGs and shortcut with defaults.
+                        // Regenerate them once from the custom icon.
+                        #[cfg(target_os = "windows")]
+                        if just_updated {
+                            if let Err(e) = app_commands::reapply_tile_and_shortcut_icon(&icon_path) {
+                                eprintln!("[Icon] Failed to restore tiles/shortcut after update: {}", e);
                             }
                         }
                     }
