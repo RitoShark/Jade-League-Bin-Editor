@@ -690,13 +690,13 @@ fn refresh_taskbar_icon(hwnd: windows::Win32::Foundation::HWND) {
 
     unsafe {
         // Hide the window — Explorer removes the taskbar button
-        ShowWindow(hwnd, SW_HIDE);
+        let _ = ShowWindow(hwnd, SW_HIDE);
 
         // Brief pause so Explorer processes the removal
         std::thread::sleep(std::time::Duration::from_millis(200));
 
         // Show it again — Explorer creates a fresh taskbar button with the current icon
-        ShowWindow(hwnd, SW_SHOW);
+        let _ = ShowWindow(hwnd, SW_SHOW);
 
         println!("[Icon] Refreshed taskbar icon via hide/show");
     }

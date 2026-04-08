@@ -224,13 +224,17 @@ body {
   display: block; bottom: 0; left: 0; --cx: 3px; --cy: 0px;
 }
 
-/* Inline swatch box before image paths (like Monaco color swatches) */
-.monaco-editor .image-path-swatch {
-  display: inline-block;
-  width: 0.8em;
-  height: 0.8em;
-  margin-right: 0.2em;
-  vertical-align: middle;
+/* Swatch box in glyph margin for image paths */
+.monaco-editor .image-path-swatch-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.monaco-editor .image-path-swatch-glyph::after {
+  content: '';
+  display: block;
+  width: 12px;
+  height: 12px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 0;
   background:
@@ -238,8 +242,7 @@ body {
   cursor: pointer !important;
   transition: border-color 0.1s;
 }
-
-.monaco-editor .image-path-swatch:hover {
+.monaco-editor .image-path-swatch-glyph:hover::after {
   border-color: var(--jade-accent);
 }
 

@@ -1,6 +1,6 @@
 /// Extra commands: file association, autostart, updater, SKN reader
 use serde::{Deserialize, Serialize};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use parking_lot::Mutex;
 use futures::StreamExt;
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -223,17 +223,17 @@ pub async fn get_autostart_status(app: tauri::AppHandle) -> bool {
 // Updater
 // ============================================================
 
-const GITHUB_REPO: &str = "LeagueToolkit/Jade-League-Bin-Editor";
-const RELEASES_URL: &str = "https://github.com/LeagueToolkit/Jade-League-Bin-Editor/releases/latest";
+const GITHUB_REPO: &str = "RitoShark/Jade-League-Bin-Editor";
+const RELEASES_URL: &str = "https://github.com/RitoShark/Jade-League-Bin-Editor/releases/latest";
 const INSTALLER_PATTERN: &str = "_x64-setup.exe";
 
 /// Cached release JSON so we don't hit the API twice (check → download).
-static CACHED_RELEASE: Lazy<Mutex<Option<serde_json::Value>>> =
-    Lazy::new(|| Mutex::new(None));
+static CACHED_RELEASE: LazyLock<Mutex<Option<serde_json::Value>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 /// Holds the path to the downloaded installer so it can be run separately.
-static INSTALLER_PATH: Lazy<Mutex<Option<std::path::PathBuf>>> =
-    Lazy::new(|| Mutex::new(None));
+static INSTALLER_PATH: LazyLock<Mutex<Option<std::path::PathBuf>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 #[derive(Clone, Serialize)]
 struct DownloadProgress {
@@ -265,23 +265,38 @@ fn make_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
+/// Fetch the latest release from GitHub API with retry (up to 3 attempts).
 async fn fetch_latest_release() -> Result<serde_json::Value, String> {
     let url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
-    let resp = make_client()
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Network error: {}", e))?;
+    let client = make_client();
+    let mut last_err = String::new();
 
-    let status = resp.status();
-    if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err("GitHub API rate limit reached — try again in a few minutes".to_string());
-    }
-    if !status.is_success() {
-        return Err(format!("GitHub API returned {}", status));
+    for attempt in 0..3u32 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;
+        }
+
+        let resp = match client.get(&url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = format!("Network error: {}", e);
+                continue;
+            }
+        };
+
+        let status = resp.status();
+        if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err("GitHub API rate limit reached — try again in a few minutes".to_string());
+        }
+        if !status.is_success() {
+            last_err = format!("GitHub API returned {}", status);
+            continue;
+        }
+
+        return resp.json().await.map_err(|e| format!("Failed to parse response: {}", e));
     }
 
-    resp.json().await.map_err(|e| format!("Failed to parse response: {}", e))
+    Err(last_err)
 }
 
 /// Clean up old Jade installer files from temp.
@@ -300,7 +315,6 @@ fn cleanup_old_installers(keep: Option<&std::path::Path>) {
             }
         }
     }
-    // Also clean up the update bat script
     let _ = std::fs::remove_file(temp.join("jade_update.bat"));
 }
 
@@ -328,15 +342,18 @@ pub async fn check_for_update() -> Result<UpdateInfo, String> {
 }
 
 /// Stream-download the installer to disk, emitting progress events.
-/// Uses the cached release from check_for_update to avoid a second API call.
+/// Clones the cached release (preserving it for retries) or fetches fresh.
 #[tauri::command]
 pub async fn start_update_download(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Emitter;
     use std::io::Write;
 
-    // Use cached release, fall back to fetching if cache is empty
-    let cached = CACHED_RELEASE.lock().take();
-    let json = match cached {
+    // Clone the cache instead of taking it, so retries don't need a new API call
+    let json = {
+        let cached = CACHED_RELEASE.lock();
+        cached.clone()
+    };
+    let json = match json {
         Some(val) => val,
         None => fetch_latest_release().await?,
     };
@@ -344,7 +361,6 @@ pub async fn start_update_download(app: tauri::AppHandle) -> Result<(), String> 
     let assets = json["assets"].as_array()
         .ok_or("No assets found in release")?;
 
-    // Match specifically the NSIS x64 setup exe
     let installer = assets.iter()
         .find(|a| {
             let name = a["name"].as_str().unwrap_or("").to_lowercase();
@@ -357,7 +373,6 @@ pub async fn start_update_download(app: tauri::AppHandle) -> Result<(), String> 
     let filename = installer["name"].as_str().unwrap_or("jade-setup.exe");
     let installer_path = std::env::temp_dir().join(filename);
 
-    // Clean up old installers before downloading new one
     cleanup_old_installers(None);
 
     let resp = make_client()
@@ -366,10 +381,13 @@ pub async fn start_update_download(app: tauri::AppHandle) -> Result<(), String> 
         .await
         .map_err(|e| format!("Download failed: {}", e))?;
 
+    if !resp.status().is_success() {
+        return Err(format!("Download failed: HTTP {}", resp.status()));
+    }
+
     let total = resp.content_length().unwrap_or(0);
     let mut downloaded: u64 = 0;
 
-    // Stream directly to file instead of buffering in memory
     let mut file = std::fs::File::create(&installer_path)
         .map_err(|e| format!("Failed to create installer file: {}", e))?;
 
@@ -385,6 +403,20 @@ pub async fn start_update_download(app: tauri::AppHandle) -> Result<(), String> 
     file.flush().map_err(|e| format!("Failed to flush installer file: {}", e))?;
     drop(file);
 
+    // Verify file size matches expected total (catch truncated downloads)
+    if total > 0 {
+        let actual = std::fs::metadata(&installer_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if actual != total {
+            let _ = std::fs::remove_file(&installer_path);
+            return Err(format!(
+                "Download incomplete: got {} of {} bytes",
+                actual, total
+            ));
+        }
+    }
+
     *INSTALLER_PATH.lock() = Some(installer_path);
     Ok(())
 }
@@ -394,8 +426,13 @@ pub async fn start_update_download(app: tauri::AppHandle) -> Result<(), String> 
 /// - silent=true:  runs NSIS with /S, waits for it to finish, then relaunches Jade.
 /// - silent=false: exits Jade first, then launches the installer normally so the
 ///                 user sees the wizard (which upgrades in-place without uninstalling).
+///
+/// The batch script is spawned as a fully detached process
+/// (CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS) so it survives Jade exiting.
 #[tauri::command]
 pub async fn run_installer(silent: bool, app: tauri::AppHandle) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
     let path = INSTALLER_PATH.lock().clone()
         .ok_or("No installer has been downloaded yet")?;
 
@@ -403,9 +440,6 @@ pub async fn run_installer(silent: bool, app: tauri::AppHandle) -> Result<(), St
         return Err("Installer file no longer exists on disk".to_string());
     }
 
-    // Resolve the real install directory.
-    // If running from a dev/debug build, don't pass /D so the installer
-    // uses its own default (or the user's previous install location).
     let current_dir = std::env::current_exe()
         .map(|p| p.parent().unwrap_or(std::path::Path::new(".")).to_path_buf())
         .unwrap_or_default();
@@ -442,9 +476,15 @@ pub async fn run_installer(silent: bool, app: tauri::AppHandle) -> Result<(), St
     let bat_content = format!(
 "@echo off\r
 echo [%date% %time%] Update script started > \"{log}\"\r
+set /a tries=0\r
 :wait\r
 tasklist /FI \"IMAGENAME eq jade-rust.exe\" 2>NUL | find /I \"jade-rust.exe\" >NUL\r
 if not errorlevel 1 (\r
+    set /a tries+=1\r
+    if %tries% GEQ 30 (\r
+        echo [%date% %time%] Timed out waiting for Jade to exit >> \"{log}\"\r
+        goto :eof\r
+    )\r
     echo [%date% %time%] Waiting for Jade to exit... >> \"{log}\"\r
     timeout /t 1 /nobreak >nul\r
     goto wait\r
@@ -452,6 +492,10 @@ if not errorlevel 1 (\r
 echo [%date% %time%] Jade exited, running installer >> \"{log}\"\r
 {cmd}\r
 echo [%date% %time%] Installer finished with errorlevel %errorlevel% >> \"{log}\"\r
+if %errorlevel% NEQ 0 (\r
+    echo [%date% %time%] ERROR: Installer failed >> \"{log}\"\r
+    goto :eof\r
+)\r
 {relaunch}del \"%~f0\"\r
 ",
         log = log_path.display(),
@@ -462,12 +506,16 @@ echo [%date% %time%] Installer finished with errorlevel %errorlevel% >> \"{log}\
     std::fs::write(&bat_path, &bat_content)
         .map_err(|e| format!("Failed to write update script: {}", e))?;
 
-    // Use /C with cmd directly — no start, so the script runs in its own process
+    // CREATE_NEW_PROCESS_GROUP (0x200) | DETACHED_PROCESS (0x08)
+    // This ensures the batch script survives when Jade exits.
+    const DETACH_FLAGS: u32 = 0x00000200 | 0x00000008;
+
     std::process::Command::new("cmd")
         .args(["/C", &bat_path.to_string_lossy()])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
+        .creation_flags(DETACH_FLAGS)
         .spawn()
         .map_err(|e| format!("Failed to launch update script: {}", e))?;
 

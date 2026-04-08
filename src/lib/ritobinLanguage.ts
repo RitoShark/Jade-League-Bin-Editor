@@ -108,8 +108,11 @@ export function registerRitobinLanguage(monaco: Monaco): void {
         }
     });
 
-    // Configure bracket matching and auto-closing
+    // Configure bracket matching, auto-closing, and word selection
     monaco.languages.setLanguageConfiguration(RITOBIN_LANGUAGE_ID, {
+        // Double-click selects: quoted strings (including quotes), hex literals,
+        // or normal word characters (letters, digits, underscore, dot, plus, minus).
+        wordPattern: /"[^"]*"|0x[0-9a-fA-F]+|[A-Za-z0-9_+\-.]+/,
         brackets: [
             ['{', '}'],
             ['[', ']'],
