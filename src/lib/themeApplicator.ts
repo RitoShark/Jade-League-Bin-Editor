@@ -422,7 +422,10 @@ export async function loadSavedTheme(
         const syntaxTheme = await invoke('get_preference', { key: 'SyntaxTheme', defaultValue: 'Default' }) as string;
         const overrideSyntax = await invoke('get_preference', { key: 'OverrideSyntax', defaultValue: 'false' }) as string;
         const useCustomBackground = await invoke('get_preference', { key: 'UseCustomBackgroundImage', defaultValue: 'false' }) as string;
-        const customBackgroundImage = await invoke('get_preference', { key: 'CustomBackgroundImage', defaultValue: '' }) as string;
+        // Background image bytes are stored in a real file in the config
+        // dir (not inlined in preferences.json). Pull the data URL from
+        // the dedicated command — returns null when no file is present.
+        const customBackgroundImage = ((await invoke('get_custom_background_image')) as string | null) ?? '';
         const customBackgroundBlurRaw = await invoke('get_preference', { key: 'CustomBackgroundBlur', defaultValue: '8' }) as string;
         const customBackgroundBrightnessRaw = await invoke('get_preference', { key: 'CustomBackgroundBrightness', defaultValue: '100' }) as string;
         const customBackgroundSaturationRaw = await invoke('get_preference', { key: 'CustomBackgroundSaturation', defaultValue: '100' }) as string;

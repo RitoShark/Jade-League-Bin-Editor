@@ -219,7 +219,10 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             const modern     = await invoke<string>('get_preference', { key: 'ModernUI',        defaultValue: 'true'  });
             const cigarette  = await invoke<string>('get_preference', { key: 'CigaretteMode',   defaultValue: 'false' });
             const useBackground = await invoke<string>('get_preference', { key: 'UseCustomBackgroundImage', defaultValue: 'false' });
-            const backgroundImage = await invoke<string>('get_preference', { key: 'CustomBackgroundImage', defaultValue: '' });
+            // Background image bytes are stored as a real file in the
+            // config dir (not inlined into preferences.json). Read via
+            // the dedicated command which returns a data URL on demand.
+            const backgroundImage = (await invoke<string | null>('get_custom_background_image')) ?? '';
             const backgroundName = await invoke<string>('get_preference', { key: 'CustomBackgroundImageName', defaultValue: '' });
             const backgroundBlurRaw = await invoke<string>('get_preference', { key: 'CustomBackgroundBlur', defaultValue: '8' });
             const backgroundBrightnessRaw = await invoke<string>('get_preference', { key: 'CustomBackgroundBrightness', defaultValue: '100' });
@@ -342,7 +345,13 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             await invoke('set_preference', { key: 'ModernUI',       value: modernUI.toString()         });
             await invoke('set_preference', { key: 'CigaretteMode',  value: cigaretteMode.toString()    });
             await invoke('set_preference', { key: 'UseCustomBackgroundImage', value: (useCustomBackground && customBackgroundImage.length > 0).toString() });
-            await invoke('set_preference', { key: 'CustomBackgroundImage', value: customBackgroundImage });
+            // Background image bytes go to a real file via dedicated command;
+            // we never store the data URL in preferences.json anymore.
+            if (customBackgroundImage.length > 0) {
+                await invoke('set_custom_background_image', { dataUrl: customBackgroundImage });
+            } else {
+                await invoke('clear_custom_background_image');
+            }
             await invoke('set_preference', { key: 'CustomBackgroundImageName', value: customBackgroundName });
             await invoke('set_preference', { key: 'CustomBackgroundBlur', value: String(customBackgroundBlur) });
             await invoke('set_preference', { key: 'CustomBackgroundBrightness', value: String(customBackgroundBrightness) });

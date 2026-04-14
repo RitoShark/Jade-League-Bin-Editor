@@ -278,11 +278,62 @@ fn migrate_txt_to_json(txt_path: &Path, json_path: &Path) -> Result<(), String> 
 }
 
 /// Migrate preferences from old locations to new LeagueToolkit\Jade\preferences.json
+/// Strip an inline base64 background image data URL out of preferences.json
+/// and write it to a real file in the config dir. Older builds stored the
+/// entire image as a string in preferences which made every prefs read
+/// parse hundreds of KB of base64. Idempotent — only acts when the value
+/// looks like a data URL.
+fn migrate_inline_background_image(pref_json: &Path) -> Result<(), String> {
+    if !pref_json.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(pref_json)
+        .map_err(|e| format!("Failed to read prefs for bg migration: {}", e))?;
+    let mut prefs: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+    let bg_value = prefs.get("CustomBackgroundImage").and_then(|v| v.as_str()).map(String::from);
+    let Some(value) = bg_value else { return Ok(()); };
+    if !value.starts_with("data:image/") {
+        // Already migrated or empty.
+        return Ok(());
+    }
+
+    // Decode and write to file. Reuse the same helpers the runtime command uses.
+    if let Ok((ext, bytes)) = parse_data_url(&value) {
+        delete_existing_bg_files();
+        if let Ok(path) = bg_file_path(&ext) {
+            if let Err(e) = fs::write(&path, &bytes) {
+                eprintln!("[Migrate] Failed to write background image file: {}", e);
+                return Ok(());
+            }
+            println!("[Migrate] Moved inline background image to {:?}", path);
+        }
+    }
+
+    // Strip the inline data from preferences regardless of write success
+    // (we don't want a broken pref to keep bloating the file forever).
+    if let Some(obj) = prefs.as_object_mut() {
+        obj.remove("CustomBackgroundImage");
+    }
+    let serialized = serde_json::to_string_pretty(&prefs)
+        .map_err(|e| format!("Failed to serialize migrated prefs: {}", e))?;
+    write_file_atomic(pref_json, &serialized)
+        .map_err(|e| format!("Failed to write migrated prefs: {}", e))?;
+    Ok(())
+}
+
 pub fn migrate_preferences_if_needed(app: &tauri::AppHandle) -> Result<(), String> {
     let new_config_dir = get_config_dir()?;
     let new_pref_json = new_config_dir.join("preferences.json");
     let old_pref_txt = new_config_dir.join("preferences.txt");
-    
+
+    // Sweep up any inline background image data URL that older builds left
+    // in preferences.json. Safe to call every launch — it's a no-op once
+    // the migration has run.
+    let _ = migrate_inline_background_image(&new_pref_json);
+
     // Priority 1: If new JSON already exists, check if we should merge txt into it
     if new_pref_json.exists() {
         println!("[Migrate] New preferences.json already exists at {:?}", new_pref_json);
@@ -1094,6 +1145,100 @@ pub async fn clear_custom_icon(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(windows)]
     crate::extra_commands::update_association_icon();
 
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom background image — stored as a real file in the config dir, not as
+// a base64 blob in preferences.json. Earlier versions inlined the entire data
+// URL into the preferences JSON, which made the config file balloon to
+// hundreds of KB and turned every prefs read into a JSON parse of a giant
+// string. These commands let the frontend save / load / clear the image
+// without touching preferences for the actual bytes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BG_FILE_STEM: &str = "custom_background";
+
+fn bg_file_path(ext: &str) -> Result<PathBuf, String> {
+    Ok(get_config_dir()?.join(format!("{}.{}", BG_FILE_STEM, ext)))
+}
+
+/// Find any existing custom background file regardless of extension.
+fn find_existing_bg_file() -> Option<PathBuf> {
+    let dir = get_config_dir().ok()?;
+    for ext in &["png", "jpg", "jpeg", "webp", "gif", "bmp"] {
+        let p = dir.join(format!("{}.{}", BG_FILE_STEM, ext));
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn delete_existing_bg_files() {
+    if let Ok(dir) = get_config_dir() {
+        for ext in &["png", "jpg", "jpeg", "webp", "gif", "bmp"] {
+            let _ = fs::remove_file(dir.join(format!("{}.{}", BG_FILE_STEM, ext)));
+        }
+    }
+}
+
+/// Parse a `data:image/<type>;base64,<payload>` URL into (extension, bytes).
+fn parse_data_url(data_url: &str) -> Result<(String, Vec<u8>), String> {
+    let after_prefix = data_url
+        .strip_prefix("data:image/")
+        .ok_or_else(|| "Not a data:image URL".to_string())?;
+    let semi = after_prefix.find(';')
+        .ok_or_else(|| "Missing mime ; separator".to_string())?;
+    let mime_subtype = &after_prefix[..semi];
+    // Normalize "jpeg" → "jpg" so we don't end up with both file forms.
+    let ext = match mime_subtype {
+        "jpeg" => "jpg",
+        other => other,
+    }.to_string();
+    let comma = data_url.find(",")
+        .ok_or_else(|| "Missing payload , separator".to_string())?;
+    let b64 = &data_url[comma + 1..];
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.as_bytes())
+        .map_err(|e| format!("base64 decode failed: {}", e))?;
+    Ok((ext, bytes))
+}
+
+#[tauri::command]
+pub async fn set_custom_background_image(data_url: String) -> Result<(), String> {
+    let (ext, bytes) = parse_data_url(&data_url)?;
+    delete_existing_bg_files();
+    let target = bg_file_path(&ext)?;
+    fs::write(&target, &bytes)
+        .map_err(|e| format!("Failed to write background image: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_custom_background_image() -> Result<Option<String>, String> {
+    let Some(path) = find_existing_bg_file() else {
+        return Ok(None);
+    };
+    let bytes = fs::read(&path)
+        .map_err(|e| format!("Failed to read background image: {}", e))?;
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("png");
+    let mime = match ext.to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        _ => "image/png",
+    };
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(Some(format!("data:{};base64,{}", mime, encoded)))
+}
+
+#[tauri::command]
+pub async fn clear_custom_background_image() -> Result<(), String> {
+    delete_existing_bg_files();
     Ok(())
 }
 
