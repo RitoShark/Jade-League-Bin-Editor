@@ -31,9 +31,40 @@ fn notify_shell_change() {
     }
 }
 
+/// Default Jade icon bytes, embedded at compile time from src-tauri/icons/icon.ico.
+/// This is the authoritative copy the file association registry points at so
+/// Explorer always renders the current high-res version instead of a stale
+/// cached render keyed to the exe path.
+#[cfg(windows)]
+const EMBEDDED_JADE_ICO: &[u8] = include_bytes!("../icons/icon.ico");
+
+/// Ensure a standalone `jade.ico` exists in the config dir with the current
+/// embedded icon bytes. Writes (or overwrites) the file only when its contents
+/// differ from the embedded copy, so version bumps invalidate Windows' icon
+/// cache via a changed file mtime without rewriting on every launch.
+#[cfg(windows)]
+pub fn ensure_default_icon_file() -> Result<std::path::PathBuf, String> {
+    let config_dir = crate::app_commands::get_config_dir()?;
+    let path = config_dir.join("jade.ico");
+
+    let needs_write = match std::fs::read(&path) {
+        Ok(existing) => existing != EMBEDDED_JADE_ICO,
+        Err(_) => true,
+    };
+
+    if needs_write {
+        std::fs::write(&path, EMBEDDED_JADE_ICO)
+            .map_err(|e| format!("Failed to write jade.ico: {}", e))?;
+        println!("[FileAssoc] Wrote default jade.ico to {:?}", path);
+    }
+
+    Ok(path)
+}
+
 /// Resolve the icon value for the file association DefaultIcon registry key.
 /// If a custom or builtin icon .ico exists in the config dir, use that;
-/// otherwise fall back to the exe's embedded icon.
+/// otherwise fall back to the standalone jade.ico we ship in the config dir;
+/// as a last resort use the exe's embedded icon.
 #[cfg(windows)]
 fn resolve_association_icon() -> Result<String, String> {
     let exe_path = get_exe_path()?;
@@ -60,7 +91,15 @@ fn resolve_association_icon() -> Result<String, String> {
         }
     }
 
-    // Default: use the exe's embedded icon
+    // Prefer the standalone jade.ico in the config dir over the exe-embedded
+    // icon. Explorer caches file-association icons per DefaultIcon string, so
+    // pointing at a real file path (whose mtime changes when the embedded
+    // bytes change) forces a re-render on upgrade.
+    if let Ok(default_ico) = ensure_default_icon_file() {
+        return Ok(default_ico.to_string_lossy().to_string());
+    }
+
+    // Last-resort fallback: exe-embedded icon.
     Ok(format!("{},0", exe_path))
 }
 

@@ -1014,6 +1014,20 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "embed-resource"
+version = "2.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d506610004cfc74a6f5ee7e8c632b355de5eca1f03ee5e5e0ec11b77d4eb3d61"
+dependencies = [
+ "cc",
+ "memchr",
+ "rustc_version",
+ "toml 0.8.2",
+ "vswhom",
+ "winreg 0.52.0",
+]
+
+[[package]]
+name = "embed-resource"
 version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55a075fc573c64510038d7ee9abc7990635863992f83ebc52c8b433b8411a02e"
@@ -2218,11 +2232,12 @@ checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
 name = "jade-rust"
-version = "0.7.4"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "byteorder",
  "chrono",
+ "embed-resource 2.5.2",
  "futures",
  "image",
  "indexmap 2.13.0",
@@ -5040,7 +5055,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1087b111fe2b005e42dbdc1990fc18593234238d47453b0c99b7de1c9ab2c1e0"
 dependencies = [
  "dunce",
- "embed-resource",
+ "embed-resource 3.0.6",
  "toml 0.9.12+spec-1.1.0",
 ]
 

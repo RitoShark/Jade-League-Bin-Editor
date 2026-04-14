@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
-const REPO_BASE_URL: &str = "https://raw.githubusercontent.com/RitoShark/jade-library/main/";
+const REPO_BASE_URL: &str = "https://raw.githubusercontent.com/RitoShark/Jade-Library/master/";
 
 /// Temporary local-development override. When `Some(path)`, the fetch helpers
 /// treat URLs as relative paths under this folder and read straight from disk

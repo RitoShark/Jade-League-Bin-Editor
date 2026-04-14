@@ -62,6 +62,17 @@ pub fn run() {
                 eprintln!("[Setup] Failed to migrate preferences: {}", e);
             }
 
+            // Write the standalone jade.ico to the config dir and refresh
+            // the .bin file association's DefaultIcon so Explorer picks up
+            // the current high-res version on next render.
+            #[cfg(windows)]
+            {
+                if let Err(e) = extra_commands::ensure_default_icon_file() {
+                    eprintln!("[Setup] Failed to write default icon file: {}", e);
+                }
+                extra_commands::update_association_icon();
+            }
+
             // Restore window state immediately
             if let Some(window) = app.get_webview_window("main") {
                 tauri::async_runtime::block_on(async {
