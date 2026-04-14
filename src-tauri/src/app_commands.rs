@@ -24,69 +24,6 @@ fn get_builtin_icon_data(name: &str) -> Option<&'static [u8]> {
     }
 }
 
-/// Decode a specific-size frame from a .ico file. Walks the ICO directory
-/// entries and picks the smallest frame whose width is >= `target_size`.
-/// Falls back to the largest frame if nothing is big enough. Returns the
-/// decoded RGBA image, which the caller can optionally resize if the frame
-/// isn't already the exact requested size.
-///
-/// This is how Windows picks icons for different rendering contexts: if you
-/// ask for 32px, it reads the 32×32 frame directly instead of downscaling
-/// the 256×256 one. Using it for our WM_SETICON HICON builds gives much
-/// crisper small-size icons than Lanczos(256 → 32).
-#[cfg(target_os = "windows")]
-fn load_icon_size(path: &str, target_size: u32) -> Result<image::DynamicImage, String> {
-    let lower = path.to_ascii_lowercase();
-    if !lower.ends_with(".ico") {
-        return image::open(path).map_err(|e| format!("image::open failed: {}", e));
-    }
-
-    let bytes = fs::read(path)
-        .map_err(|e| format!("Failed to read icon {}: {}", path, e))?;
-    if bytes.len() < 6 || u16::from_le_bytes([bytes[2], bytes[3]]) != 1 {
-        return image::open(path).map_err(|e| format!("image::open fallback: {}", e));
-    }
-    let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
-
-    // Collect (width, offset, size) for each directory entry that fits in the file.
-    let mut entries: Vec<(u32, usize, usize)> = Vec::new();
-    for i in 0..count {
-        let base = 6 + i * 16;
-        if base + 16 > bytes.len() { break; }
-        let w = {
-            let v = bytes[base] as u32;
-            if v == 0 { 256 } else { v }
-        };
-        let sz = u32::from_le_bytes([
-            bytes[base + 8], bytes[base + 9], bytes[base + 10], bytes[base + 11],
-        ]) as usize;
-        let off = u32::from_le_bytes([
-            bytes[base + 12], bytes[base + 13], bytes[base + 14], bytes[base + 15],
-        ]) as usize;
-        if off + sz <= bytes.len() {
-            entries.push((w, off, sz));
-        }
-    }
-    if entries.is_empty() {
-        return image::open(path).map_err(|e| format!("image::open fallback: {}", e));
-    }
-
-    // Prefer the smallest frame >= target; fall back to the largest frame.
-    entries.sort_by_key(|e| e.0);
-    let chosen = entries.iter().find(|e| e.0 >= target_size).copied()
-        .unwrap_or_else(|| *entries.last().unwrap());
-
-    let payload = &bytes[chosen.1..chosen.1 + chosen.2];
-    const PNG_SIG: &[u8] = &[0x89, 0x50, 0x4E, 0x47];
-    if payload.starts_with(PNG_SIG) {
-        image::load_from_memory_with_format(payload, image::ImageFormat::Png)
-            .map_err(|e| format!("Failed to decode ICO PNG frame: {}", e))
-    } else {
-        // Legacy DIB frame — let the image crate decode the whole file.
-        image::open(path).map_err(|e| format!("image::open (DIB): {}", e))
-    }
-}
-
 /// Decode an image from disk, picking the largest frame when the source is
 /// a multi-resolution .ico file. `image::open()` on an .ico in image-rs 0.25
 /// picks the first directory entry (usually 16/32/48 px), which renders
