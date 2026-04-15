@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { LibraryIcon, SparklesIcon } from './Icons';
@@ -110,6 +110,11 @@ function formatBytes(bytes: number): string {
 
 const ALL_CATEGORY = '__all__';
 const FEATURED_CATEGORY = '__featured__';
+const INSTALLED_CATEGORY = '__installed__';
+
+// Persisted via Jade's preference system so the user lands back on the
+// last-viewed tab when they reopen the library.
+const CATEGORY_PREF_KEY = 'LibraryLastCategory';
 const ALL_CHAMPIONS = '__all__';
 const GENERAL_CHAMPION = '__general__';
 
@@ -135,11 +140,30 @@ function ChampionDropdown({
   champions,
   championMap,
 }: ChampionDropdownProps) {
+  const [filter, setFilter] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // Focus the search input whenever the menu opens, and clear the
+  // previous filter so the list comes back full.
+  useEffect(() => {
+    if (open) {
+      setFilter('');
+      // Defer one tick so the input exists before focus.
+      requestAnimationFrame(() => searchRef.current?.focus());
+    }
+  }, [open]);
+
   const display = (champ: string) => {
     if (champ === ALL_CHAMPIONS) return 'All champions';
     if (champ === GENERAL_CHAMPION) return 'General (curated)';
     return champ.charAt(0).toUpperCase() + champ.slice(1);
   };
+
+  const filteredChampions = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return champions;
+    return champions.filter((c) => c.includes(q));
+  }, [champions, filter]);
 
   const iconUrl = (champ: string): string | null => {
     const id = championMap[champ];
@@ -175,31 +199,58 @@ function ChampionDropdown({
       </button>
       {open && (
         <div className="mlb-champion-menu">
-          <div
-            className={`mlb-champion-option ${selected === ALL_CHAMPIONS ? 'selected' : ''}`}
-            onClick={() => onSelect(ALL_CHAMPIONS)}
-          >
-            <span className="mlb-champion-icon mlb-champion-icon-placeholder">·</span>
-            <span>All champions</span>
+          <div className="mlb-champion-search-wrap">
+            <input
+              ref={searchRef}
+              type="text"
+              className="mlb-champion-search"
+              placeholder="Filter champions…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && filteredChampions.length > 0) {
+                  onSelect(filteredChampions[0]);
+                }
+              }}
+            />
           </div>
-          <div
-            className={`mlb-champion-option ${selected === GENERAL_CHAMPION ? 'selected' : ''}`}
-            onClick={() => onSelect(GENERAL_CHAMPION)}
-          >
-            <span className="mlb-champion-icon mlb-champion-icon-placeholder">·</span>
-            <span>General (curated)</span>
-          </div>
-          <div className="mlb-champion-separator" />
-          {champions.map((champ) => (
-            <div
-              key={champ}
-              className={`mlb-champion-option ${selected === champ ? 'selected' : ''}`}
-              onClick={() => onSelect(champ)}
-            >
-              {renderIcon(champ)}
-              <span>{display(champ)}</span>
-            </div>
-          ))}
+          {/* Meta options only show when there's no active filter. Once
+              the user starts typing they're looking for a specific champ,
+              so keeping ALL / GENERAL rows at the top would just waste
+              real estate. */}
+          {!filter && (
+            <>
+              <div
+                className={`mlb-champion-option ${selected === ALL_CHAMPIONS ? 'selected' : ''}`}
+                onClick={() => onSelect(ALL_CHAMPIONS)}
+              >
+                <span className="mlb-champion-icon mlb-champion-icon-placeholder">·</span>
+                <span>All champions</span>
+              </div>
+              <div
+                className={`mlb-champion-option ${selected === GENERAL_CHAMPION ? 'selected' : ''}`}
+                onClick={() => onSelect(GENERAL_CHAMPION)}
+              >
+                <span className="mlb-champion-icon mlb-champion-icon-placeholder">·</span>
+                <span>General (curated)</span>
+              </div>
+              <div className="mlb-champion-separator" />
+            </>
+          )}
+          {filteredChampions.length === 0 ? (
+            <div className="mlb-champion-empty">No champions match</div>
+          ) : (
+            filteredChampions.map((champ) => (
+              <div
+                key={champ}
+                className={`mlb-champion-option ${selected === champ ? 'selected' : ''}`}
+                onClick={() => onSelect(champ)}
+              >
+                {renderIcon(champ)}
+                <span>{display(champ)}</span>
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>
@@ -241,13 +292,12 @@ function CategoryIcon({ id, size = 14 }: { id: string; size?: number }) {
           <path d="M3 6 L13 6 M8 2 L8 13 M6 13 L10 6" opacity="0.55" />
         </svg>
       );
-    case 'fur':
-      // Wavy strands
+    case 'body':
+      // Simple figure silhouette — head + torso
       return (
         <svg {...common}>
-          <path d="M3 5 Q5 2 7 5 T11 5 T15 5" />
-          <path d="M2 9 Q4 6 6 9 T10 9 T14 9" />
-          <path d="M3 13 Q5 10 7 13 T11 13 T15 13" />
+          <circle cx="8" cy="4" r="2.2" />
+          <path d="M3.5 14 V11 Q3.5 8 8 8 Q12.5 8 12.5 11 V14" />
         </svg>
       );
     case 'dissolve':
@@ -295,6 +345,20 @@ function CategoryIcon({ id, size = 14 }: { id: string; size?: number }) {
         </svg>
       );
   }
+}
+
+// Sidebar nav glyph for the Installed filter — stylized checkmark inside
+// a box, signalling "already on disk".
+function InstalledIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
+      className="mlb-nav-icon">
+      <path d="M2.5 4.5 V13 H13.5 V4.5" />
+      <path d="M2 4.5 L8 7.5 L14 4.5 L8 1.5 Z" />
+      <path d="M5.5 9.5 L7.5 11.5 L10.5 7.5" />
+    </svg>
+  );
 }
 
 // ── Action icons for the card action rail ──────────────────────────────────
@@ -517,8 +581,17 @@ export default function MaterialLibraryBrowser({ onClose, onInsert }: MaterialLi
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Default to Featured so the browser doesn't load every extracted
-  // material on first open (the All tab can be thousands of entries).
-  const [selectedCategory, setSelectedCategory] = useState<string>(FEATURED_CATEGORY);
+  // material on first open. The actual last-used tab is hydrated from
+  // the preference store once loaded; this initial value only flashes
+  // briefly during the first paint.
+  const [selectedCategory, setSelectedCategoryState] = useState<string>(FEATURED_CATEGORY);
+
+  // Wrapper that persists every change to Jade's preference store so
+  // the selection survives closing and reopening the dialog.
+  const setSelectedCategory = useCallback((value: string) => {
+    setSelectedCategoryState(value);
+    invoke('set_preference', { key: CATEGORY_PREF_KEY, value }).catch(() => {});
+  }, []);
   const [selectedChampion, setSelectedChampion] = useState<string>(ALL_CHAMPIONS);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMaterial, setSelectedMaterial] = useState<LibraryIndexEntry | null>(null);
@@ -581,6 +654,17 @@ export default function MaterialLibraryBrowser({ onClose, onInsert }: MaterialLi
     invoke<Record<string, number>>('library_get_champion_map')
       .then((map) => setChampionMap(map))
       .catch(() => {});
+    // Restore last-selected category from preferences. This runs once
+    // on mount and silently falls back to Featured if the pref is unset
+    // or the stored value points at a category that no longer exists.
+    invoke<string>('get_preference', {
+      key: CATEGORY_PREF_KEY,
+      defaultValue: FEATURED_CATEGORY,
+    })
+      .then((value) => {
+        if (value) setSelectedCategoryState(value);
+      })
+      .catch(() => {});
   }, [loadCachedIndex, refreshDownloaded, fetchRemoteIndex]);
 
   // Listen for progress events
@@ -639,6 +723,14 @@ export default function MaterialLibraryBrowser({ onClose, onInsert }: MaterialLi
     [index]
   );
 
+  // Count of entries the user already has a local cached copy of.
+  // Intersection of the live index materials with the downloaded-paths
+  // set, so pruned-from-repo entries don't inflate the number.
+  const installedCount = useMemo(() => {
+    if (!index) return 0;
+    return index.materials.filter((m) => downloadedPaths.has(m.path)).length;
+  }, [index, downloadedPaths]);
+
   // Champion list for the dropdown — sourced from the index, fallback to
   // derivation if the backend didn't populate the top-level champions array.
   const championList = useMemo(() => {
@@ -666,6 +758,8 @@ export default function MaterialLibraryBrowser({ onClose, onInsert }: MaterialLi
     const filtered = index.materials.filter((m) => {
       if (selectedCategory === FEATURED_CATEGORY) {
         if (!m.featured) return false;
+      } else if (selectedCategory === INSTALLED_CATEGORY) {
+        if (!downloadedPaths.has(m.path)) return false;
       } else if (selectedCategory !== ALL_CATEGORY) {
         if (m.category !== selectedCategory) return false;
       }
@@ -697,7 +791,7 @@ export default function MaterialLibraryBrowser({ onClose, onInsert }: MaterialLi
       if (sa !== sb) return sa - sb;
       return a.id.localeCompare(b.id);
     });
-  }, [index, selectedCategory, selectedChampion, searchQuery]);
+  }, [index, selectedCategory, selectedChampion, searchQuery, downloadedPaths]);
 
   // Lazy-load preview URLs for every currently visible material. Results
   // are cached by path so switching filters is fast and the backend isn't
@@ -856,20 +950,33 @@ export default function MaterialLibraryBrowser({ onClose, onInsert }: MaterialLi
               <span>Featured</span>
               <span className="mlb-nav-count">{featuredCount}</span>
             </div>
-            {index?.categories.map((cat) => {
-              const count = categoryCounts.get(cat.id) ?? 0;
-              return (
-                <div
-                  key={cat.id}
-                  className={`mlb-nav-item ${selectedCategory === cat.id ? 'active' : ''}`}
-                  onClick={() => setSelectedCategory(cat.id)}
-                >
-                  <CategoryIcon id={cat.id} />
-                  <span>{cat.name}</span>
-                  <span className="mlb-nav-count">{count}</span>
-                </div>
-              );
-            })}
+            <div
+              className={`mlb-nav-item ${selectedCategory === INSTALLED_CATEGORY ? 'active' : ''}`}
+              onClick={() => setSelectedCategory(INSTALLED_CATEGORY)}
+            >
+              <InstalledIcon />
+              <span>Installed</span>
+              <span className="mlb-nav-count">{installedCount}</span>
+            </div>
+            {index?.categories
+              // Hide empty buckets so a stale index.json with dropped
+              // categories (e.g. the old "accessories") doesn't leave
+              // dead nav items in the sidebar.
+              .filter((cat) => (categoryCounts.get(cat.id) ?? 0) > 0)
+              .map((cat) => {
+                const count = categoryCounts.get(cat.id) ?? 0;
+                return (
+                  <div
+                    key={cat.id}
+                    className={`mlb-nav-item ${selectedCategory === cat.id ? 'active' : ''}`}
+                    onClick={() => setSelectedCategory(cat.id)}
+                  >
+                    <CategoryIcon id={cat.id} />
+                    <span>{cat.name}</span>
+                    <span className="mlb-nav-count">{count}</span>
+                  </div>
+                );
+              })}
           </div>
 
           {/* Content — grid view or detail view depending on selection */}
@@ -901,7 +1008,9 @@ export default function MaterialLibraryBrowser({ onClose, onInsert }: MaterialLi
                     ? 'All Materials'
                     : selectedCategory === FEATURED_CATEGORY
                       ? 'Featured Materials'
-                      : index?.categories.find((c) => c.id === selectedCategory)?.name ?? 'Materials'}
+                      : selectedCategory === INSTALLED_CATEGORY
+                        ? 'Installed Materials'
+                        : index?.categories.find((c) => c.id === selectedCategory)?.name ?? 'Materials'}
                 </h3>
                 <p className="mlb-section-subtitle">
                   Browse and download League of Legends materials from the jade-library repo.
