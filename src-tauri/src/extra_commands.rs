@@ -475,21 +475,9 @@ pub async fn run_installer(silent: bool, app: tauri::AppHandle) -> Result<(), St
 
     let bat_content = format!(
 "@echo off\r
-setlocal enabledelayedexpansion\r
 echo [%date% %time%] Update script started > \"{log}\"\r
-set /a tries=0\r
-:wait\r
-tasklist 2>NUL | findstr /I \"jade-rust.exe\" >NUL\r
-if not errorlevel 1 (\r
-    set /a tries+=1\r
-    if !tries! GEQ 30 (\r
-        echo [%date% %time%] Timed out waiting for Jade to exit >> \"{log}\"\r
-        goto :eof\r
-    )\r
-    timeout /t 1 /nobreak >nul\r
-    goto wait\r
-)\r
-echo [%date% %time%] Jade exited, running installer >> \"{log}\"\r
+timeout /t 2 /nobreak >NUL\r
+echo [%date% %time%] Running installer >> \"{log}\"\r
 {cmd}\r
 echo [%date% %time%] Installer finished >> \"{log}\"\r
 {relaunch}del \"%~f0\"\r
