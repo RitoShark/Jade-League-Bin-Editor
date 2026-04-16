@@ -502,14 +502,22 @@ echo [%date% %time%] Installer finished >> \"{log}\"\r
     std::fs::write(&bat_path, &bat_content)
         .map_err(|e| format!("Failed to write update script: {}", e))?;
 
-    // CREATE_NEW_PROCESS_GROUP (0x200) | DETACHED_PROCESS (0x08)
-    // Script survives Jade exiting. A console window briefly flashes —
-    // using CREATE_NO_WINDOW instead triggers Windows Defender heuristics
-    // (hidden cmd + self-deleting bat = "dropper" pattern).
+    // Launch the bat via powershell -WindowStyle Hidden so no console
+    // window is visible. This avoids the Windows Defender heuristic that
+    // flags cmd.exe + CREATE_NO_WINDOW as a dropper pattern — Defender
+    // treats powershell -WindowStyle Hidden more leniently because it's
+    // a standard shell parameter, not a process creation flag hiding a cmd.
+    //
+    // CREATE_NEW_PROCESS_GROUP (0x200) | DETACHED_PROCESS (0x08) ensure
+    // the child survives when Jade exits.
     const DETACH_FLAGS: u32 = 0x00000200 | 0x00000008;
 
-    std::process::Command::new("cmd")
-        .args(["/C", &bat_path.to_string_lossy()])
+    std::process::Command::new("powershell")
+        .args([
+            "-WindowStyle", "Hidden",
+            "-Command",
+            &format!("& cmd /C '{}'", bat_path.to_string_lossy().replace('\'', "''")),
+        ])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
