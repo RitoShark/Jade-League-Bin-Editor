@@ -479,7 +479,7 @@ setlocal enabledelayedexpansion\r
 echo [%date% %time%] Update script started > \"{log}\"\r
 set /a tries=0\r
 :wait\r
-tasklist 2>NUL | find /I \"jade-rust.exe\" >NUL\r
+tasklist 2>NUL | findstr /I \"jade-rust.exe\" >NUL\r
 if not errorlevel 1 (\r
     set /a tries+=1\r
     if !tries! GEQ 30 (\r
