@@ -115,6 +115,7 @@ const INSTALLED_CATEGORY = '__installed__';
 // Persisted via Jade's preference system so the user lands back on the
 // last-viewed tab when they reopen the library.
 const CATEGORY_PREF_KEY = 'LibraryLastCategory';
+const CHAMPION_PREF_KEY = 'LibraryLastChampion';
 const ALL_CHAMPIONS = '__all__';
 const GENERAL_CHAMPION = '__general__';
 
@@ -186,14 +187,43 @@ function ChampionDropdown({
     return <span className="mlb-champion-icon mlb-champion-icon-placeholder">·</span>;
   };
 
+  const renderMetaIcon = (kind: 'all' | 'general') => {
+    if (kind === 'all') {
+      // 2x2 grid — "all champions"
+      return (
+        <span className="mlb-champion-icon mlb-champion-icon-meta">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
+            <rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+            <rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+            <rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+            <rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+          </svg>
+        </span>
+      );
+    }
+    // Star — "curated / featured picks"
+    return (
+      <span className="mlb-champion-icon mlb-champion-icon-meta">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
+          <path
+            d="M8 1.8l1.9 3.85 4.25.62-3.08 3 0.73 4.23L8 11.52 4.2 13.5l0.73-4.23-3.08-3 4.25-0.62L8 1.8z"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </span>
+    );
+  };
+
   return (
     <div className="mlb-champion-dropdown" onClick={(e) => e.stopPropagation()}>
       <button className="mlb-champion-trigger" onClick={onToggle} type="button">
-        {selected === ALL_CHAMPIONS || selected === GENERAL_CHAMPION ? (
-          <span className="mlb-champion-icon mlb-champion-icon-placeholder">·</span>
-        ) : (
-          renderIcon(selected)
-        )}
+        {selected === ALL_CHAMPIONS
+          ? renderMetaIcon('all')
+          : selected === GENERAL_CHAMPION
+            ? renderMetaIcon('general')
+            : renderIcon(selected)}
         <span className="mlb-champion-label">{display(selected)}</span>
         <span className="mlb-champion-caret">{open ? '▲' : '▼'}</span>
       </button>
@@ -224,14 +254,14 @@ function ChampionDropdown({
                 className={`mlb-champion-option ${selected === ALL_CHAMPIONS ? 'selected' : ''}`}
                 onClick={() => onSelect(ALL_CHAMPIONS)}
               >
-                <span className="mlb-champion-icon mlb-champion-icon-placeholder">·</span>
+                {renderMetaIcon('all')}
                 <span>All champions</span>
               </div>
               <div
                 className={`mlb-champion-option ${selected === GENERAL_CHAMPION ? 'selected' : ''}`}
                 onClick={() => onSelect(GENERAL_CHAMPION)}
               >
-                <span className="mlb-champion-icon mlb-champion-icon-placeholder">·</span>
+                {renderMetaIcon('general')}
                 <span>General (curated)</span>
               </div>
               <div className="mlb-champion-separator" />
@@ -592,7 +622,12 @@ export default function MaterialLibraryBrowser({ onClose, onInsert }: MaterialLi
     setSelectedCategoryState(value);
     invoke('set_preference', { key: CATEGORY_PREF_KEY, value }).catch(() => {});
   }, []);
-  const [selectedChampion, setSelectedChampion] = useState<string>(ALL_CHAMPIONS);
+  const [selectedChampion, setSelectedChampionState] = useState<string>(ALL_CHAMPIONS);
+
+  const setSelectedChampion = useCallback((value: string) => {
+    setSelectedChampionState(value);
+    invoke('set_preference', { key: CHAMPION_PREF_KEY, value }).catch(() => {});
+  }, []);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMaterial, setSelectedMaterial] = useState<LibraryIndexEntry | null>(null);
   const scrollPosRef = useRef(0);
@@ -665,6 +700,15 @@ export default function MaterialLibraryBrowser({ onClose, onInsert }: MaterialLi
     })
       .then((value) => {
         if (value) setSelectedCategoryState(value);
+      })
+      .catch(() => {});
+    // Restore last-selected champion filter the same way.
+    invoke<string>('get_preference', {
+      key: CHAMPION_PREF_KEY,
+      defaultValue: ALL_CHAMPIONS,
+    })
+      .then((value) => {
+        if (value) setSelectedChampionState(value);
       })
       .catch(() => {});
   }, [loadCachedIndex, refreshDownloaded, fetchRemoteIndex]);
