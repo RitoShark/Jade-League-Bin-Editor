@@ -12,6 +12,7 @@ interface AutoMaterialResult {
   matches: MaterialMatch[];
   skn_path: string;
   unmatched: string[];
+  textures: string[];
 }
 
 interface GeneralEditPanelProps {
@@ -51,6 +52,7 @@ export default function GeneralEditPanel({
   // Auto-material state
   const [autoMaterialLoading, setAutoMaterialLoading] = useState(false);
   const [dialogSuggestions, setDialogSuggestions] = useState<{ material: string; texture: string }[]>([]);
+  const [dialogTextures, setDialogTextures] = useState<string[]>([]);
 
   // Section collapse state
   const [skinScaleCollapsed, setSkinScaleCollapsed] = useState(false);
@@ -681,6 +683,7 @@ export default function GeneralEditPanel({
     setMaterialDialogType(type);
     setDefaultTexturePath(extractTexturePath());
     setDialogSuggestions([]);
+    setDialogTextures([]);
     setShowMaterialDialog(true);
 
     // Try to load suggestions from SKN in the background
@@ -728,6 +731,7 @@ export default function GeneralEditPanel({
             }
           }
           setDialogSuggestions(suggestions);
+          setDialogTextures(result.textures ?? []);
         } catch {
           // Silently fall back to no suggestions
         }
@@ -799,9 +803,22 @@ export default function GeneralEditPanel({
         );
       }
 
-      // 4. SKN-based user slot resolution -- replace YOURCHAMP/SKINID
-      // placeholder paths with real texture paths matched from the SKN.
-      if (filePath) {
+      // 4. Replace the Diffuse_Texture placeholder with the texture path
+      // from the dialog. The user picks a submesh → its texture auto-fills
+      // the Texture field → that value replaces the first YOURCHAMP
+      // placeholder in the snippet (the Diffuse_Texture sampler).
+      if (library.texture) {
+        // Replace the first texturePath containing YOURCHAMP with the
+        // user-provided texture. Only the first match (Diffuse_Texture)
+        // is replaced; secondary samplers (e.g. ToonShadingTex) keep
+        // their paths since those are material-specific assets.
+        const placeholderRe = /(texturePath:\s*string\s*=\s*")[^"]*YOURCHAMP[^"]*(")/;
+        snippetText = snippetText.replace(
+          placeholderRe,
+          `$1${library.texture}$2`
+        );
+      } else if (filePath) {
+        // Fallback: SKN-based auto-resolve when no texture was provided
         const simpleSkinPath = extractSimpleSkinPath();
         const texturePath = extractTexturePath();
         if (simpleSkinPath && texturePath) {
@@ -818,28 +835,20 @@ export default function GeneralEditPanel({
               matchMode,
             });
 
-            // Find the texture path matched to the chosen submesh
             const submeshLower = submesh.toLowerCase();
             const matched = result.matches.find(
               (mm) => mm.material.toLowerCase() === submeshLower
             );
 
             if (matched && matched.texture) {
-              // For each user slot, rewrite the placeholder line in the snippet.
-              // We look for any line containing "ASSETS/.../YOURCHAMP/..." and
-              // replace it with the matched texture path. This handles single-slot
-              // materials cleanly; multi-slot materials with different `kind`s
-              // would need separate textures per slot which the SKN matcher
-              // doesn't currently provide -- those slots stay as placeholders.
-              const placeholderRe = /(texturePath:\s*string\s*=\s*")[^"]*YOURCHAMP[^"]*(")/g;
+              const fallbackRe = /(texturePath:\s*string\s*=\s*")[^"]*YOURCHAMP[^"]*(")/g;
               snippetText = snippetText.replace(
-                placeholderRe,
+                fallbackRe,
                 `$1${matched.texture}$2`
               );
             }
           } catch (e) {
             console.warn('SKN auto-resolve failed:', e);
-            // Continue with placeholders left in
           }
         }
       }
@@ -948,36 +957,98 @@ export default function GeneralEditPanel({
   // insert the snippet right after it (or before the first existing entry).
   const injectMaterialDefSnippet = (content: string, snippetText: string): string => {
     const lines = content.split('\n');
-    let entriesIdx = -1;
+
+    // Find the closing brace of skinMeshProperties and insert after it.
+    // Track brace depth starting from the skinMeshProperties line.
+    let smpStart = -1;
     for (let i = 0; i < lines.length; i++) {
-      if (/entries\s*:\s*map\s*\[\s*hash\s*,\s*pointer\s*\]\s*=\s*\{/.test(lines[i])) {
-        entriesIdx = i;
+      if (/skinMeshProperties\s*:/.test(lines[i]) && lines[i].includes('{')) {
+        smpStart = i;
         break;
       }
     }
-    if (entriesIdx === -1) {
-      // Fallback: append to end
+
+    let insertIdx = -1;
+    if (smpStart !== -1) {
+      let depth = 0;
+      for (let i = smpStart; i < lines.length; i++) {
+        for (const ch of lines[i]) {
+          if (ch === '{') depth++;
+          else if (ch === '}') depth--;
+        }
+        if (depth <= 0) {
+          insertIdx = i + 1;
+          break;
+        }
+      }
+    }
+
+    // If there are already jadelib_* StaticMaterialDef entries in the file,
+    // append this new one AFTER the last one so newer inserts stack below.
+    // Otherwise fall back to inserting right after skinMeshProperties.
+    if (insertIdx !== -1) {
+      const jadelibStart = /^\s*"jadelib_[^"]*"\s*=\s*StaticMaterialDef\s*\{/;
+      let lastJadelibEnd = -1;
+      let i = insertIdx;
+      while (i < lines.length) {
+        if (jadelibStart.test(lines[i])) {
+          // Walk to this block's closing brace
+          let depth = 0;
+          for (let j = i; j < lines.length; j++) {
+            for (const ch of lines[j]) {
+              if (ch === '{') depth++;
+              else if (ch === '}') depth--;
+            }
+            if (depth <= 0) {
+              lastJadelibEnd = j + 1;
+              i = j + 1;
+              break;
+            }
+          }
+          if (lastJadelibEnd === -1) break; // malformed — bail
+        } else {
+          i++;
+        }
+      }
+      if (lastJadelibEnd !== -1) insertIdx = lastJadelibEnd;
+    }
+
+    if (insertIdx === -1) {
+      // Fallback: try inserting after entries: map[hash,pointer] = {
+      for (let i = 0; i < lines.length; i++) {
+        if (/entries\s*:\s*map\s*\[\s*hash\s*,\s*pointer\s*\]\s*=\s*\{/.test(lines[i])) {
+          insertIdx = i + 1;
+          break;
+        }
+      }
+    }
+
+    if (insertIdx === -1) {
       return content + '\n' + snippetText + '\n';
     }
 
-    // Indent the snippet to match the column of the line after entries:
+    // Match indent of the entries around skinMeshProperties (top-level entry indent)
     let indent = '    ';
-    for (let i = entriesIdx + 1; i < lines.length; i++) {
-      if (lines[i].trim()) {
-        const m2 = lines[i].match(/^(\s*)/);
-        if (m2) indent = m2[1];
-        break;
+    if (smpStart !== -1) {
+      // Use the indent of the line containing skinMeshProperties' parent entry
+      for (let i = smpStart - 1; i >= 0; i--) {
+        if (/^\s*("([^"]+)"|0x[0-9a-fA-F]+)\s*=\s*\w+\s*\{/.test(lines[i])) {
+          const m2 = lines[i].match(/^(\s*)/);
+          if (m2) indent = m2[1];
+          break;
+        }
       }
     }
+
     const indentedSnippet = snippetText
       .split('\n')
       .map((l) => (l.length > 0 ? indent + l : l))
       .join('\n');
 
     return [
-      ...lines.slice(0, entriesIdx + 1),
+      ...lines.slice(0, insertIdx),
       indentedSnippet,
-      ...lines.slice(entriesIdx + 1),
+      ...lines.slice(insertIdx),
     ].join('\n');
   };
 
@@ -1132,6 +1203,8 @@ export default function GeneralEditPanel({
           onSubmitWithLibrary={handleMaterialDialogSubmitWithLibrary}
           onCancel={() => setShowMaterialDialog(false)}
           suggestions={dialogSuggestions}
+          detectedTextures={dialogTextures}
+          binFilePath={filePath}
         />
       )}
     </>
