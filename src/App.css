@@ -161,12 +161,27 @@ body {
   background: var(--editor-bg);
 }
 
-/* Syntax checker — error line highlight & glyph dot */
+/* Syntax checker — error line highlight & glyph dot (red) */
 .syntax-error-line {
   background: rgba(255, 0, 0, 0.10) !important;
 }
 .syntax-error-glyph {
   background: #ff3333;
+  border-radius: 50%;
+  width: 8px !important;
+  height: 8px !important;
+  margin-left: 4px;
+  margin-top: 6px;
+}
+
+/* Syntax checker — warning line highlight & glyph dot (yellow).
+   Used for things that will convert but won't work as intended in-game
+   (duplicate samplers, raw texture + material override on same mesh, etc.) */
+.syntax-warning-line {
+  background: rgba(255, 200, 0, 0.10) !important;
+}
+.syntax-warning-glyph {
+  background: #e6b800;
   border-radius: 50%;
   width: 8px !important;
   height: 8px !important;
@@ -240,6 +255,51 @@ body {
 }
 .monaco-editor .image-path-swatch:hover {
   border-color: var(--jade-accent);
+}
+
+/* Material link <-> StaticMaterialDef jump button (pure CSS, like image swatch) */
+.monaco-editor .jade-jump-arrow {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin: 0 0.25em;
+  vertical-align: middle;
+  border-radius: 3px;
+  background-color: var(--selected-tab-bg, #3e3e42);
+  border: 1px solid var(--border-color, #3c3c3c);
+  cursor: pointer !important;
+  position: relative;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.monaco-editor .jade-jump-arrow::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 60% 60%;
+}
+
+.monaco-editor .jade-jump-arrow:hover {
+  background-color: var(--jade-accent, #007acc);
+  border-color: var(--jade-accent, #007acc);
+}
+
+/* Chevron down (jump to def below) */
+.monaco-editor .jade-jump-down::before {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M3 4.5L6 7.5L9 4.5' stroke='%23cccccc' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
+.monaco-editor .jade-jump-arrow.jade-jump-down:hover::before {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M3 4.5L6 7.5L9 4.5' stroke='white' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
+
+/* Chevron up (jump to override above) */
+.monaco-editor .jade-jump-up::before {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M3 7.5L6 4.5L9 7.5' stroke='%23cccccc' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
+.monaco-editor .jade-jump-arrow.jade-jump-up:hover::before {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M3 7.5L6 4.5L9 7.5' stroke='white' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
 }
 
 /* Syntax checker — quick fix / code action menu styling */

@@ -26,6 +26,7 @@ interface MenuBarProps {
     onThemes: () => void;
     onSettings: () => void;
     onAbout: () => void;
+    onMaterialLibrary: () => void;
     recentFiles?: string[];
     onOpenRecentFile?: (path: string) => void;
     openFileDisabled?: boolean;
@@ -55,6 +56,7 @@ export default function MenuBar({
     onThemes,
     onSettings,
     onAbout,
+    onMaterialLibrary,
     recentFiles = [],
     onOpenRecentFile,
     openFileDisabled = false,
@@ -208,6 +210,10 @@ export default function MenuBar({
                             <span className="shortcut">Ctrl+P</span>
                         </button>
                         <div className="menu-separator" />
+                        <button className="menu-option" onClick={() => handleMenuClick(onMaterialLibrary)}>
+                            <span>Material Library...</span>
+                        </button>
+                        <div className="menu-separator" />
                         <button className="menu-option" onClick={() => handleMenuClick(onThemes)}>
                             <span>Themes...</span>
                         </button>
@@ -241,14 +247,14 @@ export default function MenuBar({
                 <ReplaceIcon size={16} />
             </button>
             <button
-                className={`menu-icon-btn ${generalEditActive ? 'active panel-active' : ''}`}
+                className={`menu-icon-btn ${generalEditActive ? 'active' : ''}`}
                 title="General Editing (Ctrl+O)"
                 onClick={onGeneralEdit}
             >
                 <EditIcon size={16} />
             </button>
             <button
-                className={`menu-icon-btn ${particlePanelActive ? 'active panel-active' : ''}`}
+                className={`menu-icon-btn ${particlePanelActive ? 'active' : ''}`}
                 title="Particle Editing (Ctrl+P)"
                 onClick={onParticlePanel}
             >

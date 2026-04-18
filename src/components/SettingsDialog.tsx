@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { marked } from 'marked';
-import { HashIcon, SettingsIcon, ArrowUpIcon, ConverterIcon } from './Icons';
+import { HashIcon, SettingsIcon, ArrowUpIcon, ConverterIcon, LibraryIcon } from './Icons';
 import './SettingsDialog.css';
 
 interface SettingsDialogProps {
@@ -33,14 +33,47 @@ interface PreloadStatus {
     memory_bytes: number;
 }
 
-type NavSection = 'hashes' | 'converter' | 'behavior' | 'updates';
+type NavSection = 'hashes' | 'converter' | 'behavior' | 'library' | 'updates';
 
 const NAV_ITEMS: { id: NavSection; label: string; icon: React.ReactNode }[] = [
     { id: 'hashes',    label: 'Hash Files',    icon: <HashIcon size={15} />     },
     { id: 'converter', label: 'Converter',     icon: <ConverterIcon size={15} /> },
     { id: 'behavior',  label: 'App Behavior',  icon: <SettingsIcon size={15} /> },
+    { id: 'library',   label: 'Library',       icon: <LibraryIcon size={15} /> },
     { id: 'updates',   label: 'Updates',        icon: <ArrowUpIcon size={15} /> },
 ];
+
+// Material Library types — mirror library_commands.rs
+interface DownloadedMaterialInfo {
+    id: string;
+    path: string;
+    name: string;
+    category: string;
+    version: number;
+    sizeBytes: number;
+    hasPreview: boolean;
+    previewPath: string | null;
+}
+interface OutdatedMaterial {
+    id: string;
+    path: string;
+    name: string;
+    cachedVersion: number;
+    remoteVersion: number;
+}
+interface UpdateModeSettings {
+    mode: string;
+    intervalHours: number;
+}
+interface LibraryStatus {
+    mode: string;
+    intervalHours: number;
+    lastCheckedAt: string;
+    lastUpdatedRemote: string;
+    downloadedCount: number;
+    outdatedCount: number;
+    totalSizeBytes: number;
+}
 
 /** Simple toggle-row with a native checkbox styled as a pill switch */
 function ToggleRow({
@@ -92,11 +125,20 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
     const [engineChanged, setEngineChanged] = useState(false);
     const [materialMatchMode, setMaterialMatchMode] = useState<number>(3);
 
+    // ── Material Library state ──
+    const [libStatus, setLibStatus] = useState<LibraryStatus | null>(null);
+    const [libDownloaded, setLibDownloaded] = useState<DownloadedMaterialInfo[]>([]);
+    const [libOutdated, setLibOutdated] = useState<OutdatedMaterial[]>([]);
+    const [libUpdateMode, setLibUpdateMode] = useState<UpdateModeSettings>({ mode: 'smart', intervalHours: 24 });
+    const [libBusy, setLibBusy] = useState(false);
+    const [libMessage, setLibMessage] = useState<string>('');
+
     useEffect(() => {
         if (isOpen) {
             loadPreferences();
             checkHashStatus();
             checkPreloadStatus();
+            loadLibraryData();
             // Restore cached update info from broadcast if we have it
             if (!updateInfo && cachedUpdateRef.current) {
                 const info = cachedUpdateRef.current;
@@ -227,6 +269,83 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         setUpdateState('installing');
         try { await invoke('run_installer', { silent: silentUpdate }); }
         catch (e) { setUpdateError(String(e)); setUpdateState('ready'); }
+    };
+
+    // ── Material Library loaders & handlers ──
+    const loadLibraryData = async () => {
+        try {
+            const [status, downloaded, outdated, mode] = await Promise.all([
+                invoke<LibraryStatus>('library_get_status'),
+                invoke<DownloadedMaterialInfo[]>('library_list_downloaded'),
+                invoke<OutdatedMaterial[]>('library_list_outdated'),
+                invoke<UpdateModeSettings>('library_get_update_mode'),
+            ]);
+            setLibStatus(status);
+            setLibDownloaded(downloaded);
+            setLibOutdated(outdated);
+            setLibUpdateMode(mode);
+        } catch (e) { console.error('Failed to load library data:', e); }
+    };
+
+    const handleLibCheckNow = async () => {
+        setLibBusy(true);
+        setLibMessage('Checking for updates…');
+        try {
+            await invoke('library_fetch_index');
+            await loadLibraryData();
+            setLibMessage('Catalog refreshed.');
+        } catch (e) { setLibMessage(`Error: ${e}`); }
+        finally { setLibBusy(false); }
+    };
+
+    const handleLibUpdateAllOutdated = async () => {
+        setLibBusy(true);
+        setLibMessage('Updating outdated materials…');
+        try {
+            await invoke('library_update_all_outdated');
+            await loadLibraryData();
+            setLibMessage('Outdated materials updated.');
+        } catch (e) { setLibMessage(`Error: ${e}`); }
+        finally { setLibBusy(false); }
+    };
+
+    const handleLibUpdateOne = async (path: string) => {
+        setLibBusy(true);
+        try {
+            await invoke('library_update_material', { path });
+            await loadLibraryData();
+        } catch (e) { setLibMessage(`Error: ${e}`); }
+        finally { setLibBusy(false); }
+    };
+
+    const handleLibDeleteOne = async (path: string) => {
+        try {
+            await invoke('library_delete_material', { path });
+            await loadLibraryData();
+        } catch (e) { setLibMessage(`Error: ${e}`); }
+    };
+
+    const handleLibClearAll = async () => {
+        setLibBusy(true);
+        try {
+            await invoke('library_clear_all');
+            await loadLibraryData();
+            setLibMessage('Library cache cleared.');
+        } catch (e) { setLibMessage(`Error: ${e}`); }
+        finally { setLibBusy(false); }
+    };
+
+    const handleLibOpenFolder = async () => {
+        try { await invoke('library_open_folder'); }
+        catch (e) { console.error(e); }
+    };
+
+    const handleLibSetMode = async (mode: string, intervalHours: number) => {
+        setLibUpdateMode({ mode, intervalHours });
+        try {
+            await invoke('library_set_update_mode', { mode, intervalHours });
+            await loadLibraryData();
+        } catch (e) { console.error(e); }
     };
 
     if (!isOpen) return null;
@@ -430,6 +549,186 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         </>
     );
 
+    const renderLibrary = () => {
+        const formatBytes = (b: number) =>
+            b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / (1024 * 1024)).toFixed(1)} MB`;
+        const formatDate = (iso: string) => {
+            if (!iso) return '—';
+            try { return new Date(iso).toLocaleString(); } catch { return iso; }
+        };
+        const intervals = [
+            { value: 1, label: 'Every 1 hour' },
+            { value: 6, label: 'Every 6 hours' },
+            { value: 12, label: 'Every 12 hours' },
+            { value: 24, label: 'Every 24 hours' },
+            { value: 72, label: 'Every 3 days' },
+            { value: 168, label: 'Every 7 days' },
+        ];
+
+        return (
+            <>
+                <h2 className="settings-section-title">Material Library</h2>
+                <p className="settings-section-subtitle">
+                    Manage downloaded materials and how Jade keeps them up to date.
+                </p>
+
+                {/* Update mode selector */}
+                <h3 className="settings-section-title" style={{ fontSize: 16 }}>Update Mode</h3>
+                <p className="settings-section-subtitle">When should Jade check for new and updated materials?</p>
+
+                <div className="settings-row">
+                    <div className="settings-row-header">
+                        <span className="settings-row-title">Timed interval</span>
+                        <label className="settings-toggle">
+                            <input
+                                type="radio"
+                                name="lib-update-mode"
+                                checked={libUpdateMode.mode === 'timed'}
+                                onChange={() => handleLibSetMode('timed', libUpdateMode.intervalHours)}
+                            />
+                            <span className="settings-toggle-track" />
+                        </label>
+                    </div>
+                    <p className="settings-row-desc">Periodically check on a fixed schedule while Jade is running.</p>
+                    {libUpdateMode.mode === 'timed' && (
+                        <select
+                            className="settings-select"
+                            value={libUpdateMode.intervalHours}
+                            onChange={e => handleLibSetMode('timed', parseInt(e.target.value, 10))}
+                        >
+                            {intervals.map(i => (
+                                <option key={i.value} value={i.value}>{i.label}</option>
+                            ))}
+                        </select>
+                    )}
+                </div>
+
+                <div className="settings-row">
+                    <div className="settings-row-header">
+                        <span className="settings-row-title">Smart check</span>
+                        <label className="settings-toggle">
+                            <input
+                                type="radio"
+                                name="lib-update-mode"
+                                checked={libUpdateMode.mode === 'smart'}
+                                onChange={() => handleLibSetMode('smart', libUpdateMode.intervalHours)}
+                            />
+                            <span className="settings-toggle-track" />
+                        </label>
+                    </div>
+                    <p className="settings-row-desc">
+                        On launch, fetch only the index and only refresh materials if the repo's <code>lastUpdated</code> is newer than your cache.
+                    </p>
+                </div>
+
+                <div className="settings-row">
+                    <div className="settings-row-header">
+                        <span className="settings-row-title">On every app launch</span>
+                        <label className="settings-toggle">
+                            <input
+                                type="radio"
+                                name="lib-update-mode"
+                                checked={libUpdateMode.mode === 'startup'}
+                                onChange={() => handleLibSetMode('startup', libUpdateMode.intervalHours)}
+                            />
+                            <span className="settings-toggle-track" />
+                        </label>
+                    </div>
+                    <p className="settings-row-desc">
+                        Always refresh outdated materials in the background at startup. Most aggressive — most network traffic.
+                    </p>
+                </div>
+
+                <div className="settings-divider" />
+
+                {/* Status row */}
+                <div className="settings-btn-group">
+                    <button className="action-button blue" onClick={handleLibCheckNow} disabled={libBusy}>
+                        {libBusy ? 'Working…' : 'Check for updates now'}
+                    </button>
+                    <button className="action-button gray" onClick={handleLibOpenFolder}>
+                        Open Folder
+                    </button>
+                </div>
+
+                {libMessage && <p className="download-status" style={{ marginTop: 8 }}>{libMessage}</p>}
+
+                <p className="success-text" style={{ marginTop: 12, marginBottom: 4 }}>
+                    Last checked: {formatDate(libStatus?.lastCheckedAt ?? '')}
+                </p>
+                <p className="location-text" style={{ marginTop: 0 }}>
+                    Library updated: {formatDate(libStatus?.lastUpdatedRemote ?? '')}
+                </p>
+
+                <div className="settings-divider" />
+
+                {/* Cache summary */}
+                <h3 className="settings-section-title" style={{ fontSize: 16 }}>Library Cache</h3>
+                <p className="settings-section-subtitle">
+                    {libDownloaded.length} downloaded · {libOutdated.length} outdated · {formatBytes(libStatus?.totalSizeBytes ?? 0)}
+                </p>
+
+                {libOutdated.length > 0 && (
+                    <div className="settings-btn-group" style={{ marginBottom: 12 }}>
+                        <button className="action-button blue" onClick={handleLibUpdateAllOutdated} disabled={libBusy}>
+                            Update all {libOutdated.length} outdated
+                        </button>
+                    </div>
+                )}
+
+                {libDownloaded.length === 0 ? (
+                    <p className="settings-section-subtitle">No materials downloaded yet. Open the Material Library from the title bar to get started.</p>
+                ) : (
+                    <div className="settings-lib-list">
+                        {libDownloaded.map(d => {
+                            const out = libOutdated.find(o => o.id === d.id);
+                            return (
+                                <div key={d.id} className="settings-lib-row">
+                                    <div className="settings-lib-row-info">
+                                        <span className="settings-lib-row-name">{d.name}</span>
+                                        <span className="settings-lib-row-meta">
+                                            {d.category} · v{d.version} · {formatBytes(d.sizeBytes)}
+                                            {out && <span className="settings-lib-row-warning"> · ⚠ v{out.remoteVersion} available</span>}
+                                        </span>
+                                    </div>
+                                    <div className="settings-lib-row-actions">
+                                        {out && (
+                                            <button
+                                                className="action-button blue"
+                                                onClick={() => handleLibUpdateOne(d.path)}
+                                                disabled={libBusy}
+                                            >
+                                                Update
+                                            </button>
+                                        )}
+                                        <button
+                                            className="action-button red"
+                                            onClick={() => handleLibDeleteOne(d.path)}
+                                            disabled={libBusy}
+                                        >
+                                            Delete
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {libDownloaded.length > 0 && (
+                    <>
+                        <div className="settings-divider" />
+                        <div className="settings-btn-group">
+                            <button className="action-button red" onClick={handleLibClearAll} disabled={libBusy}>
+                                Clear All Materials
+                            </button>
+                        </div>
+                    </>
+                )}
+            </>
+        );
+    };
+
     const renderUpdates = () => {
         const pct = downloadProgress && downloadProgress.total > 0
             ? (downloadProgress.downloaded / downloadProgress.total * 100) : 0;
@@ -581,6 +880,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         hashes: renderHashes,
         converter: renderConverter,
         behavior: renderBehavior,
+        library: renderLibrary,
         updates: renderUpdates,
     };
 

@@ -836,6 +836,309 @@
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   Material / Texture entry dialog — modern UI
+   Redesigns the whole dialog to match the Material Library's look:
+   glass shell, sectioned cards inside, bigger breathing room, proper
+   typography hierarchy, accent-colored focus + hover states.
+   ═══════════════════════════════════════════════════════════════════ */
+
+[data-ui-mode="modern"] .mod-overlay {
+  backdrop-filter: blur(8px) saturate(130%) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(130%) !important;
+  background: rgba(0, 0, 0, 0.6) !important;
+}
+
+/* Dialog shell — frosted glass, same formula as Material Library */
+[data-ui-mode="modern"] .mod-dialog {
+  background: var(--modern-dialog-bg) !important;
+  backdrop-filter: saturate(180%) blur(24px) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(24px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 12px !important;
+  box-shadow:
+    0 32px 80px rgba(0, 0, 0, 0.60),
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09) !important;
+  /* Responsive: prefer 540px, shrink gracefully on smaller displays. */
+  width: clamp(340px, 90vw, 540px) !important;
+  max-height: 92vh !important;
+}
+
+/* Header — taller, subtle tint like other dialogs */
+[data-ui-mode="modern"] .mod-header {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  padding: 16px 20px !important;
+}
+
+[data-ui-mode="modern"] .mod-title {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.01em;
+}
+
+/* The inner "content card" — drop its chunky border and merge into the
+   dialog background. Sections inside get their own cards instead. */
+[data-ui-mode="modern"] .mod-content {
+  background: transparent !important;
+  border: none !important;
+  margin: 0 !important;
+  padding: 20px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Each form group becomes its own card with gradient-tinted surface */
+[data-ui-mode="modern"] .mod-field {
+  margin-bottom: 0 !important;
+}
+
+/* Group related fields (inputs) visually but don't box them — the
+   pill sections and the library section get their own cards below. */
+[data-ui-mode="modern"] .mod-label {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted, #a0a0a0) !important;
+  margin-bottom: 8px !important;
+}
+
+/* ── Inputs — taller, rounded, accent focus ring ── */
+[data-ui-mode="modern"] .mod-input {
+  height: 38px !important;
+  padding: 8px 14px !important;
+  background: rgba(0, 0, 0, 0.25) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 8px !important;
+  font-size: 13px !important;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+
+[data-ui-mode="modern"] .mod-input:hover:not(:focus):not(.mod-input-readonly) {
+  background: rgba(0, 0, 0, 0.35) !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+
+[data-ui-mode="modern"] .mod-input:focus {
+  border-color: var(--jade-accent) !important;
+  box-shadow: 0 0 0 3px var(--modern-accent-15) !important;
+  outline: none !important;
+}
+
+[data-ui-mode="modern"] .mod-input-readonly {
+  background: rgba(0, 0, 0, 0.4) !important;
+  opacity: 0.55;
+  border-style: dashed !important;
+}
+
+/* ── Unified sources card (Submeshes + Textures stacked w/ divider) ── */
+[data-ui-mode="modern"] .mod-sources-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+[data-ui-mode="modern"] .mod-sources-section .mod-label {
+  margin-bottom: 10px !important;
+}
+
+[data-ui-mode="modern"] .mod-sources-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 14px 0;
+}
+
+[data-ui-mode="modern"] .mod-suggestions,
+[data-ui-mode="modern"] .mod-pill-list {
+  background: transparent;
+  padding: 0 !important;
+  max-height: 92px;
+}
+
+/* Pills — accent border glow + background fade on hover.
+   No motion; subtle, tasteful state change. */
+[data-ui-mode="modern"] .mod-suggestion {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 6px !important;
+  padding: 5px 10px !important;
+  transition:
+    background-color 0.3s ease,
+    border-color 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
+[data-ui-mode="modern"] .mod-suggestion:hover {
+  background: var(--modern-accent-15) !important;
+  border-color: var(--jade-accent) !important;
+}
+
+/* Active (picked) — stronger fill */
+[data-ui-mode="modern"] .mod-suggestion.active {
+  background: var(--modern-accent-30) !important;
+  border-color: var(--jade-accent) !important;
+}
+
+/* ── Library pairing — outer card wraps checkbox + dropdown ── */
+[data-ui-mode="modern"] .mod-library-section {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  border-radius: 10px !important;
+  padding: 14px 16px !important;
+  margin-top: 0 !important;
+}
+
+/* Inner "body" wrapper around the dropdown — flatten so we don't
+   render a second box inside the outer card. */
+[data-ui-mode="modern"] .mod-library-body {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  margin-top: 10px !important;
+}
+
+[data-ui-mode="modern"] .mod-library-toggle {
+  font-size: 13px;
+  font-weight: 600;
+  gap: 10px;
+  cursor: pointer;
+}
+
+[data-ui-mode="modern"] .mod-library-toggle input[type="checkbox"] {
+  accent-color: var(--jade-accent);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+[data-ui-mode="modern"] .mod-library-body {
+  margin-top: 12px;
+}
+
+/* ── Custom library dropdown — matches pill aesthetic ── */
+[data-ui-mode="modern"] .mod-lib-dropdown-trigger {
+  height: 36px !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 6px !important;
+  padding: 0 12px !important;
+  transition:
+    background-color 0.3s ease,
+    border-color 0.3s ease;
+}
+
+[data-ui-mode="modern"] .mod-lib-dropdown-trigger:hover {
+  background: var(--modern-accent-15) !important;
+  border-color: var(--jade-accent) !important;
+}
+
+[data-ui-mode="modern"] .mod-lib-dropdown-trigger.open {
+  background: var(--modern-accent-25) !important;
+  border-color: var(--jade-accent) !important;
+}
+
+[data-ui-mode="modern"] .mod-lib-dropdown-menu {
+  background: var(--modern-menu-bg, rgba(30, 30, 35, 0.94)) !important;
+  backdrop-filter: saturate(180%) blur(20px) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(20px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 8px !important;
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  padding: 6px !important;
+  z-index: 99999 !important;
+}
+
+[data-ui-mode="modern"] .mod-lib-dropdown-item {
+  border-radius: 6px !important;
+  padding: 10px 12px !important;
+  transition: background 0.1s ease;
+}
+
+[data-ui-mode="modern"] .mod-lib-dropdown-item:hover {
+  background: var(--modern-accent-15) !important;
+}
+
+[data-ui-mode="modern"] .mod-lib-dropdown-item.active {
+  background: var(--modern-accent-25) !important;
+}
+
+[data-ui-mode="modern"] .mod-lib-dropdown-version {
+  background: var(--modern-accent-22) !important;
+  color: var(--jade-accent-text) !important;
+}
+
+/* ── Footer / action buttons ── */
+[data-ui-mode="modern"] .mod-actions {
+  background: rgba(255, 255, 255, 0.025) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.07) !important;
+  padding: 14px 20px !important;
+}
+
+[data-ui-mode="modern"] .mod-btn {
+  height: 36px;
+  padding: 0 18px !important;
+  border-radius: 6px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  transition:
+    background-color 0.3s ease,
+    border-color 0.3s ease;
+}
+
+/* Cancel — neutral ghost button, stays neutral on hover */
+[data-ui-mode="modern"] .mod-btn-cancel {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  color: var(--text-color) !important;
+}
+
+[data-ui-mode="modern"] .mod-btn-cancel:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.10) !important;
+  border-color: rgba(255, 255, 255, 0.20) !important;
+}
+
+/* Accept — primary CTA. Solid accent fill stays constant. On hover,
+   the border brightens and a diagonal highlight sweeps across the
+   button from bottom-left to top-right during the 0.3s transition. */
+[data-ui-mode="modern"] .mod-btn-accept {
+  position: relative !important;
+  overflow: hidden !important;
+  isolation: isolate;
+  background: var(--jade-accent) !important;
+  border: 2px solid var(--jade-accent) !important;
+  color: white !important;
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
+/* Keep the label above the swipe overlay */
+[data-ui-mode="modern"] .mod-btn-accept > * {
+  position: relative;
+  z-index: 1;
+}
+
+[data-ui-mode="modern"] .mod-btn-accept:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--jade-accent) 40%, white) !important;
+}
+
+/* Texture hover preview */
+[data-ui-mode="modern"] .mod-texture-preview {
+  background: var(--modern-dialog-bg) !important;
+  backdrop-filter: saturate(180%) blur(20px) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(20px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55) !important;
+}
+
 /* ── Monaco Find/Replace accent bar: themed glow ── */
 [data-ui-mode="modern"] .monaco-editor .find-widget::before {
   background: linear-gradient(180deg,

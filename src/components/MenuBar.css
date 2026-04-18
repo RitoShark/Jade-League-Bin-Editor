@@ -109,7 +109,10 @@
 }
 
 .menu-icon-btn.active {
-    background: #094771;
+    background: var(--jade-accent, #094771);
+    color: var(--jade-accent-text, white);
+    /* Force solid white icon on dark-accent themes where jade-accent-text
+       would otherwise land close to the accent background. */
     color: white;
 }
 

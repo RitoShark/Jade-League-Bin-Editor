@@ -1,0 +1,17 @@
+// Extra embedded icon resources for Jade's runtime icon switcher.
+//
+// Tauri's build embeds the main icon.ico with auto-numbered RT_ICON frames
+// (id 1, 2, 3, ...) under language 0x0409. We can't just add more ICON
+// resources under the same language — the resource linker errors out with
+// CVT1100 because rc.exe also auto-numbers frames starting at 1 per file.
+//
+// Workaround: put our extras under LANG_NEUTRAL (0x0000) so the
+// (type, id, language) tuples don't collide with Tauri's. At runtime we
+// load them via LoadImageW(hinstance, MAKEINTRESOURCE(id), ...) — Windows
+// will find our group regardless of language.
+
+LANGUAGE 0, 0   // LANG_NEUTRAL, SUBLANG_NEUTRAL
+
+201 ICON "../../public/media/jade.ico"
+202 ICON "../../public/media/jadejade.ico"
+203 ICON "../../public/media/noBrain.ico"

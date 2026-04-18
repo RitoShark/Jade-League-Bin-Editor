@@ -1,0 +1,1275 @@
+/* ─────────────────────────────────────────────
+   Material Library Browser — Themes/Settings layout
+   Uses CSS theme variables so it reacts to theme
+   changes and the rounded-corners setting.
+   ───────────────────────────────────────────── */
+
+.mlb-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+.mlb-dialog {
+    width: 1000px;
+    max-width: 95vw;
+    height: 680px;
+    max-height: 90vh;
+    background: var(--window-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    color: var(--text-color);
+}
+
+/* ── Header ── */
+.mlb-dialog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid #3E3E42;
+    background: var(--title-bar-bg);
+    flex-shrink: 0;
+}
+
+.mlb-dialog-header h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+/* Reuse the close-button class from ThemesDialog/SettingsDialog */
+.mlb-dialog .close-button {
+    width: 32px;
+    height: 32px;
+    background: transparent;
+    border: none;
+    color: var(--text-color);
+    font-size: 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--border-radius);
+    opacity: 0.6;
+    transition: all 0.15s ease;
+}
+
+.mlb-dialog .close-button:hover {
+    background: rgba(232, 17, 35, 0.2);
+    color: #ef4444;
+    opacity: 1;
+}
+
+/* ── Error banner ── */
+.mlb-error {
+    padding: 8px 16px;
+    background-color: rgba(232, 17, 35, 0.12);
+    border-bottom: 1px solid rgba(232, 17, 35, 0.3);
+    color: #ff9999;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+
+.mlb-error-dismiss {
+    background: none;
+    border: none;
+    color: #ff9999;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+/* ── Body: sidebar + content ── */
+.mlb-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* ── Sidebar ── */
+.mlb-sidebar {
+    width: 200px;
+    flex-shrink: 0;
+    padding: 12px 8px;
+    border-right: 1px solid #3E3E42;
+    background: var(--tab-bg);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+}
+
+.mlb-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    border: 1px solid transparent;
+    transition: all 0.15s ease;
+    user-select: none;
+}
+
+.mlb-nav-item:hover {
+    background: var(--selected-tab-bg);
+    color: var(--text-color);
+}
+
+.mlb-nav-item.active {
+    background: var(--selected-tab-bg);
+    border-color: var(--status-bar-bg);
+    color: var(--text-color);
+}
+
+.mlb-nav-icon {
+    font-size: 14px;
+    line-height: 1;
+    flex-shrink: 0;
+    width: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mlb-featured-star {
+    color: #e6b800;
+    font-size: 13px;
+}
+
+.mlb-nav-bullet {
+    opacity: 0.5;
+    font-size: 16px;
+}
+
+.mlb-nav-count {
+    margin-left: auto;
+    font-size: 11px;
+    opacity: 0.6;
+}
+
+/* ── Content pane ── */
+.mlb-content {
+    flex: 1 1 0;
+    width: 0;
+    padding: 20px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    box-sizing: border-box;
+}
+
+.mlb-content-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.mlb-content-header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.mlb-section-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-color);
+    margin: 0 0 4px 0;
+}
+
+.mlb-section-subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+.mlb-search {
+    width: 220px;
+    padding: 7px 10px;
+    background: var(--tab-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    color: var(--text-color);
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.mlb-search:focus {
+    border-color: var(--status-bar-bg);
+}
+
+.mlb-refresh-btn {
+    padding: 7px 14px;
+    background: var(--tab-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    color: var(--text-color);
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.mlb-refresh-btn:hover:not(:disabled) {
+    background: var(--selected-tab-bg);
+    border-color: var(--status-bar-bg);
+}
+
+.mlb-refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.mlb-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/* ── Cards grid ── */
+.mlb-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 12px;
+    align-content: start;
+}
+
+.mlb-card {
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+    background: var(--tab-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    align-items: stretch;
+}
+
+.mlb-card:hover {
+    background: var(--selected-tab-bg);
+    border-color: var(--status-bar-bg);
+}
+
+.mlb-card.selected {
+    background: var(--selected-tab-bg);
+    border-color: var(--status-bar-bg);
+}
+
+.mlb-card-preview {
+    flex: 0 0 80px;
+    width: 80px;
+    height: 80px;
+    background: var(--window-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.mlb-preview-icon {
+    font-size: 24px;
+    opacity: 0.4;
+}
+
+.mlb-preview-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+/* ─── Champion dropdown ─── */
+.mlb-champion-dropdown {
+    position: relative;
+    padding: 10px;
+    border-bottom: 1px solid var(--border-color, #3E3E42);
+    margin-bottom: 8px;
+}
+
+.mlb-champion-trigger {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--window-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    color: var(--text-color);
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+}
+
+.mlb-champion-trigger:hover {
+    border-color: var(--accent-color, #6b46c1);
+}
+
+.mlb-champion-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.mlb-champion-icon-placeholder {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.mlb-champion-icon-meta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary, var(--text-color));
+}
+
+.mlb-champion-label {
+    flex: 1;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mlb-champion-caret {
+    font-size: 9px;
+    opacity: 0.6;
+}
+
+.mlb-champion-menu {
+    position: absolute;
+    top: calc(100% - 2px);
+    left: 10px;
+    right: 10px;
+    max-height: 360px;
+    overflow-y: auto;
+    background: var(--window-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    z-index: 100;
+    padding: 4px 0;
+}
+
+.mlb-champion-search-wrap {
+    position: sticky;
+    top: 0;
+    padding: 8px;
+    background: inherit;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mlb-champion-search {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--window-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    color: var(--text-color);
+    font-family: inherit;
+    font-size: 12px;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.mlb-champion-search:focus {
+    border-color: var(--accent-color, #6b46c1);
+}
+
+.mlb-champion-empty {
+    padding: 10px 14px;
+    font-size: 11px;
+    font-style: italic;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.mlb-champion-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    color: var(--text-color);
+}
+
+.mlb-champion-option:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.mlb-champion-option.selected {
+    background: rgba(107, 70, 193, 0.22);
+}
+
+.mlb-champion-separator {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.08);
+    margin: 4px 0;
+}
+
+/* ─── Material detail view ─── */
+.mlb-detail {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    gap: 16px;
+}
+
+.mlb-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.mlb-detail-back {
+    padding: 6px 12px;
+    background: var(--window-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    color: var(--text-color);
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.mlb-detail-back:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.mlb-detail-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.mlb-detail-body {
+    display: grid;
+    grid-template-columns: minmax(280px, 360px) 1fr;
+    gap: 20px;
+    align-items: stretch;
+}
+
+.mlb-detail-preview {
+    position: relative;
+    background: var(--window-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    aspect-ratio: 3 / 4;
+    max-height: 480px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mlb-detail-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.mlb-detail-fit-toggle {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.mlb-detail-fit-toggle:hover {
+    background: rgba(0, 0, 0, 0.75);
+    border-color: rgba(255, 255, 255, 0.35);
+}
+
+.mlb-detail-noimg {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-style: italic;
+}
+
+.mlb-detail-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    font-size: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: var(--border-radius);
+    padding: 18px 22px;
+    /* Fill the full height next to the preview box — matches its cap. */
+    min-height: 480px;
+    max-height: 480px;
+    overflow-y: auto;
+}
+
+.mlb-detail-meta-row {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 14px;
+    align-items: baseline;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mlb-detail-meta-row:last-of-type {
+    border-bottom: none;
+}
+
+.mlb-detail-meta-label {
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 1.4;
+}
+
+.mlb-detail-meta-value {
+    color: var(--text-color);
+    word-break: break-word;
+    line-height: 1.4;
+}
+
+code.mlb-detail-meta-value {
+    font-family: 'Cascadia Mono', 'Consolas', monospace;
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.25);
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: inline-block;
+}
+
+.mlb-detail-description {
+    color: var(--text-color);
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 10px 0;
+    margin-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mlb-detail-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: auto;
+    padding-top: 18px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Big, prominent download/update button — same visual weight as the
+   "Apply" button in the Themes dialog. Classic mode = VSCode blue gradient;
+   modern mode = accent gradient (themed via App.modernui.css override). */
+.mlb-btn-download {
+    padding: 10px 28px;
+    background: linear-gradient(135deg, #0e639c, #1177bb);
+    color: #ffffff;
+    border: none;
+    border-radius: var(--border-radius);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(14, 99, 156, 0.3);
+    transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
+
+.mlb-btn-download:hover:not(:disabled) {
+    background: linear-gradient(135deg, #1177bb, #1485cc);
+    box-shadow: 0 6px 16px rgba(14, 99, 156, 0.4);
+}
+
+.mlb-btn-download:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.mlb-btn-danger {
+    background: rgba(224, 95, 95, 0.15);
+    border-color: rgba(224, 95, 95, 0.5);
+    color: #ff9e9e;
+}
+
+.mlb-btn-danger:hover {
+    background: rgba(224, 95, 95, 0.25);
+}
+
+.mlb-sidebar-section-title {
+    padding: 12px 12px 4px 12px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    opacity: 0.6;
+}
+
+.mlb-card-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.mlb-card-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.mlb-card-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.mlb-card-version {
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 1px 6px;
+    background: var(--window-bg);
+    border: 1px solid #3E3E42;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+.mlb-card-featured {
+    color: #e6b800;
+    font-size: 12px;
+}
+
+.mlb-card-description {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.mlb-card-slots {
+    font-size: 11px;
+    color: var(--text-muted);
+    opacity: 0.75;
+    margin-top: 2px;
+}
+
+.mlb-card-outdated {
+    font-size: 11px;
+    color: #e6b800;
+    margin-top: 2px;
+    font-weight: 500;
+}
+
+.mlb-card-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-top: auto;
+    padding-top: 6px;
+    flex-wrap: wrap;
+}
+
+/* Action rail on the right side of the card — icon-only, stacks vertically,
+   stretches to the full card height and centers its contents vertically.
+   Left border hugs the right edge of the card body; buttons sit just inside
+   that line (left-aligned within the rail), not pushed to the far right. */
+.mlb-card-rail {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 8px;
+    flex-shrink: 0;
+    width: 40px;
+    padding-left: 5px;
+    padding-right: 0;
+    margin-left: auto;
+    margin-right: -12px;
+    border-left: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mlb-card-rail-status {
+    font-size: 9px;
+    text-align: center;
+    width: 100%;
+    line-height: 1.2;
+}
+
+.mlb-icon-btn {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    flex-shrink: 0;
+}
+
+.mlb-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.14);
+}
+
+.mlb-icon-btn-primary {
+    color: #ffffff;
+    background: linear-gradient(135deg, #0e639c, #1177bb);
+    border-color: transparent;
+    box-shadow: 0 2px 8px rgba(14, 99, 156, 0.3);
+}
+
+.mlb-icon-btn-primary:hover {
+    background: linear-gradient(135deg, #1177bb, #1485cc);
+    color: #ffffff;
+    border-color: transparent;
+    box-shadow: 0 4px 12px rgba(14, 99, 156, 0.4);
+}
+
+/* Refresh — amber, always tinted so it's visually distinct from delete. */
+.mlb-icon-btn-refresh {
+    color: #e4b456;
+    background: rgba(228, 180, 86, 0.08);
+    border-color: rgba(228, 180, 86, 0.25);
+}
+
+.mlb-icon-btn-refresh:hover {
+    color: #f4c870;
+    background: rgba(228, 180, 86, 0.18);
+    border-color: rgba(228, 180, 86, 0.55);
+}
+
+/* Delete — red, always tinted. */
+.mlb-icon-btn-danger {
+    color: #e05f5f;
+    background: rgba(224, 95, 95, 0.08);
+    border-color: rgba(224, 95, 95, 0.25);
+}
+
+.mlb-icon-btn-danger:hover {
+    color: #ff7a7a;
+    background: rgba(224, 95, 95, 0.18);
+    border-color: rgba(224, 95, 95, 0.55);
+}
+
+.mlb-card-status {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* ── Buttons & badges ── */
+.mlb-btn {
+    padding: 5px 12px;
+    background: var(--window-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    color: var(--text-color);
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.12s ease;
+}
+
+.mlb-btn:hover {
+    background: var(--selected-tab-bg);
+    border-color: var(--status-bar-bg);
+}
+
+.mlb-btn-primary {
+    background: var(--status-bar-bg);
+    color: white;
+    border-color: var(--status-bar-bg);
+}
+
+.mlb-btn-primary:hover {
+    filter: brightness(1.15);
+}
+
+.mlb-btn-menu {
+    padding: 2px 8px;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.mlb-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: 10px;
+    background: rgba(100, 200, 100, 0.12);
+    color: #7bd37b;
+    border: 1px solid rgba(100, 200, 100, 0.3);
+    font-weight: 500;
+}
+
+/* ── Card menu dropdown ── */
+.mlb-card-menu {
+    position: relative;
+}
+
+.mlb-card-menu-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    background: var(--window-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    z-index: 10;
+    min-width: 160px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.mlb-card-menu-dropdown button {
+    padding: 8px 14px;
+    background: transparent;
+    border: none;
+    color: var(--text-color);
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s;
+}
+
+.mlb-card-menu-dropdown button:hover {
+    background: var(--selected-tab-bg);
+}
+
+.mlb-menu-danger {
+    color: #ff6b6b !important;
+}
+
+.mlb-menu-danger:hover {
+    background: rgba(232, 17, 35, 0.15) !important;
+}
+
+/* ── Footer ── */
+.mlb-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    background: var(--title-bar-bg);
+    border-top: 1px solid #3E3E42;
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.mlb-footer-selected {
+    color: var(--text-color);
+    font-weight: 500;
+}
+
+/* ── Scrollbars (classic mode) ── */
+.mlb-sidebar::-webkit-scrollbar,
+.mlb-cards::-webkit-scrollbar,
+.mlb-detail-meta::-webkit-scrollbar,
+.mlb-champion-menu::-webkit-scrollbar,
+.mlb-content::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.mlb-sidebar::-webkit-scrollbar-track,
+.mlb-cards::-webkit-scrollbar-track,
+.mlb-detail-meta::-webkit-scrollbar-track,
+.mlb-champion-menu::-webkit-scrollbar-track,
+.mlb-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.mlb-sidebar::-webkit-scrollbar-thumb,
+.mlb-cards::-webkit-scrollbar-thumb,
+.mlb-detail-meta::-webkit-scrollbar-thumb,
+.mlb-champion-menu::-webkit-scrollbar-thumb,
+.mlb-content::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb, rgba(255, 255, 255, 0.15));
+    border-radius: 3px;
+}
+
+.mlb-sidebar::-webkit-scrollbar-thumb:hover,
+.mlb-cards::-webkit-scrollbar-thumb:hover,
+.mlb-detail-meta::-webkit-scrollbar-thumb:hover,
+.mlb-champion-menu::-webkit-scrollbar-thumb:hover,
+.mlb-content::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover, rgba(255, 255, 255, 0.25));
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Modern UI overrides — applied when data-ui-mode="modern" is set on <html>.
+   Matches the glass morphism style used in SettingsDialog / ThemesDialog.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Overlay backdrop */
+[data-ui-mode="modern"] .mlb-overlay {
+    backdrop-filter: blur(8px) saturate(130%) !important;
+    -webkit-backdrop-filter: blur(8px) saturate(130%) !important;
+    background: rgba(0, 0, 0, 0.6) !important;
+}
+
+/* Dialog shell — frosted glass */
+[data-ui-mode="modern"] .mlb-dialog {
+    background: var(--modern-dialog-bg) !important;
+    backdrop-filter: saturate(180%) blur(24px);
+    -webkit-backdrop-filter: saturate(180%) blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    border-radius: 12px !important;
+    box-shadow:
+        0 32px 80px rgba(0, 0, 0, 0.60),
+        0 0 0 1px rgba(255, 255, 255, 0.04),
+        inset 0 1px 0 rgba(255, 255, 255, 0.09) !important;
+}
+
+/* Header + footer tinting */
+[data-ui-mode="modern"] .mlb-dialog-header {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .mlb-footer {
+    background: rgba(255, 255, 255, 0.025) !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.07) !important;
+}
+
+/* Sidebar */
+[data-ui-mode="modern"] .mlb-sidebar {
+    background: rgba(0, 0, 0, 0.2) !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+[data-ui-mode="modern"] .mlb-nav-item {
+    border-radius: 6px !important;
+}
+
+[data-ui-mode="modern"] .mlb-nav-item.active {
+    background: var(--modern-accent-22) !important;
+    border-color: var(--modern-accent-45) !important;
+    box-shadow: 0 0 12px var(--modern-accent-12);
+}
+
+[data-ui-mode="modern"] .mlb-nav-item:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Champion dropdown */
+[data-ui-mode="modern"] .mlb-champion-dropdown {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .mlb-champion-trigger {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    border-radius: 8px !important;
+}
+
+[data-ui-mode="modern"] .mlb-champion-trigger:hover {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border-color: var(--modern-accent-45) !important;
+}
+
+[data-ui-mode="modern"] .mlb-champion-menu {
+    background: var(--modern-menu-bg, rgba(30, 30, 35, 0.94)) !important;
+    backdrop-filter: saturate(180%) blur(18px);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55) !important;
+}
+
+[data-ui-mode="modern"] .mlb-champion-search-wrap {
+    border-bottom-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+[data-ui-mode="modern"] .mlb-champion-search {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 6px !important;
+}
+
+[data-ui-mode="modern"] .mlb-champion-search:focus {
+    border-color: var(--modern-accent-45) !important;
+    box-shadow: 0 0 0 2px var(--modern-accent-15) !important;
+}
+
+[data-ui-mode="modern"] .mlb-champion-option:hover {
+    background: rgba(255, 255, 255, 0.06) !important;
+}
+
+[data-ui-mode="modern"] .mlb-champion-option.selected {
+    background: var(--modern-accent-22) !important;
+}
+
+/* Search input */
+[data-ui-mode="modern"] .mlb-search {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    border-radius: 8px !important;
+}
+
+[data-ui-mode="modern"] .mlb-search:focus {
+    border-color: var(--modern-accent-45) !important;
+    box-shadow: 0 0 0 2px var(--modern-accent-15) !important;
+}
+
+/* Cards */
+[data-ui-mode="modern"] .mlb-card {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.07) !important;
+    border-radius: 10px !important;
+    transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+[data-ui-mode="modern"] .mlb-card:hover {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border-color: rgba(255, 255, 255, 0.14) !important;
+    transform: translateY(-1px);
+}
+
+[data-ui-mode="modern"] .mlb-card.selected {
+    background: var(--modern-accent-15) !important;
+    border-color: var(--modern-accent-45) !important;
+    box-shadow: 0 0 16px var(--modern-accent-15);
+}
+
+[data-ui-mode="modern"] .mlb-card-preview {
+    background: rgba(0, 0, 0, 0.35) !important;
+    border-color: rgba(255, 255, 255, 0.08) !important;
+    border-radius: 8px !important;
+}
+
+[data-ui-mode="modern"] .mlb-card-rail {
+    border-left-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .mlb-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-color: rgba(255, 255, 255, 0.16) !important;
+}
+
+[data-ui-mode="modern"] .mlb-icon-btn-primary {
+    background: linear-gradient(135deg,
+        var(--jade-accent),
+        color-mix(in srgb, var(--jade-accent) 75%, white)) !important;
+    border: none !important;
+    box-shadow:
+        0 2px 10px var(--modern-accent-30),
+        0 0 0 1px var(--modern-accent-30) !important;
+    color: #fff !important;
+}
+
+[data-ui-mode="modern"] .mlb-icon-btn-primary:hover {
+    background: linear-gradient(135deg,
+        color-mix(in srgb, var(--jade-accent) 75%, white),
+        color-mix(in srgb, var(--jade-accent) 60%, white)) !important;
+    box-shadow:
+        0 4px 14px var(--modern-accent-40),
+        0 0 0 1px var(--modern-accent-40) !important;
+}
+
+/* Refresh — amber glass gradient to match the modern aesthetic. */
+[data-ui-mode="modern"] .mlb-icon-btn-refresh {
+    background: linear-gradient(135deg,
+        rgba(228, 180, 86, 0.35),
+        rgba(228, 180, 86, 0.18)) !important;
+    border: none !important;
+    box-shadow:
+        0 2px 10px rgba(228, 180, 86, 0.25),
+        0 0 0 1px rgba(228, 180, 86, 0.35) !important;
+    color: #f4c870 !important;
+}
+
+[data-ui-mode="modern"] .mlb-icon-btn-refresh:hover {
+    background: linear-gradient(135deg,
+        rgba(244, 200, 112, 0.55),
+        rgba(228, 180, 86, 0.28)) !important;
+    box-shadow:
+        0 4px 14px rgba(228, 180, 86, 0.4),
+        0 0 0 1px rgba(228, 180, 86, 0.55) !important;
+}
+
+/* Delete — red glass gradient. */
+[data-ui-mode="modern"] .mlb-icon-btn-danger {
+    background: linear-gradient(135deg,
+        rgba(224, 95, 95, 0.35),
+        rgba(224, 95, 95, 0.18)) !important;
+    border: none !important;
+    box-shadow:
+        0 2px 10px rgba(224, 95, 95, 0.25),
+        0 0 0 1px rgba(224, 95, 95, 0.35) !important;
+    color: #ff7a7a !important;
+}
+
+[data-ui-mode="modern"] .mlb-icon-btn-danger:hover {
+    background: linear-gradient(135deg,
+        rgba(255, 122, 122, 0.55),
+        rgba(224, 95, 95, 0.28)) !important;
+    box-shadow:
+        0 4px 14px rgba(224, 95, 95, 0.4),
+        0 0 0 1px rgba(224, 95, 95, 0.55) !important;
+}
+
+/* Buttons inside the library */
+[data-ui-mode="modern"] .mlb-btn {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 8px !important;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+[data-ui-mode="modern"] .mlb-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.09) !important;
+    border-color: rgba(255, 255, 255, 0.22) !important;
+}
+
+[data-ui-mode="modern"] .mlb-btn-primary {
+    background: var(--modern-accent-25) !important;
+    border-color: var(--modern-accent-50) !important;
+    box-shadow: 0 0 12px var(--modern-accent-15);
+}
+
+[data-ui-mode="modern"] .mlb-btn-primary:hover:not(:disabled) {
+    background: var(--modern-accent-35) !important;
+    border-color: var(--modern-accent-75) !important;
+}
+
+/* Download button — themed accent gradient, matches .btn-apply treatment. */
+[data-ui-mode="modern"] .mlb-btn-download {
+    background: linear-gradient(135deg,
+        var(--jade-accent),
+        color-mix(in srgb, var(--jade-accent) 75%, white)) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    box-shadow:
+        0 4px 16px var(--modern-accent-30),
+        0 0 0 1px var(--modern-accent-30) !important;
+    color: #ffffff !important;
+}
+
+[data-ui-mode="modern"] .mlb-btn-download:hover:not(:disabled) {
+    background: linear-gradient(135deg,
+        color-mix(in srgb, var(--jade-accent) 75%, white),
+        color-mix(in srgb, var(--jade-accent) 60%, white)) !important;
+    box-shadow:
+        0 6px 20px var(--modern-accent-40),
+        0 0 0 1px var(--modern-accent-40) !important;
+    transform: translateY(-1px);
+}
+
+[data-ui-mode="modern"] .mlb-refresh-btn {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 8px !important;
+}
+
+/* Detail view */
+[data-ui-mode="modern"] .mlb-detail-back {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 8px !important;
+}
+
+[data-ui-mode="modern"] .mlb-detail-preview {
+    background: rgba(0, 0, 0, 0.35) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 10px !important;
+}
+
+[data-ui-mode="modern"] .mlb-detail-meta {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 10px !important;
+}
+
+[data-ui-mode="modern"] .mlb-detail-meta-row {
+    border-bottom-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+[data-ui-mode="modern"] code.mlb-detail-meta-value {
+    background: rgba(0, 0, 0, 0.35) !important;
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+/* Card menu dropdown */
+[data-ui-mode="modern"] .mlb-card-menu-dropdown {
+    background: var(--modern-menu-bg, rgba(30, 30, 35, 0.94)) !important;
+    backdrop-filter: saturate(180%) blur(18px);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55) !important;
+}

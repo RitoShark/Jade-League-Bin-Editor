@@ -252,6 +252,27 @@ export function SparklesIcon({ size = 16, className = '' }: IconProps) {
     );
 }
 
+// Library Icon — stack of books for the Material Library
+export function LibraryIcon({ size = 16, className = '' }: IconProps) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+            <path d="M9 6h6" />
+            <path d="M9 10h6" />
+        </svg>
+    );
+}
+
 // Minimize Icon
 export function MinimizeIcon({ size = 16, className = '' }: IconProps) {
     return (

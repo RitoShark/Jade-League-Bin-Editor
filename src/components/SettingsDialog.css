@@ -719,3 +719,80 @@
     color: #e8a520;
     font-weight: 500;
 }
+
+/* ── Material Library section ── */
+.settings-select {
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: var(--tab-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    color: var(--text-color);
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 12px;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.settings-select:focus {
+    border-color: var(--status-bar-bg);
+}
+
+.settings-lib-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+    background: var(--tab-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    padding: 4px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.settings-lib-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    background: transparent;
+    border-radius: var(--border-radius);
+    transition: background 0.12s;
+}
+
+.settings-lib-row:hover {
+    background: var(--selected-tab-bg);
+}
+
+.settings-lib-row-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+}
+
+.settings-lib-row-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.settings-lib-row-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.settings-lib-row-warning {
+    color: #e6b800;
+    font-weight: 500;
+}
+
+.settings-lib-row-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}

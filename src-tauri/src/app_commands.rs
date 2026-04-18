@@ -24,6 +24,83 @@ fn get_builtin_icon_data(name: &str) -> Option<&'static [u8]> {
     }
 }
 
+/// Decode an image from disk, picking the largest frame when the source is
+/// a multi-resolution .ico file. `image::open()` on an .ico in image-rs 0.25
+/// picks the first directory entry (usually 16/32/48 px), which renders
+/// upscaled and pixelated when we blit it onto a 150×150 tile. This helper
+/// parses the ICO directory header manually to find the largest entry and
+/// decodes just that frame.
+#[cfg(target_os = "windows")]
+fn load_icon_largest(path: &str) -> Result<image::DynamicImage, String> {
+    // Non-ICO files: delegate to image::open.
+    let lower = path.to_ascii_lowercase();
+    if !lower.ends_with(".ico") {
+        return image::open(path).map_err(|e| format!("image::open failed: {}", e));
+    }
+
+    let bytes = fs::read(path)
+        .map_err(|e| format!("Failed to read icon file {}: {}", path, e))?;
+
+    // ICO header: reserved(2) + type(2=1 for ICO) + count(2).
+    if bytes.len() < 6 || u16::from_le_bytes([bytes[2], bytes[3]]) != 1 {
+        return image::open(path).map_err(|e| format!("image::open fallback failed: {}", e));
+    }
+    let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+
+    // Find the directory entry with the largest area × bit depth.
+    let mut best_score: u64 = 0;
+    let mut best_offset: usize = 0;
+    let mut best_size: usize = 0;
+    for i in 0..count {
+        let base = 6 + i * 16;
+        if base + 16 > bytes.len() {
+            break;
+        }
+        let w = {
+            let v = bytes[base] as u32;
+            if v == 0 { 256 } else { v }
+        };
+        let h = {
+            let v = bytes[base + 1] as u32;
+            if v == 0 { 256 } else { v }
+        };
+        let bit_count = u16::from_le_bytes([bytes[base + 6], bytes[base + 7]]) as u32;
+        let size = u32::from_le_bytes([
+            bytes[base + 8], bytes[base + 9], bytes[base + 10], bytes[base + 11],
+        ]) as usize;
+        let offset = u32::from_le_bytes([
+            bytes[base + 12], bytes[base + 13], bytes[base + 14], bytes[base + 15],
+        ]) as usize;
+
+        let score = (w as u64) * (h as u64) * (bit_count.max(1) as u64);
+        if score > best_score && offset + size <= bytes.len() {
+            best_score = score;
+            best_offset = offset;
+            best_size = size;
+        }
+    }
+
+    if best_size == 0 {
+        return image::open(path).map_err(|e| format!("image::open fallback failed: {}", e));
+    }
+
+    let payload = &bytes[best_offset..best_offset + best_size];
+
+    // Modern high-res ICO frames (256×256) are typically stored as raw PNG.
+    // Lower-res frames use the legacy DIB format which the image crate can
+    // still decode through its ICO path, so we fall back in that case.
+    const PNG_SIG: &[u8] = &[0x89, 0x50, 0x4E, 0x47];
+    if payload.starts_with(PNG_SIG) {
+        image::load_from_memory_with_format(payload, image::ImageFormat::Png)
+            .map_err(|e| format!("Failed to decode ICO PNG frame: {}", e))
+    } else {
+        // DIB-encoded frame — let the full image crate handle the whole file.
+        // It at least produces a valid image even if it picks a smaller entry.
+        image::open(path)
+            .map_err(|e| format!("Failed to decode DIB ICO: {}", e))
+    }
+}
+
 /// Update the Start Menu tile PNGs next to the exe so the VisualElementsManifest
 /// reflects the current icon. Call this whenever the app icon changes.
 #[cfg(target_os = "windows")]
@@ -34,7 +111,7 @@ fn update_tile_pngs(icon_path: &str) -> Result<(), String> {
         .ok_or("Failed to get exe directory")?
         .to_path_buf();
 
-    let img = image::open(icon_path)
+    let img = load_icon_largest(icon_path)
         .map_err(|e| format!("Failed to open icon for tile: {}", e))?;
 
     // Check if the current icon is noBrain — it gets minimal padding
@@ -72,6 +149,49 @@ fn update_tile_pngs(icon_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Same as `load_icon_largest` but reads from an in-memory byte slice
+/// (used for embedded builtin icons). Returns the largest PNG frame or the
+/// image crate's best-effort decode as a fallback.
+#[cfg(target_os = "windows")]
+fn load_icon_largest_from_bytes(bytes: &[u8]) -> Option<image::DynamicImage> {
+    if bytes.len() < 6 || u16::from_le_bytes([bytes[2], bytes[3]]) != 1 {
+        return image::load_from_memory(bytes).ok();
+    }
+    let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+    let mut best_score: u64 = 0;
+    let mut best_offset: usize = 0;
+    let mut best_size: usize = 0;
+    for i in 0..count {
+        let base = 6 + i * 16;
+        if base + 16 > bytes.len() { break; }
+        let w = if bytes[base] == 0 { 256 } else { bytes[base] as u32 };
+        let h = if bytes[base + 1] == 0 { 256 } else { bytes[base + 1] as u32 };
+        let bit_count = u16::from_le_bytes([bytes[base + 6], bytes[base + 7]]) as u32;
+        let size = u32::from_le_bytes([
+            bytes[base + 8], bytes[base + 9], bytes[base + 10], bytes[base + 11],
+        ]) as usize;
+        let offset = u32::from_le_bytes([
+            bytes[base + 12], bytes[base + 13], bytes[base + 14], bytes[base + 15],
+        ]) as usize;
+        let score = (w as u64) * (h as u64) * (bit_count.max(1) as u64);
+        if score > best_score && offset + size <= bytes.len() {
+            best_score = score;
+            best_offset = offset;
+            best_size = size;
+        }
+    }
+    if best_size == 0 {
+        return image::load_from_memory(bytes).ok();
+    }
+    let payload = &bytes[best_offset..best_offset + best_size];
+    const PNG_SIG: &[u8] = &[0x89, 0x50, 0x4E, 0x47];
+    if payload.starts_with(PNG_SIG) {
+        image::load_from_memory_with_format(payload, image::ImageFormat::Png).ok()
+    } else {
+        image::load_from_memory(bytes).ok()
+    }
+}
+
 /// Restore the default tile PNGs by rendering the embedded default icon
 /// with the same padding as update_tile_pngs uses.
 #[cfg(target_os = "windows")]
@@ -81,10 +201,10 @@ fn restore_default_tile_pngs() {
         Err(_) => return,
     };
 
-    // Load the default jade icon from embedded data
-    let img = match image::load_from_memory(BUILTIN_ICON_JADE) {
-        Ok(i) => i,
-        Err(_) => {
+    // Load the default jade icon from embedded data, picking the largest frame.
+    let img = match load_icon_largest_from_bytes(BUILTIN_ICON_JADE) {
+        Some(i) => i,
+        None => {
             // Fallback: write the original embedded PNGs
             let _ = fs::write(exe_dir.join("Square150x150Logo.png"), DEFAULT_SQUARE150);
             let _ = fs::write(exe_dir.join("Square71x71Logo.png"), DEFAULT_SQUARE71);
@@ -158,11 +278,62 @@ fn migrate_txt_to_json(txt_path: &Path, json_path: &Path) -> Result<(), String> 
 }
 
 /// Migrate preferences from old locations to new LeagueToolkit\Jade\preferences.json
+/// Strip an inline base64 background image data URL out of preferences.json
+/// and write it to a real file in the config dir. Older builds stored the
+/// entire image as a string in preferences which made every prefs read
+/// parse hundreds of KB of base64. Idempotent — only acts when the value
+/// looks like a data URL.
+fn migrate_inline_background_image(pref_json: &Path) -> Result<(), String> {
+    if !pref_json.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(pref_json)
+        .map_err(|e| format!("Failed to read prefs for bg migration: {}", e))?;
+    let mut prefs: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+    let bg_value = prefs.get("CustomBackgroundImage").and_then(|v| v.as_str()).map(String::from);
+    let Some(value) = bg_value else { return Ok(()); };
+    if !value.starts_with("data:image/") {
+        // Already migrated or empty.
+        return Ok(());
+    }
+
+    // Decode and write to file. Reuse the same helpers the runtime command uses.
+    if let Ok((ext, bytes)) = parse_data_url(&value) {
+        delete_existing_bg_files();
+        if let Ok(path) = bg_file_path(&ext) {
+            if let Err(e) = fs::write(&path, &bytes) {
+                eprintln!("[Migrate] Failed to write background image file: {}", e);
+                return Ok(());
+            }
+            println!("[Migrate] Moved inline background image to {:?}", path);
+        }
+    }
+
+    // Strip the inline data from preferences regardless of write success
+    // (we don't want a broken pref to keep bloating the file forever).
+    if let Some(obj) = prefs.as_object_mut() {
+        obj.remove("CustomBackgroundImage");
+    }
+    let serialized = serde_json::to_string_pretty(&prefs)
+        .map_err(|e| format!("Failed to serialize migrated prefs: {}", e))?;
+    write_file_atomic(pref_json, &serialized)
+        .map_err(|e| format!("Failed to write migrated prefs: {}", e))?;
+    Ok(())
+}
+
 pub fn migrate_preferences_if_needed(app: &tauri::AppHandle) -> Result<(), String> {
     let new_config_dir = get_config_dir()?;
     let new_pref_json = new_config_dir.join("preferences.json");
     let old_pref_txt = new_config_dir.join("preferences.txt");
-    
+
+    // Sweep up any inline background image data URL that older builds left
+    // in preferences.json. Safe to call every launch — it's a no-op once
+    // the migration has run.
+    let _ = migrate_inline_background_image(&new_pref_json);
+
     // Priority 1: If new JSON already exists, check if we should merge txt into it
     if new_pref_json.exists() {
         println!("[Migrate] New preferences.json already exists at {:?}", new_pref_json);
@@ -483,8 +654,36 @@ pub async fn set_custom_icon(app: tauri::AppHandle, icon_path: String) -> Result
     Ok(())
 }
 
+/// Map a builtin icon name to the numeric resource ID it's embedded under
+/// in the exe (per `src-tauri/icons/extra_icons.rc`). Returns None for
+/// custom/unknown icons, in which case the caller falls back to file loading.
+#[cfg(target_os = "windows")]
+pub fn builtin_icon_resource_id(name: &str) -> Option<u16> {
+    match name {
+        "jade" => Some(201),
+        "jadejade" => Some(202),
+        "noBrain" => Some(203),
+        _ => None,
+    }
+}
+
+/// Given a builtin icon file path written to the config dir, recover the
+/// builtin name so we can load it via embedded resource instead of from
+/// the on-disk .ico copy. File pattern is `builtin_<name>.ico`.
+#[cfg(target_os = "windows")]
+fn builtin_name_from_path(path: &str) -> Option<String> {
+    let filename = std::path::Path::new(path).file_name()?.to_str()?;
+    filename.strip_prefix("builtin_")?.strip_suffix(".ico").map(|s| s.to_string())
+}
+
 pub fn update_window_icon(app: &tauri::AppHandle, icon_path: &str) -> Result<(), String> {
-    // Load and decode the image
+    // Load the largest frame — image::open on a multi-frame .ico picks the
+    // first directory entry (our 16×16), which would then get upscaled to
+    // 256 and look terrible in the taskbar.
+    #[cfg(target_os = "windows")]
+    let img = load_icon_largest(icon_path)
+        .map_err(|e| format!("Failed to load icon image: {}", e))?;
+    #[cfg(not(target_os = "windows"))]
     let img = image::open(icon_path)
         .map_err(|e| format!("Failed to load icon image: {}", e))?;
 
@@ -636,48 +835,82 @@ pub fn reapply_tile_and_shortcut_icon(icon_path: &str) -> Result<(), String> {
 /// Convert an image to .ico format and save it
 #[cfg(target_os = "windows")]
 fn save_as_ico(src_path: &str, ico_path: &Path) -> Result<(), String> {
+    // If the source is already a .ico file, copy its bytes directly. The
+    // previous implementation opened the .ico via image::open (which picks
+    // the first directory entry — often a small frame), then Lanczos-
+    // upscaled it to 256×256 and saved as a single-frame .ico. That
+    // destroyed all the multi-size frame data from the source, so the
+    // shortcut's IconLocation pointed at a blurry single-size upscale,
+    // which Windows then rendered in the taskbar via the NSIS-installed
+    // AppUserModelID. Copying the raw bytes preserves every frame and
+    // makes the shortcut icon look identical to the source .ico.
+    if src_path.to_ascii_lowercase().ends_with(".ico") {
+        fs::copy(src_path, ico_path)
+            .map_err(|e| format!("Failed to copy ico file: {}", e))?;
+        return Ok(());
+    }
+
+    // Source is an image (png/jpg/etc). Load the largest representation
+    // we can get out of it, then wrap it in a multi-frame .ico with the
+    // standard Windows sizes (16/24/32/48/64/128/256), 32 first per tao
+    // docs.
     let img = image::open(src_path)
         .map_err(|e| format!("Failed to open image for ico conversion: {}", e))?;
 
-    // Resize to 256x256 (max ico size)
-    let resized = img.resize_exact(256, 256, image::imageops::FilterType::Lanczos3);
-    let rgba = resized.to_rgba8();
-    let (w, h) = (rgba.width(), rgba.height());
-    let raw = rgba.into_raw();
+    let base = if img.width() >= 256 && img.height() >= 256 {
+        img.resize_exact(256, 256, image::imageops::FilterType::Lanczos3)
+    } else {
+        // Small source — upscale to 256 so the whole frame set has
+        // something to downsample from.
+        img.resize_exact(256, 256, image::imageops::FilterType::Lanczos3)
+    };
 
-    // Write ICO file manually: header + one directory entry + PNG data
-    let mut png_data = Vec::new();
-    {
-        use std::io::Cursor;
-        use image::ImageEncoder;
-        let mut cursor = Cursor::new(&mut png_data);
-        let encoder = image::codecs::png::PngEncoder::new(&mut cursor);
-        encoder.write_image(&raw, w, h, image::ExtendedColorType::Rgba8)
-            .map_err(|e| format!("PNG encode failed: {}", e))?;
+    let sizes: [u32; 7] = [32, 16, 24, 48, 64, 128, 256];
+    let mut frames: Vec<(u32, Vec<u8>)> = Vec::with_capacity(sizes.len());
+    for &sz in &sizes {
+        let frame = base.resize_exact(sz, sz, image::imageops::FilterType::Lanczos3);
+        let rgba = frame.to_rgba8();
+        let raw = rgba.into_raw();
+
+        let mut png = Vec::new();
+        {
+            use std::io::Cursor;
+            use image::ImageEncoder;
+            let mut cursor = Cursor::new(&mut png);
+            let encoder = image::codecs::png::PngEncoder::new(&mut cursor);
+            encoder.write_image(&raw, sz, sz, image::ExtendedColorType::Rgba8)
+                .map_err(|e| format!("PNG encode failed: {}", e))?;
+        }
+        frames.push((sz, png));
     }
 
+    // ICO container assembly.
+    let count = frames.len() as u16;
     let mut ico = Vec::new();
-    // ICO header: reserved(2) + type(2) + count(2)
-    ico.extend_from_slice(&[0, 0]); // reserved
-    ico.extend_from_slice(&1u16.to_le_bytes()); // type = 1 (icon)
-    ico.extend_from_slice(&1u16.to_le_bytes()); // count = 1
+    ico.extend_from_slice(&0u16.to_le_bytes());   // reserved
+    ico.extend_from_slice(&1u16.to_le_bytes());   // type = icon
+    ico.extend_from_slice(&count.to_le_bytes());
 
-    // Directory entry (16 bytes)
-    ico.push(0); // width (0 = 256)
-    ico.push(0); // height (0 = 256)
-    ico.push(0); // color palette
-    ico.push(0); // reserved
-    ico.extend_from_slice(&1u16.to_le_bytes()); // color planes
-    ico.extend_from_slice(&32u16.to_le_bytes()); // bits per pixel
-    ico.extend_from_slice(&(png_data.len() as u32).to_le_bytes()); // image size
-    ico.extend_from_slice(&22u32.to_le_bytes()); // offset (6 header + 16 entry = 22)
-
-    // Image data (PNG)
-    ico.extend_from_slice(&png_data);
+    let mut offset: u32 = 6 + (count as u32) * 16;
+    for (sz, png) in &frames {
+        let w = if *sz >= 256 { 0 } else { *sz as u8 };
+        let h = w;
+        ico.push(w);
+        ico.push(h);
+        ico.push(0); // palette
+        ico.push(0); // reserved
+        ico.extend_from_slice(&1u16.to_le_bytes());   // planes
+        ico.extend_from_slice(&32u16.to_le_bytes());  // bpp
+        ico.extend_from_slice(&(png.len() as u32).to_le_bytes());
+        ico.extend_from_slice(&offset.to_le_bytes());
+        offset += png.len() as u32;
+    }
+    for (_, png) in &frames {
+        ico.extend_from_slice(png);
+    }
 
     fs::write(ico_path, ico)
         .map_err(|e| format!("Failed to write ico file: {}", e))?;
-
     Ok(())
 }
 
@@ -708,27 +941,67 @@ fn refresh_taskbar_icon(hwnd: windows::Win32::Foundation::HWND) {
 pub fn set_native_window_icon(window: &tauri::WebviewWindow, icon_path: &str) -> Result<(), String> {
     use windows::Win32::UI::WindowsAndMessaging::*;
     use windows::Win32::Foundation::*;
-
-    let img = image::open(icon_path)
-        .map_err(|e| format!("Failed to load icon: {}", e))?;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::core::PCWSTR;
 
     let hwnd = window.hwnd().map_err(|e| format!("Failed to get HWND: {}", e))?;
     let hwnd = HWND(hwnd.0);
 
-    // Create and set big icon (used by taskbar, Alt+Tab)
-    let big_size = unsafe { GetSystemMetrics(SM_CXICON) } as u32;
-    let big_img = img.resize_exact(big_size, big_size, image::imageops::FilterType::Lanczos3).to_rgba8();
-    let big_icon = create_hicon_from_rgba(&big_img, big_size, big_size)?;
-    unsafe {
-        SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_BIG as usize), LPARAM(big_icon.0 as isize));
-    }
+    // Mirror exactly what tao (Tauri's windowing backend) does in its
+    // `WinIcon::from_resource` / `from_path` constructors: pass width=0,
+    // height=0 + `LR_DEFAULTSIZE`. That tells Windows to return an HICON
+    // handle that points BACK at the resource/file, rather than a
+    // rasterized copy of a single frame. Windows then picks the correct
+    // frame per DPI context at paint time, which is why Tauri's
+    // build-time-embedded icon renders pixel-perfect at every size.
+    // Using explicit cx/cy with LR_DEFAULTCOLOR bakes a specific frame
+    // into a standalone bitmap — multi-size awareness is lost.
+    let builtin_id = builtin_name_from_path(icon_path)
+        .and_then(|name| builtin_icon_resource_id(&name));
 
-    // Create and set small icon (used by title bar)
-    let small_size = unsafe { GetSystemMetrics(SM_CXSMICON) } as u32;
-    let small_img = img.resize_exact(small_size, small_size, image::imageops::FilterType::Lanczos3).to_rgba8();
-    let small_icon = create_hicon_from_rgba(&small_img, small_size, small_size)?;
+    let wide: Vec<u16> = icon_path
+        .encode_utf16()
+        .chain(std::iter::once(0u16))
+        .collect();
+    let wide_ptr = PCWSTR(wide.as_ptr());
+
+    let handle = if let Some(id) = builtin_id {
+        // Embedded resource path — same code tao uses.
+        let hmodule = unsafe { GetModuleHandleW(None) }
+            .map_err(|e| format!("GetModuleHandleW failed: {}", e))?;
+        let hinstance = HINSTANCE(hmodule.0);
+        unsafe {
+            LoadImageW(
+                hinstance,
+                PCWSTR(id as usize as *const u16),
+                IMAGE_ICON,
+                0, 0,
+                LR_DEFAULTSIZE,
+            )
+        }
+        .map_err(|e| format!("LoadImageW(embedded id={}) failed: {}", id, e))?
+    } else {
+        // External file path for custom user icons.
+        unsafe {
+            LoadImageW(
+                None,
+                wide_ptr,
+                IMAGE_ICON,
+                0, 0,
+                LR_DEFAULTSIZE | LR_LOADFROMFILE,
+            )
+        }
+        .map_err(|e| format!("LoadImageW file failed: {}", e))?
+    };
+
+    let hicon = HICON(handle.0);
+
+    // Set the SAME HICON as both ICON_BIG and ICON_SMALL — Windows uses
+    // the underlying resource/file handle to render whichever frame each
+    // surface needs per DPI. tao does exactly this.
     unsafe {
-        SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_SMALL as usize), LPARAM(small_icon.0 as isize));
+        SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_BIG as usize), LPARAM(hicon.0 as isize));
+        SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_SMALL as usize), LPARAM(hicon.0 as isize));
     }
 
     // Force taskbar to pick up the new icon (works around AUMID caching)
@@ -872,6 +1145,100 @@ pub async fn clear_custom_icon(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(windows)]
     crate::extra_commands::update_association_icon();
 
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom background image — stored as a real file in the config dir, not as
+// a base64 blob in preferences.json. Earlier versions inlined the entire data
+// URL into the preferences JSON, which made the config file balloon to
+// hundreds of KB and turned every prefs read into a JSON parse of a giant
+// string. These commands let the frontend save / load / clear the image
+// without touching preferences for the actual bytes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BG_FILE_STEM: &str = "custom_background";
+
+fn bg_file_path(ext: &str) -> Result<PathBuf, String> {
+    Ok(get_config_dir()?.join(format!("{}.{}", BG_FILE_STEM, ext)))
+}
+
+/// Find any existing custom background file regardless of extension.
+fn find_existing_bg_file() -> Option<PathBuf> {
+    let dir = get_config_dir().ok()?;
+    for ext in &["png", "jpg", "jpeg", "webp", "gif", "bmp"] {
+        let p = dir.join(format!("{}.{}", BG_FILE_STEM, ext));
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn delete_existing_bg_files() {
+    if let Ok(dir) = get_config_dir() {
+        for ext in &["png", "jpg", "jpeg", "webp", "gif", "bmp"] {
+            let _ = fs::remove_file(dir.join(format!("{}.{}", BG_FILE_STEM, ext)));
+        }
+    }
+}
+
+/// Parse a `data:image/<type>;base64,<payload>` URL into (extension, bytes).
+fn parse_data_url(data_url: &str) -> Result<(String, Vec<u8>), String> {
+    let after_prefix = data_url
+        .strip_prefix("data:image/")
+        .ok_or_else(|| "Not a data:image URL".to_string())?;
+    let semi = after_prefix.find(';')
+        .ok_or_else(|| "Missing mime ; separator".to_string())?;
+    let mime_subtype = &after_prefix[..semi];
+    // Normalize "jpeg" → "jpg" so we don't end up with both file forms.
+    let ext = match mime_subtype {
+        "jpeg" => "jpg",
+        other => other,
+    }.to_string();
+    let comma = data_url.find(",")
+        .ok_or_else(|| "Missing payload , separator".to_string())?;
+    let b64 = &data_url[comma + 1..];
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.as_bytes())
+        .map_err(|e| format!("base64 decode failed: {}", e))?;
+    Ok((ext, bytes))
+}
+
+#[tauri::command]
+pub async fn set_custom_background_image(data_url: String) -> Result<(), String> {
+    let (ext, bytes) = parse_data_url(&data_url)?;
+    delete_existing_bg_files();
+    let target = bg_file_path(&ext)?;
+    fs::write(&target, &bytes)
+        .map_err(|e| format!("Failed to write background image: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_custom_background_image() -> Result<Option<String>, String> {
+    let Some(path) = find_existing_bg_file() else {
+        return Ok(None);
+    };
+    let bytes = fs::read(&path)
+        .map_err(|e| format!("Failed to read background image: {}", e))?;
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("png");
+    let mime = match ext.to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        _ => "image/png",
+    };
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(Some(format!("data:{};base64,{}", mime, encoded)))
+}
+
+#[tauri::command]
+pub async fn clear_custom_background_image() -> Result<(), String> {
+    delete_existing_bg_files();
     Ok(())
 }
 

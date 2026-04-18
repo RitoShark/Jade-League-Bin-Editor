@@ -17,6 +17,7 @@ import StatusBar from "./components/StatusBar";
 import WelcomeScreen from "./components/WelcomeScreen";
 import AboutDialog from "./components/AboutDialog";
 import ThemesDialog from "./components/ThemesDialog";
+import MaterialLibraryBrowser from "./components/MaterialLibraryBrowser";
 import SettingsDialog from "./components/SettingsDialog";
 import PreferencesDialog from "./components/PreferencesDialog";
 import GeneralEditPanel from "./components/GeneralEditPanel";
@@ -95,6 +96,7 @@ function App() {
   const [statusMessage, setStatusMessage] = useState("Ready");
   const [showAboutDialog, setShowAboutDialog] = useState(false);
   const [showThemesDialog, setShowThemesDialog] = useState(false);
+  const [showMaterialLibrary, setShowMaterialLibrary] = useState(false);
   const [showPreferencesDialog, setShowPreferencesDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [showQuartzInstallModal, setShowQuartzInstallModal] = useState(false);
@@ -178,6 +180,19 @@ function App() {
   const handleReplaceRef = useRef<(() => void) | null>(null);
   const handleCompareRef = useRef<(() => void) | null>(null);
   const lastRejectedTabCloseRef = useRef<{ tabId: string; at: number } | null>(null);
+
+  // Tracks library material texture inserts performed during this editing
+  // session, keyed by bin filePath. Used to offer cleanup when the user
+  // closes without saving, and cleared when the user saves the bin.
+  const jadelibInsertsRef = useRef<Map<string, Array<{ modRoot: string; id: string }>>>(new Map());
+  const recordJadelibInsert = useCallback((filePath: string, modRoot: string, id: string) => {
+    const list = jadelibInsertsRef.current.get(filePath) ?? [];
+    // Deduplicate — one entry per (modRoot, id) pair
+    if (!list.some(e => e.modRoot === modRoot && e.id === id)) {
+      list.push({ modRoot, id });
+    }
+    jadelibInsertsRef.current.set(filePath, list);
+  }, []);
 
   // Get the active tab
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
@@ -1190,6 +1205,32 @@ function App() {
         lastRejectedTabCloseRef.current = { tabId, at: Date.now() };
         return;
       }
+
+      // If this bin had library texture inserts during the session, the
+      // user is now discarding those references. Offer to also delete
+      // the texture folders we dropped into the mod so they don't
+      // linger as orphan files. Cleanup is fire-and-forget so the close
+      // handler can stay synchronous.
+      if (tabToClose.filePath) {
+        const inserts = jadelibInsertsRef.current.get(tabToClose.filePath);
+        if (inserts && inserts.length > 0) {
+          const summary = inserts.map(e => `assets/jadelib/${e.id}/`).join('\n  ');
+          const shouldDelete = confirm(
+            `You inserted library material textures in this session:\n\n  ${summary}\n\nRemove these folders from your mod too?`
+          );
+          if (shouldDelete) {
+            for (const e of inserts) {
+              invoke('library_remove_inserted_textures', {
+                modRoot: e.modRoot,
+                id: e.id,
+              }).catch((err) => {
+                console.warn(`Failed to remove jadelib/${e.id}:`, err);
+              });
+            }
+          }
+          jadelibInsertsRef.current.delete(tabToClose.filePath);
+        }
+      }
     }
 
     // Remove view state and LRU entry
@@ -1552,6 +1593,91 @@ function App() {
     return null;
   }
 
+  /**
+   * Find material links and StaticMaterialDef entries, and decorate each
+   * with a clickable arrow that jumps between them.
+   *
+   *   material: link = "name"        → ↗ jumps down to the StaticMaterialDef
+   *   "name" = StaticMaterialDef {   → ↖ jumps up to the first override
+   *
+   * The target line is encoded in a CSS class suffix (`jade-jump-to-<line>`)
+   * so the click handler doesn't need to re-scan the document.
+   */
+  function findMaterialJumpDecorations(model: MonacoType.editor.ITextModel): MonacoType.editor.IModelDeltaDecoration[] {
+    const decorations: MonacoType.editor.IModelDeltaDecoration[] = [];
+    const lineCount = model.getLineCount();
+
+    // First pass: index every StaticMaterialDef name → its line.
+    //             And every material link → its line.
+    // Case-insensitive because field names in bin files are usually
+    // capitalised (Material:, SamplerValues:, TextureName:, etc.).
+    const defByName = new Map<string, number>();
+    const linksByName = new Map<string, number[]>();
+    const defLineRe = /^\s*"([^"]+)"\s*=\s*StaticMaterialDef\s*\{/i;
+    const linkLineRe = /material\s*:\s*link\s*=\s*"([^"]+)"/i;
+
+    for (let ln = 1; ln <= lineCount; ln++) {
+      const line = model.getLineContent(ln);
+      const dm = defLineRe.exec(line);
+      if (dm) {
+        defByName.set(dm[1], ln);
+        continue;
+      }
+      const lm = linkLineRe.exec(line);
+      if (lm) {
+        const arr = linksByName.get(lm[1]) ?? [];
+        arr.push(ln);
+        linksByName.set(lm[1], arr);
+      }
+    }
+
+    // Second pass: emit decorations for every link that has a matching def,
+    // and every def that has at least one link.
+    for (let ln = 1; ln <= lineCount; ln++) {
+      const line = model.getLineContent(ln);
+
+      const lm = linkLineRe.exec(line);
+      if (lm) {
+        const name = lm[1];
+        const targetLine = defByName.get(name);
+        if (targetLine !== undefined) {
+          const col = line.length + 1;
+          decorations.push({
+            range: { startLineNumber: ln, startColumn: Math.max(1, col - 1), endLineNumber: ln, endColumn: col },
+            options: {
+              after: {
+                content: '\u00A0',
+                inlineClassName: `jade-jump-arrow jade-jump-down jade-jump-to-${targetLine}`,
+                inlineClassNameAffectsLetterSpacing: true,
+              },
+            },
+          });
+        }
+      }
+
+      const dm = defLineRe.exec(line);
+      if (dm) {
+        const name = dm[1];
+        const targets = linksByName.get(name);
+        if (targets && targets.length > 0) {
+          const col = line.length + 1;
+          decorations.push({
+            range: { startLineNumber: ln, startColumn: Math.max(1, col - 1), endLineNumber: ln, endColumn: col },
+            options: {
+              after: {
+                content: '\u00A0',
+                inlineClassName: `jade-jump-arrow jade-jump-up jade-jump-to-${targets[0]}`,
+                inlineClassNameAffectsLetterSpacing: true,
+              },
+            },
+          });
+        }
+      }
+    }
+
+    return decorations;
+  }
+
   /** Find all image paths in the model, for decorations (pointer cursor + inline swatch box) */
   function findAllImagePaths(model: MonacoType.editor.ITextModel): MonacoType.editor.IModelDeltaDecoration[] {
     const decorations: MonacoType.editor.IModelDeltaDecoration[] = [];
@@ -1830,6 +1956,10 @@ function App() {
     if (!popup?.resolvedPath) return;
     setTexPopup(null);
 
+    // Save the current code tab's scroll/cursor position so it's
+    // restored when the user switches back.
+    saveCurrentViewState();
+
     // Check if already open
     const existing = tabs.find(t => t.filePath === popup.resolvedPath && t.tabType === 'texture-preview');
     if (existing) {
@@ -1843,7 +1973,7 @@ function App() {
 
     // Load texture data into the new tab
     loadTextureIntoTab(newTab.id, popup.resolvedPath);
-  }, [tabs, loadTextureIntoTab]);
+  }, [tabs, loadTextureIntoTab, saveCurrentViewState]);
 
   /** Open the file in the configured image editor (or OS default) */
   const handleTexEditImage = useCallback(async (resolvedPath: string | null | undefined) => {
@@ -1944,9 +2074,13 @@ function App() {
     const text = model.getValue();
     const errors = checkSyntax(text);
 
-    // Markers give the squiggly underline + problems list
+    // Markers give the squiggly underline + problems list.
+    // Errors (red) are for broken syntax, warnings (yellow) are for things
+    // that will convert but won't work as intended in-game.
     const markers: MonacoType.editor.IMarkerData[] = errors.map(err => ({
-      severity: monaco.MarkerSeverity.Error,
+      severity: err.severity === 'warning'
+        ? monaco.MarkerSeverity.Warning
+        : monaco.MarkerSeverity.Error,
       message: err.message,
       startLineNumber: err.line,
       startColumn: err.column,
@@ -1955,24 +2089,31 @@ function App() {
     }));
     monaco.editor.setModelMarkers(model, 'syntax-checker', markers);
 
-    // Decorations give the red line highlight + red minimap dot
-    const seenLines = new Set<number>();
-    const decorations: MonacoType.editor.IModelDeltaDecoration[] = [];
+    // Decorations give the line highlight + glyph dot + minimap indicator.
+    // Errors win over warnings — if a line has both, show red.
+    const lineSeverity = new Map<number, 'error' | 'warning'>();
     for (const err of errors) {
-      if (seenLines.has(err.line)) continue;
-      seenLines.add(err.line);
+      const prev = lineSeverity.get(err.line);
+      const sev = err.severity === 'warning' ? 'warning' : 'error';
+      if (prev === 'error') continue;
+      lineSeverity.set(err.line, sev);
+    }
+
+    const decorations: MonacoType.editor.IModelDeltaDecoration[] = [];
+    for (const [lineNum, sev] of lineSeverity.entries()) {
+      const isWarn = sev === 'warning';
       decorations.push({
-        range: new monaco.Range(err.line, 1, err.line, 1),
+        range: new monaco.Range(lineNum, 1, lineNum, 1),
         options: {
           isWholeLine: true,
-          className: 'syntax-error-line',
-          glyphMarginClassName: 'syntax-error-glyph',
+          className: isWarn ? 'syntax-warning-line' : 'syntax-error-line',
+          glyphMarginClassName: isWarn ? 'syntax-warning-glyph' : 'syntax-error-glyph',
           minimap: {
-            color: '#ff3333',
+            color: isWarn ? '#e6b800' : '#ff3333',
             position: monaco.editor.MinimapPosition.Inline,
           },
           overviewRuler: {
-            color: '#ff3333',
+            color: isWarn ? '#e6b800' : '#ff3333',
             position: monaco.editor.OverviewRulerLane.Full,
           },
         },
@@ -2198,6 +2339,41 @@ function App() {
     editorDisposablesRef.current.push(imgDecContentDisposable, imgDecModelDisposable);
     editorDisposablesRef.current.push({ dispose: () => { if (imgDecDebounce) clearTimeout(imgDecDebounce); editor.deltaDecorations(imgPathDecorations, []); } });
     // â”€â”€ End image path decorations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    // Material jump arrows (link <-> StaticMaterialDef)
+    let matJumpDecorations: string[] = [];
+    let matJumpDebounce: ReturnType<typeof setTimeout> | null = null;
+    const refreshMatJumpDecorations = () => {
+      const model = editor.getModel();
+      if (!model) return;
+      matJumpDecorations = editor.deltaDecorations(matJumpDecorations, findMaterialJumpDecorations(model));
+    };
+    const debouncedRefreshMatJumpDecorations = () => {
+      if (matJumpDebounce) clearTimeout(matJumpDebounce);
+      matJumpDebounce = setTimeout(refreshMatJumpDecorations, 300);
+    };
+    refreshMatJumpDecorations();
+    const matJumpContentDisposable = editor.onDidChangeModelContent(() => { debouncedRefreshMatJumpDecorations(); });
+    const matJumpModelDisposable = editor.onDidChangeModel(() => { refreshMatJumpDecorations(); });
+    editorDisposablesRef.current.push(matJumpContentDisposable, matJumpModelDisposable);
+    editorDisposablesRef.current.push({ dispose: () => { if (matJumpDebounce) clearTimeout(matJumpDebounce); editor.deltaDecorations(matJumpDecorations, []); } });
+
+    // Click handler for the jump arrows — parse the target line from the
+    // class name suffix and reveal it centered.
+    const matJumpClickDisposable = editor.onMouseDown((e) => {
+      const target = e.event.browserEvent.target as HTMLElement | null;
+      if (!target || !target.classList.contains('jade-jump-arrow')) return;
+      const match = Array.from(target.classList).find((c) => c.startsWith('jade-jump-to-'));
+      if (!match) return;
+      const targetLine = parseInt(match.slice('jade-jump-to-'.length), 10);
+      if (!Number.isFinite(targetLine)) return;
+      e.event.preventDefault();
+      e.event.stopPropagation();
+      editor.revealLineInCenter(targetLine, 0);
+      editor.setPosition({ lineNumber: targetLine, column: 1 });
+      editor.focus();
+    });
+    editorDisposablesRef.current.push(matJumpClickDisposable);
 
     // â”€â”€ Refocus editor on window focus (so hover works after alt-tab) â”€â”€â”€
     const onWindowFocus = () => { editor.focus(); };
@@ -2496,6 +2672,9 @@ function App() {
             t.id === activeTabId ? { ...t, content, isModified: false } : t
           )
         );
+        // Saved successfully — the jadelib texture inserts tracked for
+        // this bin are now persisted references, no cleanup needed.
+        jadelibInsertsRef.current.delete(activeTab.filePath);
         setStatusMessage(`Saved ${activeTab.filePath}`);
         statusMessageRef.current = `Saved ${activeTab.filePath}`;
         // Re-enable hash status updates after save
@@ -2779,6 +2958,7 @@ function App() {
 
   // Tool Operations
   const handleThemes = () => setShowThemesDialog(true);
+  const handleMaterialLibrary = () => setShowMaterialLibrary(true);
   const handlePreferences = () => setShowPreferencesDialog(true);
   const handleSettings = () => setShowSettingsDialog(true);
   const handleAbout = () => setShowAboutDialog(true);
@@ -3290,6 +3470,7 @@ function App() {
         onMaximize={handleMaximize}
         onClose={handleClose}
         onParticleEditor={handleParticleEditor}
+        onMaterialLibrary={handleMaterialLibrary}
         onQuartzAction={handleSendToQuartz}
       />
 
@@ -3317,6 +3498,7 @@ function App() {
         onThemes={handleThemes}
         onSettings={handleSettings}
         onAbout={handleAbout}
+        onMaterialLibrary={handleMaterialLibrary}
         recentFiles={recentFiles}
         onOpenRecentFile={openFileFromPath}
         openFileDisabled={openFileDisabled}
@@ -3333,7 +3515,7 @@ function App() {
         />
       )}
 
-      {tabs.length === 0 && <WelcomeScreen onOpenFile={handleOpen} openFileDisabled={openFileDisabled} recentFiles={recentFiles} onOpenRecentFile={openFileFromPath} />}
+      {tabs.length === 0 && <WelcomeScreen onOpenFile={handleOpen} openFileDisabled={openFileDisabled} recentFiles={recentFiles} onOpenRecentFile={openFileFromPath} onMaterialLibrary={handleMaterialLibrary} appIcon={appIcon} />}
 
       {/* Keep the editor container (and Monaco) always mounted.
           Unmounting Monaco while a requestAnimationFrame render is in-flight
@@ -3422,6 +3604,7 @@ function App() {
             editorContent={editorRef.current?.getValue() || activeTab.content}
             onContentChange={handleGeneralEditContentChange}
             filePath={activeTab.filePath ?? undefined}
+            onLibraryInsert={recordJadelibInsert}
           />
         )}
         {activeTab && isEditorTab(activeTab) && (
@@ -3491,6 +3674,12 @@ function App() {
         onClose={() => setShowThemesDialog(false)}
         onThemeApplied={handleThemeApplied}
       />
+
+      {showMaterialLibrary && (
+        <MaterialLibraryBrowser
+          onClose={() => setShowMaterialLibrary(false)}
+        />
+      )}
 
       <SettingsDialog
         isOpen={showSettingsDialog}

@@ -31,9 +31,40 @@ fn notify_shell_change() {
     }
 }
 
+/// Default Jade icon bytes, embedded at compile time from src-tauri/icons/icon.ico.
+/// This is the authoritative copy the file association registry points at so
+/// Explorer always renders the current high-res version instead of a stale
+/// cached render keyed to the exe path.
+#[cfg(windows)]
+const EMBEDDED_JADE_ICO: &[u8] = include_bytes!("../icons/icon.ico");
+
+/// Ensure a standalone `jade.ico` exists in the config dir with the current
+/// embedded icon bytes. Writes (or overwrites) the file only when its contents
+/// differ from the embedded copy, so version bumps invalidate Windows' icon
+/// cache via a changed file mtime without rewriting on every launch.
+#[cfg(windows)]
+pub fn ensure_default_icon_file() -> Result<std::path::PathBuf, String> {
+    let config_dir = crate::app_commands::get_config_dir()?;
+    let path = config_dir.join("jade.ico");
+
+    let needs_write = match std::fs::read(&path) {
+        Ok(existing) => existing != EMBEDDED_JADE_ICO,
+        Err(_) => true,
+    };
+
+    if needs_write {
+        std::fs::write(&path, EMBEDDED_JADE_ICO)
+            .map_err(|e| format!("Failed to write jade.ico: {}", e))?;
+        println!("[FileAssoc] Wrote default jade.ico to {:?}", path);
+    }
+
+    Ok(path)
+}
+
 /// Resolve the icon value for the file association DefaultIcon registry key.
 /// If a custom or builtin icon .ico exists in the config dir, use that;
-/// otherwise fall back to the exe's embedded icon.
+/// otherwise fall back to the standalone jade.ico we ship in the config dir;
+/// as a last resort use the exe's embedded icon.
 #[cfg(windows)]
 fn resolve_association_icon() -> Result<String, String> {
     let exe_path = get_exe_path()?;
@@ -60,7 +91,15 @@ fn resolve_association_icon() -> Result<String, String> {
         }
     }
 
-    // Default: use the exe's embedded icon
+    // Prefer the standalone jade.ico in the config dir over the exe-embedded
+    // icon. Explorer caches file-association icons per DefaultIcon string, so
+    // pointing at a real file path (whose mtime changes when the embedded
+    // bytes change) forces a re-render on upgrade.
+    if let Ok(default_ico) = ensure_default_icon_file() {
+        return Ok(default_ico.to_string_lossy().to_string());
+    }
+
+    // Last-resort fallback: exe-embedded icon.
     Ok(format!("{},0", exe_path))
 }
 
@@ -529,7 +568,7 @@ fn read_skn_materials(skn_path: &std::path::Path) -> Result<Vec<String>, String>
 
     let major = cur.read_u16::<LittleEndian>()
         .map_err(|_| "SKN too short: no version")?;
-    let minor = cur.read_u16::<LittleEndian>()
+    let _minor = cur.read_u16::<LittleEndian>()
         .map_err(|_| "SKN too short: no minor version")?;
 
     if major == 0 {
@@ -558,14 +597,11 @@ fn read_skn_materials(skn_path: &std::path::Path) -> Result<Vec<String>, String>
             .to_string();
 
         // Skip rest of submesh header: startVertex(u32) + vertexCount(u32) + startIndex(u32) + indexCount(u32) = 16 bytes
+        // Total per-submesh size is 80 bytes (64 name + 16 fields) for all
+        // versions. The bin_hash that appears in .skn.json dumps is computed
+        // from the name at parse time — it isn't stored in the binary.
         cur.seek(SeekFrom::Current(16))
             .map_err(|_| "Failed to skip submesh header fields")?;
-
-        // Version >= 4 has an extra u32 field (unique flag / startFace)
-        if major >= 4 || (major == 2 && minor == 1) {
-            cur.seek(SeekFrom::Current(4))
-                .map_err(|_| "Failed to skip extra submesh field")?;
-        }
 
         if !name.is_empty() {
             materials.push(name);
@@ -586,6 +622,10 @@ pub struct AutoMaterialResult {
     pub matches: Vec<MaterialMatch>,
     pub skn_path: String,
     pub unmatched: Vec<String>,
+    /// Every texture file found in the skin's texture folder, as game
+    /// asset-relative paths. Used by the dialog's "manual match" mode so
+    /// the user can pick any detected texture, not just the auto-matched one.
+    pub textures: Vec<String>,
 }
 
 /// Given the bin file path and the simpleSkin asset path, resolve the SKN,
@@ -700,10 +740,18 @@ pub async fn auto_material_override(
         unmatched.push(mat.clone());
     }
 
+    // All detected textures as asset-relative paths, sorted for stable UI.
+    let mut all_textures: Vec<String> = tex_files
+        .values()
+        .map(|p| extract_asset_relative(p))
+        .collect();
+    all_textures.sort();
+
     Ok(AutoMaterialResult {
         matches,
         skn_path: skn_resolved,
         unmatched,
+        textures: all_textures,
     })
 }
 

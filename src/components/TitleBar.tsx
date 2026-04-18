@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import './TitleBar.css';
-import { CrystalBallIcon, PaletteIcon, PencilIcon, SettingsIcon, HelpIcon, MinimizeIcon, MaximizeIcon, RestoreIcon, CloseIcon, QuartzIcon } from './Icons';
+import { CrystalBallIcon, PaletteIcon, PencilIcon, SettingsIcon, HelpIcon, MinimizeIcon, MaximizeIcon, RestoreIcon, CloseIcon, QuartzIcon, LibraryIcon } from './Icons';
 
 interface TitleBarProps {
     appIcon?: string;
@@ -13,6 +13,7 @@ interface TitleBarProps {
     onMaximize: () => void;
     onClose: () => void;
     onParticleEditor?: () => void;
+    onMaterialLibrary?: () => void;
     onQuartzAction?: (mode: 'paint' | 'port' | 'bineditor' | 'vfxhub') => void;
 }
 
@@ -27,6 +28,7 @@ export default function TitleBar({
     onMaximize,
     onClose,
     onParticleEditor,
+    onMaterialLibrary,
     onQuartzAction,
 }: TitleBarProps) {
     const [currentIcon, setCurrentIcon] = useState(appIcon);
@@ -70,6 +72,14 @@ export default function TitleBar({
                         onClick={() => onParticleEditor?.()}
                     >
                         <CrystalBallIcon size={16} />
+                    </button>
+
+                    <button
+                        className="toolbar-btn"
+                        title="Material Library"
+                        onClick={() => onMaterialLibrary?.()}
+                    >
+                        <LibraryIcon size={16} />
                     </button>
 
                     <div className="toolbar-menu-wrap" ref={quartzMenuRef}>

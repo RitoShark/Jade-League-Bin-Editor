@@ -2,6 +2,7 @@ mod bin_commands;
 mod app_commands;
 mod hash_commands;
 mod extra_commands;
+mod library_commands;
 mod core;
 mod error;
 
@@ -59,6 +60,17 @@ pub fn run() {
             // Migrate preferences from old location if needed
             if let Err(e) = app_commands::migrate_preferences_if_needed(&app_handle) {
                 eprintln!("[Setup] Failed to migrate preferences: {}", e);
+            }
+
+            // Write the standalone jade.ico to the config dir and refresh
+            // the .bin file association's DefaultIcon so Explorer picks up
+            // the current high-res version on next render.
+            #[cfg(windows)]
+            {
+                if let Err(e) = extra_commands::ensure_default_icon_file() {
+                    eprintln!("[Setup] Failed to write default icon file: {}", e);
+                }
+                extra_commands::update_association_icon();
             }
 
             // Restore window state immediately
@@ -193,6 +205,9 @@ pub fn run() {
             app_commands::set_custom_icon,
             app_commands::clear_custom_icon,
             app_commands::set_builtin_icon,
+            app_commands::set_custom_background_image,
+            app_commands::get_custom_background_image,
+            app_commands::clear_custom_background_image,
             app_commands::get_builtin_icon_name,
             app_commands::open_url,
             app_commands::save_window_state,
@@ -235,6 +250,27 @@ pub fn run() {
             app_commands::send_bin_to_quartz,
             app_commands::get_quartz_install_status,
             app_commands::notify_quartz_bin_updated,
+            // Material Library
+            library_commands::library_fetch_index,
+            library_commands::library_get_cached_index,
+            library_commands::library_fetch_material,
+            library_commands::library_get_cached_material,
+            library_commands::library_list_downloaded,
+            library_commands::library_list_outdated,
+            library_commands::library_update_material,
+            library_commands::library_update_all_outdated,
+            library_commands::library_delete_material,
+            library_commands::library_get_preview,
+            library_commands::library_get_champion_map,
+            library_commands::library_clear_all,
+            library_commands::library_open_folder,
+            library_commands::library_detect_mod_folder,
+            library_commands::library_copy_textures_to_mod,
+            library_commands::library_remove_inserted_textures,
+            library_commands::library_get_update_mode,
+            library_commands::library_set_update_mode,
+            library_commands::library_get_status,
+            library_commands::library_trigger_background_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
