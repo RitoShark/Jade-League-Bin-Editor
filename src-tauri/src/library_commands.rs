@@ -25,7 +25,7 @@ const REPO_BASE_URL: &str = "https://raw.githubusercontent.com/RitoShark/Jade-Li
 /// Temporary local-development override. When `Some(path)`, the fetch helpers
 /// treat URLs as relative paths under this folder and read straight from disk
 /// instead of hitting GitHub. Set to `None` once jade-library is published.
-const LOCAL_DEV_PATH: Option<&str> = Some("C:/Users/Jovan/Desktop/jadelibrary/");
+const LOCAL_DEV_PATH: Option<&str> = None;
 
 const INDEX_FILE: &str = "index.json";
 const META_FILE: &str = "meta.json";
@@ -1011,9 +1011,12 @@ pub struct ModFolderDetection {
     pub mod_root: Option<String>,
 }
 
-/// Walk up the parent directories of the given bin file looking for an `assets`
-/// folder (case-insensitive). If found, return its path. First match wins.
-/// Mirrors the pattern used by `resolve_asset_path` in app_commands.rs.
+/// Walk up the parent directories of the given bin file looking for a
+/// proper League mod root. A proper mod has EITHER `META/info.json` (cslol
+/// / Fantome convention) OR a `WAD/` directory. Just finding an `assets/`
+/// folder isn't enough — someone could have a random bin in Downloads with
+/// an unrelated `assets/` folder nearby, and we don't want to drop texture
+/// files into an arbitrary location.
 #[tauri::command]
 pub async fn library_detect_mod_folder(bin_path: String) -> Result<ModFolderDetection, String> {
     let path = std::path::Path::new(&bin_path);
@@ -1024,21 +1027,14 @@ pub async fn library_detect_mod_folder(bin_path: String) -> Result<ModFolderDete
     };
 
     while let Some(current) = dir {
-        if let Ok(entries) = fs::read_dir(&current) {
-            for entry in entries.flatten() {
-                let child = entry.path();
-                if child.is_dir() {
-                    if let Some(name) = child.file_name().and_then(|n| n.to_str()) {
-                        if name.eq_ignore_ascii_case("assets") {
-                            return Ok(ModFolderDetection {
-                                detected: true,
-                                assets_path: Some(child.to_string_lossy().replace('\\', "/")),
-                                mod_root: Some(current.to_string_lossy().replace('\\', "/")),
-                            });
-                        }
-                    }
-                }
-            }
+        if is_mod_root(&current) {
+            // Optional: also surface the assets/ path for display purposes
+            let assets = find_assets_child(&current);
+            return Ok(ModFolderDetection {
+                detected: true,
+                assets_path: assets.map(|p| p.to_string_lossy().replace('\\', "/")),
+                mod_root: Some(current.to_string_lossy().replace('\\', "/")),
+            });
         }
         dir = current.parent().map(|p| p.to_path_buf());
     }
@@ -1048,6 +1044,172 @@ pub async fn library_detect_mod_folder(bin_path: String) -> Result<ModFolderDete
         assets_path: None,
         mod_root: None,
     })
+}
+
+fn is_mod_root(dir: &std::path::Path) -> bool {
+    // META/info.json — cslol-manager / Fantome format
+    let meta_info = dir.join("META").join("info.json");
+    if meta_info.is_file() {
+        return true;
+    }
+    let meta_info_lower = dir.join("meta").join("info.json");
+    if meta_info_lower.is_file() {
+        return true;
+    }
+    // Look through the directory for signal folders. A proper mod has:
+    //   - a WAD/ subdirectory (cslol working tree), OR
+    //   - both DATA/ and ASSETS/ at the same level (raw wad-extract output)
+    // Just having an assets folder alone isn't enough — that could be any
+    // random folder. The paired DATA + ASSETS signal uniquely identifies
+    // a League mod tree.
+    let mut has_wad = false;
+    let mut has_data = false;
+    let mut has_assets = false;
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() { continue; }
+            if let Some(name) = entry.file_name().to_str() {
+                let lower = name.to_ascii_lowercase();
+                match lower.as_str() {
+                    "wad"    => has_wad = true,
+                    "data"   => has_data = true,
+                    "assets" => has_assets = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+    has_wad || (has_data && has_assets)
+}
+
+fn find_assets_child(dir: &std::path::Path) -> Option<PathBuf> {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() { continue; }
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.eq_ignore_ascii_case("assets") {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Copy every texture from a cached library material into the user's mod
+/// folder at `assets/jadelib/<id>/<filename>` — matching the texture paths
+/// embedded in the material's snippet.txt so the mod's references resolve.
+///
+/// Idempotent: skips files that already exist at the target with the same
+/// size. Returns the list of filenames actually copied.
+#[tauri::command]
+pub async fn library_copy_textures_to_mod(
+    material_path: String,
+    mod_root: String,
+) -> Result<Vec<String>, String> {
+    let cache_dir = get_material_dir(&material_path)?;
+    let snippet_path = cache_dir.join("snippet.json");
+
+    // Read the snippet metadata to find the material's id and texture list.
+    let snippet_text = fs::read_to_string(&snippet_path)
+        .map_err(|e| format!("Failed to read {}: {}", snippet_path.display(), e))?;
+    let snippet: MaterialSnippet = serde_json::from_str(&snippet_text)
+        .map_err(|e| format!("Failed to parse snippet.json: {}", e))?;
+
+    if snippet.texture_files.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Target directory mirrors the repather's convention:
+    //   <mod_root>/assets/jadelib/<id>/
+    let target_dir = PathBuf::from(&mod_root)
+        .join("assets")
+        .join("jadelib")
+        .join(&snippet.id);
+    fs::create_dir_all(&target_dir)
+        .map_err(|e| format!("Failed to create {}: {}", target_dir.display(), e))?;
+
+    let mut copied = Vec::new();
+    let src_textures = cache_dir.join("textures");
+
+    for tex in &snippet.texture_files {
+        // Guard against path traversal via crafted filenames
+        if tex.name.contains('/') || tex.name.contains('\\') || tex.name.contains("..") {
+            continue;
+        }
+        let src = src_textures.join(&tex.name);
+        if !src.exists() {
+            // Try case-insensitive match for cross-platform safety
+            if let Ok(entries) = fs::read_dir(&src_textures) {
+                let lower = tex.name.to_lowercase();
+                let mut found: Option<PathBuf> = None;
+                for entry in entries.flatten() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        if name.to_lowercase() == lower {
+                            found = Some(entry.path());
+                            break;
+                        }
+                    }
+                }
+                if found.is_none() { continue; }
+                let dst = target_dir.join(&tex.name);
+                fs::copy(found.unwrap(), &dst)
+                    .map_err(|e| format!("Copy {} → {}: {}", tex.name, dst.display(), e))?;
+                copied.push(tex.name.clone());
+                continue;
+            }
+            continue;
+        }
+        let dst = target_dir.join(&tex.name);
+
+        // Skip if already present at the same size — avoids pointless I/O
+        // when the user re-inserts the same material.
+        if let (Ok(sm), Ok(dm)) = (fs::metadata(&src), fs::metadata(&dst)) {
+            if sm.len() == dm.len() {
+                continue;
+            }
+        }
+        fs::copy(&src, &dst)
+            .map_err(|e| format!("Copy {} → {}: {}", tex.name, dst.display(), e))?;
+        copied.push(tex.name.clone());
+    }
+
+    Ok(copied)
+}
+
+/// Remove a previously-inserted library material's texture folder from
+/// the user's mod at `<mod_root>/assets/jadelib/<id>/`. Used when the
+/// user closes a bin without saving so we don't leave orphan textures
+/// the game will never read. Safe: only touches the specific jadelib
+/// subfolder, never walks outside it.
+#[tauri::command]
+pub async fn library_remove_inserted_textures(
+    mod_root: String,
+    id: String,
+) -> Result<bool, String> {
+    if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
+        return Err(format!("Invalid id: {}", id));
+    }
+    let target = PathBuf::from(&mod_root)
+        .join("assets")
+        .join("jadelib")
+        .join(&id);
+    if !target.exists() {
+        return Ok(false);
+    }
+    fs::remove_dir_all(&target)
+        .map_err(|e| format!("Failed to remove {}: {}", target.display(), e))?;
+
+    // If the parent `jadelib` folder is now empty, remove it too so we
+    // don't leave a dangling empty folder in the mod.
+    let jadelib_dir = PathBuf::from(&mod_root).join("assets").join("jadelib");
+    if let Ok(mut entries) = fs::read_dir(&jadelib_dir) {
+        if entries.next().is_none() {
+            let _ = fs::remove_dir(&jadelib_dir);
+        }
+    }
+    Ok(true)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

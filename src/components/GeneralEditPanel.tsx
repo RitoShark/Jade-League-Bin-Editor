@@ -21,6 +21,10 @@ interface GeneralEditPanelProps {
   editorContent: string;
   onContentChange: (newContent: string) => void;
   filePath?: string;
+  /** Called after a library material's textures are successfully copied
+   *  into the user's mod. The parent uses this to track per-session
+   *  inserts so it can offer cleanup when the user closes without saving. */
+  onLibraryInsert?: (filePath: string, modRoot: string, id: string) => void;
 }
 
 export default function GeneralEditPanel({
@@ -28,7 +32,8 @@ export default function GeneralEditPanel({
   onClose,
   editorContent,
   onContentChange,
-  filePath
+  filePath,
+  onLibraryInsert
 }: GeneralEditPanelProps) {
   // Animation state - for slide down animation like Monaco
   const [isVisible, setIsVisible] = useState(false);
@@ -861,7 +866,38 @@ export default function GeneralEditPanel({
       content = injectMaterialDefSnippet(content, snippetText);
 
       onContentChange(content);
-      setMaterialOverrideStatus(`Inserted ${finalName}`);
+
+      // 6. Copy the library material's textures into the user's mod folder
+      //    at assets/jadelib/<id>/<filename> so the paths embedded in the
+      //    snippet actually resolve to files on disk. Without this step,
+      //    the bin references paths like assets/jadelib/toon-shading/
+      //    ToonShading.tex but nothing is there, and the game falls back
+      //    to a missing-texture placeholder.
+      try {
+        const modInfo = await invoke<{ mod_root: string | null }>(
+          'library_detect_mod_folder',
+          { binPath: filePath }
+        );
+        if (modInfo.mod_root) {
+          const copied = await invoke<string[]>('library_copy_textures_to_mod', {
+            materialPath: library.materialPath,
+            modRoot: modInfo.mod_root,
+          });
+          // Record the insert so the parent can offer cleanup if the user
+          // closes the bin without saving.
+          if (filePath) onLibraryInsert?.(filePath, modInfo.mod_root, snippet.id);
+          setMaterialOverrideStatus(
+            `Inserted ${finalName} · copied ${copied.length} texture${copied.length === 1 ? '' : 's'} to assets/jadelib/${snippet.id}/`
+          );
+        } else {
+          setMaterialOverrideStatus(
+            `Inserted ${finalName} — couldn't find a mod root (need META/info.json, a WAD/ folder, or DATA + ASSETS siblings). Textures not copied.`
+          );
+        }
+      } catch (e) {
+        console.warn('Texture copy failed:', e);
+        setMaterialOverrideStatus(`Inserted ${finalName} (texture copy failed: ${e})`);
+      }
       setMaterialOverrideExists(true);
     } catch (e) {
       console.error('Library insert failed:', e);

@@ -181,6 +181,19 @@ function App() {
   const handleCompareRef = useRef<(() => void) | null>(null);
   const lastRejectedTabCloseRef = useRef<{ tabId: string; at: number } | null>(null);
 
+  // Tracks library material texture inserts performed during this editing
+  // session, keyed by bin filePath. Used to offer cleanup when the user
+  // closes without saving, and cleared when the user saves the bin.
+  const jadelibInsertsRef = useRef<Map<string, Array<{ modRoot: string; id: string }>>>(new Map());
+  const recordJadelibInsert = useCallback((filePath: string, modRoot: string, id: string) => {
+    const list = jadelibInsertsRef.current.get(filePath) ?? [];
+    // Deduplicate — one entry per (modRoot, id) pair
+    if (!list.some(e => e.modRoot === modRoot && e.id === id)) {
+      list.push({ modRoot, id });
+    }
+    jadelibInsertsRef.current.set(filePath, list);
+  }, []);
+
   // Get the active tab
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
   const isEditorTab = (tab: EditorTab | null | undefined): boolean =>
@@ -1191,6 +1204,32 @@ function App() {
       if (!confirm(`"${tabToClose.fileName}" has unsaved changes. Close anyway?`)) {
         lastRejectedTabCloseRef.current = { tabId, at: Date.now() };
         return;
+      }
+
+      // If this bin had library texture inserts during the session, the
+      // user is now discarding those references. Offer to also delete
+      // the texture folders we dropped into the mod so they don't
+      // linger as orphan files. Cleanup is fire-and-forget so the close
+      // handler can stay synchronous.
+      if (tabToClose.filePath) {
+        const inserts = jadelibInsertsRef.current.get(tabToClose.filePath);
+        if (inserts && inserts.length > 0) {
+          const summary = inserts.map(e => `assets/jadelib/${e.id}/`).join('\n  ');
+          const shouldDelete = confirm(
+            `You inserted library material textures in this session:\n\n  ${summary}\n\nRemove these folders from your mod too?`
+          );
+          if (shouldDelete) {
+            for (const e of inserts) {
+              invoke('library_remove_inserted_textures', {
+                modRoot: e.modRoot,
+                id: e.id,
+              }).catch((err) => {
+                console.warn(`Failed to remove jadelib/${e.id}:`, err);
+              });
+            }
+          }
+          jadelibInsertsRef.current.delete(tabToClose.filePath);
+        }
       }
     }
 
@@ -2635,6 +2674,9 @@ function App() {
             t.id === activeTabId ? { ...t, content, isModified: false } : t
           )
         );
+        // Saved successfully — the jadelib texture inserts tracked for
+        // this bin are now persisted references, no cleanup needed.
+        jadelibInsertsRef.current.delete(activeTab.filePath);
         setStatusMessage(`Saved ${activeTab.filePath}`);
         statusMessageRef.current = `Saved ${activeTab.filePath}`;
         // Re-enable hash status updates after save
@@ -3564,6 +3606,7 @@ function App() {
             editorContent={editorRef.current?.getValue() || activeTab.content}
             onContentChange={handleGeneralEditContentChange}
             filePath={activeTab.filePath ?? undefined}
+            onLibraryInsert={recordJadelibInsert}
           />
         )}
         {activeTab && isEditorTab(activeTab) && (

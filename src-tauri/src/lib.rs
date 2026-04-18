@@ -265,6 +265,8 @@ pub fn run() {
             library_commands::library_clear_all,
             library_commands::library_open_folder,
             library_commands::library_detect_mod_folder,
+            library_commands::library_copy_textures_to_mod,
+            library_commands::library_remove_inserted_textures,
             library_commands::library_get_update_mode,
             library_commands::library_set_update_mode,
             library_commands::library_get_status,
