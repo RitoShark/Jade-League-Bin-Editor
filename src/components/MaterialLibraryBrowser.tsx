@@ -850,12 +850,24 @@ export default function MaterialLibraryBrowser({ onClose, onInsert }: MaterialLi
 
     let cancelled = false;
     const BATCH = 30;
+    // Look up by path so we can forward the index entry's champion/skin
+    // fields to the backend. Without these, materials the user hasn't
+    // downloaded can't get a thumbnail (no local snippet.json to read).
+    const byPath = new Map(index?.materials.map((m) => [m.path, m]) ?? []);
     (async () => {
       for (let i = 0; i < toFetch.length; i += BATCH) {
         if (cancelled) return;
         const batch = toFetch.slice(i, i + BATCH);
         const results = await Promise.allSettled(
-          batch.map((p) => invoke<string | null>('library_get_preview', { path: p }).then((url) => ({ p, url })))
+          batch.map((p) => {
+            const entry = byPath.get(p);
+            return invoke<string | null>('library_get_preview', {
+              path: p,
+              champion: entry?.champion ?? null,
+              skin: entry?.skin ?? null,
+              hasPreview: entry?.hasPreview ?? false,
+            }).then((url) => ({ p, url }));
+          })
         );
         if (cancelled) return;
         setPreviewCache((prev) => {
@@ -1130,16 +1142,69 @@ export default function MaterialLibraryBrowser({ onClose, onInsert }: MaterialLi
                           loading="lazy"
                           onError={(e) => {
                             // Fallback strategy:
-                            //   1. 3D render (CD chroma-images) is EXACT MATCH
-                            //      ONLY — if it 404s, switch to Data Dragon
-                            //      for the same skin number immediately
-                            //      (never walk to a neighbor skin's 3D render,
-                            //      that would display the wrong character).
+                            //   0. Repo preview.png → thumb.png (curated
+                            //      materials use thumb.*, extracted ones
+                            //      use preview.*, both land under the same
+                            //      materials/<path>/ URL).
+                            //   1. 3D render (CD chroma-images) is EXACT
+                            //      MATCH ONLY — if it 404s, switch to
+                            //      Data Dragon for the same skin number.
                             //   2. 2D splash (Data Dragon) MAY walk back
-                            //      skin→skin-1→…→base since 2D splashes are
-                            //      only unique per main skin and chromas
+                            //      skin→skin-1→…→base since chromas
                             //      share their parent's splash.
                             const img = e.target as HTMLImageElement;
+
+                            // Step 0 — try thumb.png / thumb.jpg / preview.jpg
+                            //          if the initial preview.png missed.
+                            const repoRe = /\/materials\/[^?]*\/(thumb|preview)\.(png|jpg|jpeg|webp)$/;
+                            const repoMatch = img.src.match(repoRe);
+                            if (repoMatch) {
+                              const [curStem, curExt] = [repoMatch[1], repoMatch[2]];
+                              const candidates: Array<[string, string]> = [
+                                ['thumb',   'png'],
+                                ['thumb',   'jpg'],
+                                ['preview', 'jpg'],
+                                ['preview', 'webp'],
+                                ['thumb',   'webp'],
+                              ];
+                              const next = candidates.find(
+                                ([s, x]) => !(s === curStem && x === curExt)
+                              );
+                              // Track which variations we've already tried via a
+                              // dataset attribute so we don't loop forever.
+                              const tried = (img.dataset.previewTries || '').split(',');
+                              tried.push(`${curStem}.${curExt}`);
+                              const fresh = candidates.find(
+                                ([s, x]) => !tried.includes(`${s}.${x}`)
+                              );
+                              if (fresh) {
+                                img.dataset.previewTries = tried.join(',');
+                                img.src = img.src.replace(
+                                  /\/(thumb|preview)\.(png|jpg|jpeg|webp)$/,
+                                  `/${fresh[0]}.${fresh[1]}`
+                                );
+                                return;
+                              }
+                              // All repo preview variations exhausted — fall
+                              // through to the champion splash fallback.
+                              if (!material.champion) {
+                                img.style.display = 'none';
+                                return;
+                              }
+                              const champId = championMap[material.champion];
+                              const skinNum = material.skin
+                                ? parseInt(material.skin.replace(/^skin/i, ''), 10) || 0
+                                : 0;
+                              if (champId) {
+                                img.src = `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-chroma-images/${champId}/${champId * 1000 + skinNum}.png`;
+                                return;
+                              }
+                              // No champion id known, hide.
+                              img.style.display = 'none';
+                              return;
+                              void next;
+                            }
+
                             if (!material.champion) {
                               img.style.display = 'none';
                               return;

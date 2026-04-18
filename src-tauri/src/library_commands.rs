@@ -901,23 +901,48 @@ pub async fn library_get_champion_map() -> Result<HashMap<String, u32>, String> 
 }
 
 #[tauri::command]
-pub async fn library_get_preview(path: String) -> Result<Option<String>, String> {
+pub async fn library_get_preview(
+    path: String,
+    champion: Option<String>,
+    skin: Option<String>,
+    has_preview: Option<bool>,
+) -> Result<Option<String>, String> {
     // First, check the local %APPDATA% cache.
     if let Ok(cache_dir) = get_material_dir(&path) {
         if let Some(url) = read_local_preview_as_data_url(&cache_dir) {
             return Ok(Some(url));
         }
     }
-    // Second, check the LOCAL_DEV_PATH copy of the repo if set (so curated
-    // materials without a remote cache entry still get their preview).
+    // Second, check the LOCAL_DEV_PATH copy of the repo if set.
     if let Some(dev) = LOCAL_DEV_PATH {
         let dev_dir = PathBuf::from(dev).join("materials").join(&path);
         if let Some(url) = read_local_preview_as_data_url(&dev_dir) {
             return Ok(Some(url));
         }
     }
-    // Third, fall back to a Data Dragon splash URL built from the snippet's
-    // source metadata. Read snippet.json from wherever it lives.
+
+    // Third, if the catalog says this material ships a preview image in
+    // the repo, return the raw GitHub URL. Frontend can onError-fall-back
+    // across common filenames (thumb / preview) via multiple extensions.
+    if has_preview.unwrap_or(false) {
+        return Ok(Some(format!("{}materials/{}/preview.png", REPO_BASE_URL, path)));
+    }
+
+    // Fourth, splash URL from champion + skin if the frontend passed them.
+    // This works for any champion material without needing snippet.json
+    // on disk — important now that LOCAL_DEV_PATH is off and uncached
+    // materials have no local snippet to read.
+    if let Some(champ) = champion.as_deref().filter(|s| !s.is_empty()) {
+        let skin_num = skin
+            .as_deref()
+            .and_then(|s| parse_skin_number(s))
+            .unwrap_or(0);
+        if let Some(url) = splash_url_from_parts(champ, skin_num).await {
+            return Ok(Some(url));
+        }
+    }
+
+    // Last, try reading a cached snippet.json as a final source fallback.
     let snippet_json = read_snippet_json_any(&path);
     if let Some(json) = snippet_json {
         if let Some(url) = splash_url_from_source(&json).await {
@@ -925,6 +950,34 @@ pub async fn library_get_preview(path: String) -> Result<Option<String>, String>
         }
     }
     Ok(None)
+}
+
+fn parse_skin_number(skin: &str) -> Option<u32> {
+    let s = skin.trim().to_lowercase();
+    if !s.starts_with("skin") { return None; }
+    let rest = &s[4..];
+    if rest.is_empty() { return None; }
+    rest.parse::<u32>().ok()
+}
+
+async fn splash_url_from_parts(champion: &str, skin_num: u32) -> Option<String> {
+    let champ_lower = champion.to_lowercase();
+    if let Some(champ_id) = get_champion_numeric_id(&champ_lower).await {
+        let full_skin_id = champ_id * 1000 + skin_num;
+        return Some(format!(
+            "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-chroma-images/{}/{}.png",
+            champ_id, full_skin_id
+        ));
+    }
+    // Fallback: Data Dragon flat splash (champion-only, always available).
+    let mut alias = champ_lower;
+    if let Some(c) = alias.get_mut(0..1) {
+        c.make_ascii_uppercase();
+    }
+    Some(format!(
+        "https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{}_{}.jpg",
+        alias, skin_num
+    ))
 }
 
 /// Try the local cache first, then the LOCAL_DEV_PATH repo copy.
