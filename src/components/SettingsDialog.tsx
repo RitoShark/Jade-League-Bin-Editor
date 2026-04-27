@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { marked } from 'marked';
-import { HashIcon, SettingsIcon, ArrowUpIcon, ConverterIcon, LibraryIcon } from './Icons';
+import { HashIcon, SettingsIcon, ArrowUpIcon, ConverterIcon, LibraryIcon, BoltIcon } from './Icons';
 import './SettingsDialog.css';
 
 interface SettingsDialogProps {
@@ -33,15 +33,85 @@ interface PreloadStatus {
     memory_bytes: number;
 }
 
-type NavSection = 'hashes' | 'converter' | 'behavior' | 'library' | 'updates';
+type NavSection = 'hashes' | 'converter' | 'behavior' | 'library' | 'performance' | 'updates';
 
 const NAV_ITEMS: { id: NavSection; label: string; icon: React.ReactNode }[] = [
-    { id: 'hashes',    label: 'Hash Files',    icon: <HashIcon size={15} />     },
-    { id: 'converter', label: 'Converter',     icon: <ConverterIcon size={15} /> },
-    { id: 'behavior',  label: 'App Behavior',  icon: <SettingsIcon size={15} /> },
-    { id: 'library',   label: 'Library',       icon: <LibraryIcon size={15} /> },
-    { id: 'updates',   label: 'Updates',        icon: <ArrowUpIcon size={15} /> },
+    { id: 'hashes',      label: 'Hash Files',    icon: <HashIcon size={15} />     },
+    { id: 'converter',   label: 'Converter',     icon: <ConverterIcon size={15} /> },
+    { id: 'behavior',    label: 'App Behavior',  icon: <SettingsIcon size={15} /> },
+    { id: 'library',     label: 'Library',       icon: <LibraryIcon size={15} /> },
+    { id: 'performance', label: 'Performance',   icon: <BoltIcon size={15} /> },
+    { id: 'updates',     label: 'Updates',       icon: <ArrowUpIcon size={15} /> },
 ];
+
+/* ── Performance prefs ──
+   Each editor feature can be: kept on always, automatically disabled on
+   "big" files (default >50k lines), or always off. The frontend evaluates
+   these against the active document line count to derive Monaco options.
+*/
+type PerfMode = 'on' | 'auto' | 'off';
+
+const PERF_KEYS = [
+    'minimap',
+    'bracketColors',
+    'occurrencesHighlight',
+    'selectionHighlight',
+    'lineHighlight',
+    'folding',
+    'stopRenderingLine',
+] as const;
+type PerfKey = typeof PERF_KEYS[number];
+
+const PERF_PREF_KEY: Record<PerfKey, string> = {
+    minimap:              'Perf_Minimap',
+    bracketColors:        'Perf_BracketColors',
+    occurrencesHighlight: 'Perf_OccurrencesHighlight',
+    selectionHighlight:   'Perf_SelectionHighlight',
+    lineHighlight:        'Perf_LineHighlight',
+    folding:              'Perf_Folding',
+    stopRenderingLine:    'Perf_StopRenderingLine',
+};
+
+const PERF_LABEL: Record<PerfKey, { title: string; description: string }> = {
+    minimap: {
+        title: 'Minimap',
+        description: 'Thumbnail of the whole file on the right edge. Has to render every line on each change — biggest cost on huge files.',
+    },
+    bracketColors: {
+        title: 'Bracket pair colorization',
+        description: 'Colors matching brackets so structure is easier to scan. Re-walks the bracket tree on every edit.',
+    },
+    occurrencesHighlight: {
+        title: 'Occurrence highlights',
+        description: 'Highlights other instances of the symbol under the cursor. Scans the document on cursor moves.',
+    },
+    selectionHighlight: {
+        title: 'Selection highlights',
+        description: 'Highlights other matches of the current selection. Same scan cost as occurrence highlighting.',
+    },
+    lineHighlight: {
+        title: 'Active line highlight',
+        description: 'Tints the row the caret is on across the full editor width. Restrict to the gutter to skip the full-width paint.',
+    },
+    folding: {
+        title: 'Code folding',
+        description: 'Lets you collapse blocks. Folding analyzes structure on every change.',
+    },
+    stopRenderingLine: {
+        title: 'Render long lines fully',
+        description: 'When off, Monaco stops rendering past column 10,000 on a line — invisible for normal lines, big help on lines with long string values.',
+    },
+};
+
+const PERF_DEFAULT: Record<PerfKey, PerfMode> = {
+    minimap:              'auto',
+    bracketColors:        'auto',
+    occurrencesHighlight: 'auto',
+    selectionHighlight:   'auto',
+    lineHighlight:        'auto',
+    folding:              'auto',
+    stopRenderingLine:    'auto',
+};
 
 // Material Library types — mirror library_commands.rs
 interface DownloadedMaterialInfo {
@@ -119,6 +189,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
     const [binaryFormat, setBinaryFormat] = useState(false);
     const [hashUpdateMode, setHashUpdateMode] = useState<'every_launch' | 'every_7_days' | 'never'>('every_launch');
     const [lastHashCheckAt, setLastHashCheckAt] = useState<number>(0);
+    const [perfPrefs, setPerfPrefs] = useState<Record<PerfKey, PerfMode>>(PERF_DEFAULT);
     const [minimizeToTray, setMinimizeToTray] = useState(false);
     const [runAtStartup, setRunAtStartup] = useState(false);
     const [communicateWithQuartz, setCommunicateWithQuartz] = useState(true);
@@ -179,6 +250,12 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             setHashUpdateMode(mode === 'every_7_days' || mode === 'never' ? mode : 'every_launch');
             const lastCheckedStr = await invoke<string>('get_preference', { key: 'LastHashCheckAt', defaultValue: '0' });
             setLastHashCheckAt(parseInt(lastCheckedStr, 10) || 0);
+            const loadedPerf: Record<PerfKey, PerfMode> = { ...PERF_DEFAULT };
+            for (const key of PERF_KEYS) {
+                const raw = await invoke<string>('get_preference', { key: PERF_PREF_KEY[key], defaultValue: PERF_DEFAULT[key] });
+                if (raw === 'on' || raw === 'auto' || raw === 'off') loadedPerf[key] = raw;
+            }
+            setPerfPrefs(loadedPerf);
             setMinimizeToTray((await invoke<string>('get_preference', { key: 'MinimizeToTray', defaultValue: 'False' })) === 'True');
             setRunAtStartup(await invoke<boolean>('get_autostart_status'));
             setCommunicateWithQuartz((await invoke<string>('get_preference', { key: 'CommunicateWithQuartz', defaultValue: 'True' })) === 'True');
@@ -239,6 +316,14 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         setHashUpdateMode(mode);
         try { await invoke('set_preference', { key: 'HashUpdateMode', value: mode }); }
         catch (e) { console.error(e); }
+    };
+
+    const handlePerfChange = async (key: PerfKey, mode: PerfMode) => {
+        setPerfPrefs(prev => ({ ...prev, [key]: mode }));
+        try { await invoke('set_preference', { key: PERF_PREF_KEY[key], value: mode }); }
+        catch (e) { console.error(e); }
+        // Broadcast so App.tsx applies the new option to Monaco live.
+        window.dispatchEvent(new CustomEvent('perf-pref-changed', { detail: { key, mode } }));
     };
 
     const toggleBinaryFormat = async () => {
@@ -779,6 +864,45 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         );
     };
 
+    const renderPerformance = () => (
+        <>
+            <h2 className="settings-section-title">Performance</h2>
+            <p className="settings-section-subtitle">
+                Editor features have a cost on huge bin dumps. Each option below can be kept on,
+                automatically dropped on big files (over 50,000 lines), or always off.
+            </p>
+
+            {PERF_KEYS.map(key => (
+                <div key={key} className="settings-row">
+                    <div className="settings-row-header" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+                        <span className="settings-row-title">{PERF_LABEL[key].title}</span>
+                        <div className="engine-switcher" style={{ marginBottom: 0 }}>
+                            <button
+                                className={`engine-option${perfPrefs[key] === 'on' ? ' active' : ''}`}
+                                onClick={() => handlePerfChange(key, 'on')}
+                            >
+                                Always on
+                            </button>
+                            <button
+                                className={`engine-option${perfPrefs[key] === 'auto' ? ' active' : ''}`}
+                                onClick={() => handlePerfChange(key, 'auto')}
+                            >
+                                Off on big files
+                            </button>
+                            <button
+                                className={`engine-option${perfPrefs[key] === 'off' ? ' active' : ''}`}
+                                onClick={() => handlePerfChange(key, 'off')}
+                            >
+                                Always off
+                            </button>
+                        </div>
+                    </div>
+                    <p className="settings-row-desc">{PERF_LABEL[key].description}</p>
+                </div>
+            ))}
+        </>
+    );
+
     const renderUpdates = () => {
         const pct = downloadProgress && downloadProgress.total > 0
             ? (downloadProgress.downloaded / downloadProgress.total * 100) : 0;
@@ -931,6 +1055,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         converter: renderConverter,
         behavior: renderBehavior,
         library: renderLibrary,
+        performance: renderPerformance,
         updates: renderUpdates,
     };
 

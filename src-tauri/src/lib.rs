@@ -219,6 +219,7 @@ pub fn run() {
             app_commands::get_preferences_path,
             app_commands::open_preferences_folder,
             app_commands::get_all_preferences,
+            app_commands::get_app_memory_usage,
             hash_commands::check_hashes,
             hash_commands::download_hashes,
             hash_commands::open_hashes_folder,

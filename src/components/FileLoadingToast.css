@@ -1,0 +1,103 @@
+/* Empty backdrop that fills the editor flex slot while a file is being
+   parsed and no tab is mounted yet — keeps the status bar pinned to
+   the bottom instead of jumping up to where WelcomeScreen used to sit. */
+.file-loading-backdrop {
+    flex: 1 1 auto;
+    min-height: 0;
+    background: var(--editor-bg);
+}
+
+/* ── File Loading Overlay ──────────────────────────────────────────
+   Centered, non-blocking visual feedback while a (potentially large)
+   bin is parsed and the editor model is rebuilt. Adapts to
+   [data-ui-mode="modern"] to match the rest of the app's glass UI.
+*/
+.file-loading-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 11000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    animation: file-loading-fade-in 0.18s ease;
+}
+
+@keyframes file-loading-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.file-loading-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 20px;
+    min-width: 280px;
+    max-width: 420px;
+    background-color: var(--tab-bg, #252526);
+    border: 1px solid #3E3E42;
+    border-radius: 10px;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+    font-family: 'Segoe UI', sans-serif;
+    pointer-events: auto;
+}
+
+.file-loading-spinner {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    position: relative;
+}
+
+.file-loading-spinner-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2.5px solid rgba(255, 255, 255, 0.08);
+    border-top-color: var(--status-bar-bg, #0e639c);
+    animation: file-loading-spin 0.75s linear infinite;
+}
+
+@keyframes file-loading-spin {
+    to { transform: rotate(360deg); }
+}
+
+.file-loading-text {
+    min-width: 0;
+    flex: 1;
+}
+
+.file-loading-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-color, #cccccc);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-loading-sub {
+    font-size: 11px;
+    color: #9aa0a6;
+    margin-top: 2px;
+}
+
+/* ── Modern UI: glass card to match Modern UI toggle aesthetic ── */
+[data-ui-mode="modern"] .file-loading-card {
+    background: var(--modern-dialog-bg) !important;
+    backdrop-filter: var(--modern-blur);
+    -webkit-backdrop-filter: var(--modern-blur);
+    border: 1px solid var(--modern-accent-30) !important;
+    border-radius: 12px !important;
+    box-shadow:
+        0 16px 48px rgba(0, 0, 0, 0.5),
+        0 0 0 1px var(--modern-accent-15),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .file-loading-spinner-ring {
+    border-color: var(--modern-accent-15);
+    border-top-color: var(--modern-accent);
+    box-shadow: 0 0 12px var(--modern-accent-30);
+}

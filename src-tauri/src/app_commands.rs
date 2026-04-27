@@ -2254,3 +2254,120 @@ pub async fn notify_quartz_bin_updated(bin_path: String, mode: String) -> Result
     Ok(())
 }
 
+/// Sum the **Private Working Set** (the metric Task Manager's "Memory"
+/// column shows) across our process and every descendant. We call
+/// `NtQuerySystemInformation(SystemProcessInformation)` — the same
+/// syscall Task Manager itself makes — so the displayed value matches
+/// what the user sees there.
+///
+/// Statically imported via the `windows` crate's
+/// `Wdk_System_SystemInformation` feature so the binary's import table
+/// shows a normal `ntdll!NtQuerySystemInformation` reference. AV
+/// heuristics treat dynamic ntdll resolution as suspicious; a static
+/// import looks like any other monitoring app.
+#[cfg(target_os = "windows")]
+fn process_tree_private_working_set(root_pid: u32) -> u64 {
+    use std::collections::HashSet;
+    use std::ffi::c_void;
+    use windows::Wdk::System::SystemInformation::{
+        NtQuerySystemInformation, SYSTEM_INFORMATION_CLASS,
+    };
+    use windows::Win32::Foundation::{STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS};
+
+    const SYSTEM_PROCESS_INFORMATION: SYSTEM_INFORMATION_CLASS =
+        SYSTEM_INFORMATION_CLASS(5);
+
+    // Start with 1 MiB and grow on STATUS_INFO_LENGTH_MISMATCH. The kernel
+    // returns the required size in `returned`, but it can grow between
+    // calls so we re-loop with a doubled buffer.
+    let mut buf: Vec<u8> = vec![0u8; 1 << 20];
+    loop {
+        let mut returned: u32 = 0;
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SYSTEM_PROCESS_INFORMATION,
+                buf.as_mut_ptr() as *mut c_void,
+                buf.len() as u32,
+                &mut returned,
+            )
+        };
+        if status == STATUS_SUCCESS {
+            break;
+        }
+        if status == STATUS_INFO_LENGTH_MISMATCH {
+            buf.resize((returned as usize).max(buf.len() * 2), 0);
+            continue;
+        }
+        return 0;
+    }
+
+    // SYSTEM_PROCESS_INFORMATION layout on x64. Field offsets are stable
+    // (Vista+); see the WDK / ProcessHacker headers for the full struct.
+    //   0  NextEntryOffset       (ULONG, 4)
+    //   4  NumberOfThreads       (ULONG, 4)
+    //   8  WorkingSetPrivateSize (LARGE_INTEGER, 8)  ← what Task Manager shows
+    //  16  HardFaultCount        (ULONG, 4)
+    //  …
+    //  56  ImageName             (UNICODE_STRING, 16)
+    //  72  BasePriority          (KPRIORITY = LONG, 4)
+    //  76  (padding for HANDLE alignment, 4)
+    //  80  UniqueProcessId       (HANDLE, 8)
+    //  88  InheritedFromUniqueProcessId (HANDLE, 8)
+    let mut entries: Vec<(u32, u32, u64)> = Vec::with_capacity(256);
+    let mut offset: usize = 0;
+    loop {
+        if offset + 96 > buf.len() {
+            break;
+        }
+        let base = buf[offset..].as_ptr();
+        unsafe {
+            let next_offset = (base as *const u32).read_unaligned();
+            let ws_private = (base.add(8) as *const i64).read_unaligned().max(0) as u64;
+            let pid = (base.add(80) as *const usize).read_unaligned() as u32;
+            let ppid = (base.add(88) as *const usize).read_unaligned() as u32;
+            entries.push((pid, ppid, ws_private));
+            if next_offset == 0 {
+                break;
+            }
+            offset += next_offset as usize;
+        }
+    }
+
+    // BFS to collect the root PID and all transitive descendants — covers
+    // WebView2's renderer/GPU/network helpers spawned beneath us.
+    let mut targets: HashSet<u32> = HashSet::new();
+    targets.insert(root_pid);
+    loop {
+        let before = targets.len();
+        for &(pid, ppid, _) in &entries {
+            if targets.contains(&ppid) {
+                targets.insert(pid);
+            }
+        }
+        if targets.len() == before {
+            break;
+        }
+    }
+
+    entries
+        .iter()
+        .filter(|(pid, _, _)| targets.contains(pid))
+        .map(|(_, _, ws)| *ws)
+        .sum()
+}
+
+/// Returns the Private Working Set for Jade and every descendant process
+/// (the WebView2 renderer/GPU helpers etc.) in bytes — exactly the value
+/// Task Manager shows in its "Memory" column. Windows-only; returns 0 on
+/// other platforms.
+#[tauri::command]
+pub fn get_app_memory_usage() -> u64 {
+    #[cfg(target_os = "windows")]
+    {
+        process_tree_private_working_set(std::process::id())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        0
+    }
+}

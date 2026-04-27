@@ -25,6 +25,7 @@ import ParticleEditorPanel from "./components/ParticleEditorPanel";
 import ParticleEditorDialog from "./components/ParticleEditorDialog";
 import UpdateToast from "./components/UpdateToast";
 import HashSyncToast from "./components/HashSyncToast";
+import FileLoadingToast from "./components/FileLoadingToast";
 import QuartzInstallModal from "./components/QuartzInstallModal";
 import TexHoverPopup from "./components/TexHoverPopup";
 import EditorContextMenu from "./components/EditorContextMenu";
@@ -94,6 +95,31 @@ function App() {
 
   // UI state
   const [statusMessage, setStatusMessage] = useState("Ready");
+  const [appMemoryBytes, setAppMemoryBytes] = useState<number>(0);
+
+  // Performance preferences: each editor feature can be 'on' (always),
+  // 'auto' (off on big files >50k lines) or 'off' (always). Mirrors the
+  // schema written by the Performance tab in SettingsDialog.
+  type PerfMode = 'on' | 'auto' | 'off';
+  type PerfKey =
+    | 'minimap' | 'bracketColors' | 'occurrencesHighlight' | 'selectionHighlight'
+    | 'lineHighlight' | 'folding' | 'stopRenderingLine';
+  const PERF_PREF_KEYS: Record<PerfKey, string> = {
+    minimap:              'Perf_Minimap',
+    bracketColors:        'Perf_BracketColors',
+    occurrencesHighlight: 'Perf_OccurrencesHighlight',
+    selectionHighlight:   'Perf_SelectionHighlight',
+    lineHighlight:        'Perf_LineHighlight',
+    folding:              'Perf_Folding',
+    stopRenderingLine:    'Perf_StopRenderingLine',
+  };
+  const PERF_DEFAULTS: Record<PerfKey, PerfMode> = {
+    minimap: 'auto', bracketColors: 'auto', occurrencesHighlight: 'auto',
+    selectionHighlight: 'auto', lineHighlight: 'auto', folding: 'auto',
+    stopRenderingLine: 'auto',
+  };
+  const BIG_FILE_LINES = 50_000;
+  const [perfPrefs, setPerfPrefs] = useState<Record<PerfKey, PerfMode>>(PERF_DEFAULTS);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
   const [showThemesDialog, setShowThemesDialog] = useState(false);
   const [showMaterialLibrary, setShowMaterialLibrary] = useState(false);
@@ -102,6 +128,7 @@ function App() {
   const [showQuartzInstallModal, setShowQuartzInstallModal] = useState(false);
   const [updateToastVersion, setUpdateToastVersion] = useState<string | null>(null);
   const [hashSyncToast, setHashSyncToast] = useState<HashSyncToastState | null>(null);
+  const [fileLoading, setFileLoading] = useState<{ name: string; detail?: string } | null>(null);
   const [, setHashSyncBusy] = useState(true);
   const [appIcon, setAppIcon] = useState<string>("/media/jade.ico");
   const [findWidgetOpen, setFindWidgetOpen] = useState(false);
@@ -220,6 +247,61 @@ function App() {
   const showHashToast = useCallback((state: HashSyncToastState) => {
     if (hashToastDismissedRef.current) return;
     setHashSyncToast(state);
+  }, []);
+
+  // Auto-clear status messages after 5s — keeps the status bar tidy
+  // by reverting whatever transient message ("Opened …", "Saved", etc.)
+  // back to the idle "Ready" state.
+  useEffect(() => {
+    if (statusMessage === 'Ready' || !statusMessage) return;
+    const t = setTimeout(() => {
+      setStatusMessage('Ready');
+      statusMessageRef.current = 'Ready';
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [statusMessage]);
+
+  // Poll the app's RAM usage for the status bar indicator. Backend walks
+  // the whole process tree (Rust + WebView2 helpers) and returns Private
+  // Bytes — same metric Task Manager shows. Refresh slowly so the query
+  // and the JS re-render don't add measurable overhead.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      invoke<number>('get_app_memory_usage')
+        .then(bytes => { if (!cancelled) setAppMemoryBytes(Number(bytes) || 0); })
+        .catch(() => {});
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  // Load performance preferences once and listen for live changes from
+  // the Performance tab in Settings so changes apply without restart.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const next: Record<PerfKey, PerfMode> = { ...PERF_DEFAULTS };
+      for (const key of Object.keys(PERF_PREF_KEYS) as PerfKey[]) {
+        try {
+          const raw = await invoke<string>('get_preference', {
+            key: PERF_PREF_KEYS[key],
+            defaultValue: PERF_DEFAULTS[key],
+          });
+          if (raw === 'on' || raw === 'auto' || raw === 'off') next[key] = raw as PerfMode;
+        } catch { /* fall through to default */ }
+      }
+      if (!cancelled) setPerfPrefs(next);
+    })();
+
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ key: PerfKey; mode: PerfMode }>).detail;
+      if (!detail) return;
+      setPerfPrefs(prev => ({ ...prev, [detail.key]: detail.mode }));
+    };
+    window.addEventListener('perf-pref-changed', handler);
+    return () => { cancelled = true; window.removeEventListener('perf-pref-changed', handler); };
   }, []);
 
   // Load custom icon and window state on mount
@@ -1139,18 +1221,20 @@ function App() {
     const normalizedPath = filePath.toLowerCase();
     if (openingFilesRef.current.has(normalizedPath)) return;
     openingFilesRef.current.add(normalizedPath);
+    const fileName = getFileName(filePath);
+    setFileLoading({ name: fileName });
     try {
       // Block hash status updates while opening file
       allowHashStatusUpdateRef.current = false;
-      setStatusMessage(`Opening ${getFileName(filePath)}...`);
-      statusMessageRef.current = `Opening ${getFileName(filePath)}...`;
+      setStatusMessage(`Opening ${fileName}...`);
+      statusMessageRef.current = `Opening ${fileName}...`;
 
       const existingTab = tabs.find(t => t.filePath && t.filePath.toLowerCase() === filePath.toLowerCase());
       if (existingTab) {
         ensureTrackedBinSession(filePath, existingTab.content, 'paint');
         setActiveTabId(existingTab.id);
-        setStatusMessage(`Switched to ${getFileName(filePath)}`);
-        statusMessageRef.current = `Switched to ${getFileName(filePath)}`;
+        setStatusMessage(`Switched to ${fileName}`);
+        statusMessageRef.current = `Switched to ${fileName}`;
         // Re-enable hash status updates after a delay
         setTimeout(() => {
           allowHashStatusUpdateRef.current = true;
@@ -1159,6 +1243,7 @@ function App() {
       }
 
       const content = await readBinForEditor(filePath);
+      setFileLoading({ name: fileName, detail: 'Rendering editor…' });
       const newTab = createTab(filePath, content);
       // Store initial mtime so the auto-reload poller doesn't fire immediately
       invoke<number>('get_file_mtime', { path: filePath })
@@ -1168,8 +1253,8 @@ function App() {
       setActiveTabId(newTab.id);
 
       await addToRecentFiles(filePath);
-      setStatusMessage(`Opened ${getFileName(filePath)}`);
-      statusMessageRef.current = `Opened ${getFileName(filePath)}`;
+      setStatusMessage(`Opened ${fileName}`);
+      statusMessageRef.current = `Opened ${fileName}`;
 
       await openLinkedBinFiles(filePath, content);
 
@@ -1187,6 +1272,9 @@ function App() {
       }, 2000);
     } finally {
       openingFilesRef.current.delete(normalizedPath);
+      // Give Monaco a tick to commit the new model paint before clearing
+      // the overlay, so big files don't show a flash of empty editor.
+      requestAnimationFrame(() => setFileLoading(null));
     }
   };
   // Keep the ref up-to-date every render so event listeners always call the
@@ -2576,17 +2664,23 @@ function App() {
       allowHashStatusUpdateRef.current = false;
       const result = await openBinFile();
       if (result) {
-        const resolvedContent = await readBinForEditor(result.path, result.content);
-        addTab(result.path, resolvedContent);
-        setStatusMessage(`Opened ${result.path}`);
-        statusMessageRef.current = `Opened ${result.path}`;
+        setFileLoading({ name: getFileName(result.path) });
+        try {
+          const resolvedContent = await readBinForEditor(result.path, result.content);
+          setFileLoading({ name: getFileName(result.path), detail: 'Rendering editor…' });
+          addTab(result.path, resolvedContent);
+          setStatusMessage(`Opened ${result.path}`);
+          statusMessageRef.current = `Opened ${result.path}`;
 
-        if (result.path) {
-          await addToRecentFiles(result.path);
+          if (result.path) {
+            await addToRecentFiles(result.path);
+          }
+
+          // Open linked bin files if preference enabled
+          await openLinkedBinFiles(result.path, resolvedContent);
+        } finally {
+          requestAnimationFrame(() => setFileLoading(null));
         }
-
-        // Open linked bin files if preference enabled
-        await openLinkedBinFiles(result.path, resolvedContent);
 
         // Re-enable hash status updates after file is opened
         setTimeout(() => {
@@ -2597,6 +2691,7 @@ function App() {
       console.error('Failed to open file:', error);
       setStatusMessage(`Error: ${error}`);
       statusMessageRef.current = `Error: ${error}`;
+      setFileLoading(null);
       setTimeout(() => {
         allowHashStatusUpdateRef.current = true;
       }, 2000);
@@ -3537,7 +3632,11 @@ function App() {
         />
       )}
 
-      {tabs.length === 0 && <WelcomeScreen onOpenFile={handleOpen} openFileDisabled={openFileDisabled} recentFiles={recentFiles} onOpenRecentFile={openFileFromPath} onMaterialLibrary={handleMaterialLibrary} appIcon={appIcon} />}
+      {tabs.length === 0 && !fileLoading && <WelcomeScreen onOpenFile={handleOpen} openFileDisabled={openFileDisabled} recentFiles={recentFiles} onOpenRecentFile={openFileFromPath} onMaterialLibrary={handleMaterialLibrary} appIcon={appIcon} />}
+      {/* Placeholder that fills the editor flex slot while a file is loading
+          and no tab is mounted yet — prevents the status bar from jumping
+          up to where the welcome screen used to be. */}
+      {tabs.length === 0 && fileLoading && <div className="file-loading-backdrop" />}
 
       {/* Keep the editor container (and Monaco) always mounted.
           Unmounting Monaco while a requestAnimationFrame render is in-flight
@@ -3597,33 +3696,42 @@ function App() {
           beforeMount={handleBeforeMount}
           onMount={handleEditorMount}
           onChange={handleEditorChange}
-          options={{
-            minimap: { enabled: true },
-            glyphMargin: true,
-            fontSize: 14,
-            scrollBeyondLastLine: false,
-            automaticLayout: true,
-            fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
-            lineNumbersMinChars: 6,
-            fixedOverflowWidgets: true,
-            contextmenu: false,
-            // Monaco classifies models as "large" above ~20 MB or 300k lines
-            // and silently disables tokenization (no syntax colors), hover,
-            // folding, etc. Bin dumps for full skins routinely cross those
-            // thresholds, so opt out and keep all features on.
-            largeFileOptimizations: false,
-            maxTokenizationLineLength: 100_000,
-            find: {
-              addExtraSpaceOnTop: false,
-              autoFindInSelection: 'never',
-              seedSearchStringFromSelection: 'always',
-            },
-            ...({
-              "bracketPairColorization.enabled": true,
-              "suggest.maxVisibleSuggestions": 5,
-              "semanticHighlighting.enabled": false,
-            } as any),
-          }}
+          options={(() => {
+            const isBig = lineCount > BIG_FILE_LINES;
+            const isOn = (mode: PerfMode) => mode === 'on' ? true : mode === 'off' ? false : !isBig;
+            return {
+              minimap: { enabled: isOn(perfPrefs.minimap) },
+              glyphMargin: true,
+              fontSize: 14,
+              scrollBeyondLastLine: false,
+              automaticLayout: true,
+              fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+              lineNumbersMinChars: 6,
+              fixedOverflowWidgets: true,
+              contextmenu: false,
+              // Monaco classifies models as "large" above ~20 MB or 300k lines
+              // and silently disables tokenization (no syntax colors), hover,
+              // folding, etc. Bin dumps for full skins routinely cross those
+              // thresholds, so opt out and keep all features on.
+              largeFileOptimizations: false,
+              maxTokenizationLineLength: 100_000,
+              folding: isOn(perfPrefs.folding),
+              occurrencesHighlight: (isOn(perfPrefs.occurrencesHighlight) ? 'singleFile' : 'off') as 'singleFile' | 'off',
+              selectionHighlight: isOn(perfPrefs.selectionHighlight),
+              renderLineHighlight: (isOn(perfPrefs.lineHighlight) ? 'all' : 'gutter') as 'all' | 'gutter',
+              stopRenderingLineAfter: isOn(perfPrefs.stopRenderingLine) ? -1 : 10000,
+              find: {
+                addExtraSpaceOnTop: false,
+                autoFindInSelection: 'never' as const,
+                seedSearchStringFromSelection: 'always' as const,
+              },
+              ...({
+                "bracketPairColorization.enabled": isOn(perfPrefs.bracketColors),
+                "suggest.maxVisibleSuggestions": 5,
+                "semanticHighlighting.enabled": false,
+              } as any),
+            };
+          })()}
         />
         {activeTab && isEditorTab(activeTab) && (
           <GeneralEditPanel
@@ -3689,7 +3797,7 @@ function App() {
         lineCount={lineCount}
         caretLine={caretPosition.line}
         caretColumn={caretPosition.column}
-        ramUsage="0 MB"
+        ramUsage={appMemoryBytes > 0 ? `${(appMemoryBytes / (1024 * 1024)).toFixed(0)} MB` : ''}
       />
 
       <AboutDialog
@@ -3733,6 +3841,10 @@ function App() {
           onOpenSettings={() => setShowSettingsDialog(true)}
           onDismiss={() => setUpdateToastVersion(null)}
         />
+      )}
+
+      {fileLoading && (
+        <FileLoadingToast fileName={fileLoading.name} detail={fileLoading.detail} />
       )}
 
       {hashSyncToast?.visible && (
