@@ -3607,6 +3607,12 @@ function App() {
             lineNumbersMinChars: 6,
             fixedOverflowWidgets: true,
             contextmenu: false,
+            // Monaco classifies models as "large" above ~20 MB or 300k lines
+            // and silently disables tokenization (no syntax colors), hover,
+            // folding, etc. Bin dumps for full skins routinely cross those
+            // thresholds, so opt out and keep all features on.
+            largeFileOptimizations: false,
+            maxTokenizationLineLength: 100_000,
             find: {
               addExtraSpaceOnTop: false,
               autoFindInSelection: 'never',
