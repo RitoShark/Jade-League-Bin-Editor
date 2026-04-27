@@ -47,6 +47,9 @@ interface ParticleEditorPanelProps {
   onContentChange: (newContent: string) => void;
   onScrollToLine?: (line: number) => void;
   onStatusUpdate?: (status: string) => void;
+  /** When true, render as a normal block element (used inside the Word
+   *  shell's left task pane). Skips the absolute-positioning logic. */
+  docked?: boolean;
 }
 
 // Parse helpers
@@ -346,7 +349,8 @@ export default function ParticleEditorPanel({
   editorContent,
   onContentChange,
   onScrollToLine,
-  onStatusUpdate
+  onStatusUpdate,
+  docked = false,
 }: ParticleEditorPanelProps) {
   // Animation state
   const [isVisible, setIsVisible] = useState(false);
@@ -429,20 +433,22 @@ export default function ParticleEditorPanel({
           setIsVisible(true);
         });
       });
-      updatePanelPosition();
+      if (!docked) updatePanelPosition();
     } else {
       setIsVisible(false);
       const timer = setTimeout(() => {
         setIsRendered(false);
-      }, 200);
+      }, docked ? 0 : 200);
       return () => clearTimeout(timer);
     }
-  }, [isOpen, updatePanelPosition]);
+  }, [isOpen, docked, updatePanelPosition]);
 
   // Re-measure on window resize, perf-pref toggles (minimap on/off etc.)
-  // and any internal layout shift in the editor container.
+  // and any internal layout shift in the editor container. Skipped when
+  // docked — the panel is a normal flex child and doesn't need to track
+  // the editor's geometry.
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || docked) return;
     const handleResize = () => updatePanelPosition();
     window.addEventListener('resize', handleResize);
     const handlePerfPref = () => {
@@ -462,7 +468,7 @@ export default function ParticleEditorPanel({
       window.removeEventListener('perf-pref-changed', handlePerfPref);
       ro?.disconnect();
     };
-  }, [isOpen, updatePanelPosition]);
+  }, [isOpen, docked, updatePanelPosition]);
 
   // Helper to set status with timeout (for user actions)
   const setStatusWithTimeout = useCallback((message: string, persistForMs: number = 3000) => {
@@ -839,10 +845,10 @@ export default function ParticleEditorPanel({
   if (!isRendered) return null;
 
   return (
-    <div className="particle-editor-panel-wrapper">
+    <div className={`particle-editor-panel-wrapper${docked ? ' docked' : ''}`}>
       <div
-        className={`particle-editor-panel ${isVisible ? 'visible' : ''}`}
-        style={{ right: panelRight }}
+        className={`particle-editor-panel ${docked ? 'docked' : ''} ${isVisible ? 'visible' : ''}`}
+        style={docked ? undefined : { right: panelRight }}
       >
         <div className="pep-left-bar" />
         <div className="pep-header">

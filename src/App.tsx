@@ -2,7 +2,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import Editor, { Monaco } from "@monaco-editor/react";
+import { Monaco } from "@monaco-editor/react";
 import type * as MonacoType from 'monaco-editor';
 import { registerRitobinLanguage, registerRitobinTheme, RITOBIN_LANGUAGE_ID, RITOBIN_THEME_ID } from "./lib/ritobinLanguage";
 import { registerColorProvider } from "./lib/colorProvider";
@@ -14,31 +14,9 @@ import {
 import { loadSavedTheme } from "./lib/themeApplicator";
 import { checkSyntax, suggestType } from "./lib/syntaxChecker";
 import { texBufferToDataURL, ddsBufferToDataURL, ddsFormatName } from "./lib/texFormat";
-import TitleBar from "./components/TitleBar";
-import MenuBar from "./components/MenuBar";
-import TabBar, { EditorTab, createQuartzDiffTab, createMarkdownPreviewTab, createTab, createTexPreviewTab, getFileName } from "./components/TabBar";
-import StatusBar from "./components/StatusBar";
-import WelcomeScreen from "./components/WelcomeScreen";
-import AboutDialog from "./components/AboutDialog";
-import ThemesDialog from "./components/ThemesDialog";
-import MaterialLibraryBrowser from "./components/MaterialLibraryBrowser";
-import SettingsDialog from "./components/SettingsDialog";
-import PreferencesDialog from "./components/PreferencesDialog";
-import GeneralEditPanel from "./components/GeneralEditPanel";
-import ParticleEditorPanel from "./components/ParticleEditorPanel";
-import ParticleEditorDialog from "./components/ParticleEditorDialog";
-import UpdateToast from "./components/UpdateToast";
-import HashSyncToast from "./components/HashSyncToast";
-import FileLoadingToast from "./components/FileLoadingToast";
-import MarkdownPreview from "./components/MarkdownPreview";
-import MarkdownEditPanel from "./components/MarkdownEditPanel";
-import NewFileDialog from "./components/NewFileDialog";
-import QuartzInstallModal from "./components/QuartzInstallModal";
-import TexHoverPopup from "./components/TexHoverPopup";
-import EditorContextMenu from "./components/EditorContextMenu";
-import TexturePreviewTab from "./components/TexturePreviewTab";
-import QuartzDiffTab from "./components/QuartzDiffTab";
-import SmokeOverlay from "./components/SmokeOverlay";
+import { EditorTab, createQuartzDiffTab, createMarkdownPreviewTab, createTab, createTexPreviewTab, getFileName } from "./components/TabBar";
+import { ShellProvider, type ShellContextValue, type PerfMode, type PerfKey, type HashSyncToastState, type ShellVariant } from "./shells/ShellContext";
+import ShellHost from "./shells/ShellHost";
 import { findAndOpenLinkedBins, LinkedBinResult } from "./lib/linkedBinParser";
 import "./App.css";
 import "./App.modernui.css";
@@ -87,12 +65,6 @@ interface QuartzHistoryEntry {
 
 const MAX_QUARTZ_HISTORY_PER_FILE = 10;
 const QUARTZ_INTEROP_DEBUG = true;
-
-type HashSyncToastState = {
-  visible: boolean;
-  status: 'checking' | 'downloading' | 'success' | 'error';
-  message: string;
-};
 
 /**
  * Pick the Monaco language id for a given file path. Bins and their
@@ -143,10 +115,6 @@ function App() {
   // Performance preferences: each editor feature can be 'on' (always),
   // 'auto' (off on big files >50k lines) or 'off' (always). Mirrors the
   // schema written by the Performance tab in SettingsDialog.
-  type PerfMode = 'on' | 'auto' | 'off';
-  type PerfKey =
-    | 'minimap' | 'bracketColors' | 'occurrencesHighlight' | 'selectionHighlight'
-    | 'lineHighlight' | 'folding' | 'stopRenderingLine';
   const PERF_PREF_KEYS: Record<PerfKey, string> = {
     minimap:              'Perf_Minimap',
     bracketColors:        'Perf_BracketColors',
@@ -190,6 +158,11 @@ function App() {
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [cigaretteMode, setCigaretteMode] = useState(false);
+  const [shellVariant, setShellVariant] = useState<ShellVariant>('vscode');
+  // Mirror in a ref so long-lived listeners (Monaco mutation observer)
+  // see the current variant without re-binding when it changes.
+  const shellVariantRef = useRef<ShellVariant>('vscode');
+  shellVariantRef.current = shellVariant;
   const [quartzInteropEnabled, setQuartzInteropEnabled] = useState(true);
   const [quartzHistoryEntries, setQuartzHistoryEntries] = useState<QuartzHistoryEntry[]>([]);
   const quartzSessionsRef = useRef<Map<string, QuartzEditSession>>(new Map());
@@ -403,6 +376,11 @@ function App() {
     invoke<string>('get_preference', { key: 'SyntaxChecking', defaultValue: 'True' })
       .then(val => { syntaxCheckingEnabled.current = val !== 'False'; })
       .catch(() => {});
+    invoke<string>('get_preference', { key: 'UiShell', defaultValue: 'vscode' })
+      .then(val => {
+        if (val === 'word' || val === 'visualstudio' || val === 'vscode') setShellVariant(val);
+      })
+      .catch(() => {});
 
     const handleCigaretteModeChanged = (e: Event) => {
       setCigaretteMode((e as CustomEvent<boolean>).detail);
@@ -410,8 +388,13 @@ function App() {
     const handleQuartzInteropChanged = (e: Event) => {
       setQuartzInteropEnabled((e as CustomEvent<boolean>).detail !== false);
     };
+    const handleShellChanged = (e: Event) => {
+      const v = (e as CustomEvent<ShellVariant>).detail;
+      if (v === 'vscode' || v === 'word' || v === 'visualstudio') setShellVariant(v);
+    };
     window.addEventListener('cigarette-mode-changed', handleCigaretteModeChanged);
     window.addEventListener('quartz-interop-changed', handleQuartzInteropChanged);
+    window.addEventListener('shell-changed', handleShellChanged);
 
     // Listen for open-file events from backend (file association double-click or single-instance)
     const openFileUnlisten = listen<string>('open-file', async (event) => {
@@ -811,6 +794,7 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('cigarette-mode-changed', handleCigaretteModeChanged);
       window.removeEventListener('quartz-interop-changed', handleQuartzInteropChanged);
+      window.removeEventListener('shell-changed', handleShellChanged);
       window.removeEventListener('app-new', handleAppNew);
       window.removeEventListener('app-toggle-md-preview', handleAppToggleMdPreview);
       window.removeEventListener('app-open', handleAppOpen);
@@ -2704,6 +2688,11 @@ function App() {
       const editorElement = editor.getDomNode();
       if (editorElement) {
         mutationObserverRef.current = new MutationObserver(() => {
+          // Only the VSCode shell uses Monaco's native find widget. In
+          // Word/VS shells the widget is suppressed, so its absence is
+          // expected — letting the observer fire would close our custom
+          // find pane the moment the user opens it.
+          if (shellVariantRef.current !== 'vscode') return;
           const findWidget = editorElement.querySelector('.find-widget');
           if (findWidget) {
             const isHidden = findWidget.classList.contains('hidden') ||
@@ -3150,15 +3139,24 @@ function App() {
     document.execCommand('paste');
   };
 
+  // In the Word and Visual Studio shells, find/replace is rendered as a
+  // dock pane (left side / bottom) with a custom UI that drives Monaco
+  // via the model.findMatches API. We skip Monaco's native find widget
+  // so the two UIs don't fight. In VS, opening find leaves general /
+  // particle docks open — they live in different docks.
   const handleFind = () => {
     if (!isEditorTab(activeTabRef.current)) return;
+    const useNativeWidget = shellVariant === 'vscode';
+    const stackTools = shellVariant === 'visualstudio';
     if (findWidgetOpen) {
-      editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
+      if (useNativeWidget) editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
       setFindWidgetOpen(false);
     } else {
-      setGeneralEditPanelOpen(false);
-      setParticlePanelOpen(false);
-      editorRef.current?.trigger('keyboard', 'actions.find', null);
+      if (!stackTools) {
+        setGeneralEditPanelOpen(false);
+        setParticlePanelOpen(false);
+      }
+      if (useNativeWidget) editorRef.current?.trigger('keyboard', 'actions.find', null);
       setFindWidgetOpen(true);
       setReplaceWidgetOpen(false);
     }
@@ -3166,13 +3164,17 @@ function App() {
 
   const handleReplace = () => {
     if (!isEditorTab(activeTabRef.current)) return;
+    const useNativeWidget = shellVariant === 'vscode';
+    const stackTools = shellVariant === 'visualstudio';
     if (replaceWidgetOpen) {
-      editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
+      if (useNativeWidget) editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
       setReplaceWidgetOpen(false);
     } else {
-      setGeneralEditPanelOpen(false);
-      setParticlePanelOpen(false);
-      editorRef.current?.trigger('keyboard', 'editor.action.startFindReplaceAction', null);
+      if (!stackTools) {
+        setGeneralEditPanelOpen(false);
+        setParticlePanelOpen(false);
+      }
+      if (useNativeWidget) editorRef.current?.trigger('keyboard', 'editor.action.startFindReplaceAction', null);
       setReplaceWidgetOpen(true);
       setFindWidgetOpen(false);
     }
@@ -3244,10 +3246,15 @@ function App() {
 
   const handleGeneralEdit = () => {
     if (!isEditorTab(activeTabRef.current)) return;
-    setFindWidgetOpen(false);
-    setReplaceWidgetOpen(false);
-    setParticlePanelOpen(false);
-    editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
+    // VS shell can show multiple tool windows simultaneously (different
+    // docks); other shells display one at a time and need the others
+    // closed first.
+    if (shellVariant !== 'visualstudio') {
+      setFindWidgetOpen(false);
+      setReplaceWidgetOpen(false);
+      setParticlePanelOpen(false);
+      editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
+    }
     setGeneralEditPanelOpen(!generalEditPanelOpen);
   };
 
@@ -3343,10 +3350,12 @@ function App() {
     // Only allow opening if a bin file is loaded
     if (!isBinFileOpen()) return;
 
-    setFindWidgetOpen(false);
-    setReplaceWidgetOpen(false);
-    setGeneralEditPanelOpen(false);
-    editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
+    if (shellVariant !== 'visualstudio') {
+      setFindWidgetOpen(false);
+      setReplaceWidgetOpen(false);
+      setGeneralEditPanelOpen(false);
+      editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
+    }
     setParticlePanelOpen(prev => !prev);
   };
 
@@ -3825,348 +3834,104 @@ function App() {
     ? Math.max(0, activeDiffEntries.findIndex((entry) => entry.id === activeTab.diffEntryId))
     : 0;
 
+  // Build the value passed down to whichever shell is active.
+  // Adding new chrome data means adding a field here AND on the
+  // ShellContextValue type — TS will flag any mismatch.
+  const shellCtx: ShellContextValue = {
+    // -- Active shell variant
+    shellVariant,
+
+    // -- Window
+    appIcon, isMaximized, isDragging, cigaretteMode,
+    onMinimize: handleMinimize, onMaximize: handleMaximize, onClose: handleClose,
+
+    // -- Tabs
+    tabs, activeTabId, activeTab, isEditorTab, isBinFileOpen,
+    onTabSelect: handleTabSelect, onTabClose: handleTabClose,
+    onTabCloseAll: handleTabCloseAll, onTabPin: handleTabPin,
+
+    // -- Status / metrics
+    statusText, lineCount, caretPosition, appMemoryBytes, setStatusMessage,
+
+    // -- Panel state
+    findWidgetOpen, replaceWidgetOpen,
+    generalEditPanelOpen, particlePanelOpen,
+    setGeneralEditPanelOpen, setParticlePanelOpen,
+
+    // -- Recent files
+    recentFiles, openFileDisabled, openFileFromPath,
+
+    // -- File ops
+    onNew: handleNew, onOpen: handleOpen, onSave: handleSave,
+    onSaveAs: handleSaveAs, onOpenLog: handleOpenLog,
+
+    // -- Edit ops
+    onUndo: handleUndo, onRedo: handleRedo,
+    onCut: handleCut, onCopy: handleCopy, onPaste: handlePaste,
+    onFind: handleFind, onReplace: handleReplace,
+    onCompareFiles: handleCompareFiles, onSelectAll: handleSelectAll,
+
+    // -- Tools
+    onGeneralEdit: handleGeneralEdit, onParticlePanel: handleParticlePanel,
+    onParticleEditor: handleParticleEditor, onMaterialLibrary: handleMaterialLibrary,
+    onThemes: handleThemes, onSettings: handleSettings,
+    onPreferences: handlePreferences, onAbout: handleAbout,
+    onSendToQuartz: handleSendToQuartz,
+
+    // -- Editor wiring
+    editorTheme, perfPrefs, bigFileLines: BIG_FILE_LINES,
+    handleBeforeMount, handleEditorMount, handleEditorChange,
+    editorRef,
+
+    // -- Edit panel callbacks
+    handleGeneralEditContentChange, handleScrollToLine,
+    recordJadelibInsert, mdWrapSelection, mdPrefixLines, mdInsertAtCaret,
+
+    // -- Markdown preview
+    mdPreviewContent,
+
+    // -- Quartz diff
+    activeDiffRevisionIndex,
+    activeDiffEntriesLength: activeDiffEntries.length,
+    switchQuartzDiffRevision,
+    handleAcceptQuartzHistory, handleRejectQuartzHistory,
+
+    // -- Texture preview
+    reloadingTexTabId,
+    handleTexEditImage, handleTexShowInExplorer, handleTexReload,
+
+    // -- Texture hover popup
+    texPopup, closeTexPopup, handleTexOpenFull, isOverTexPopupRef,
+
+    // -- Editor context menu
+    ctxMenu, setCtxMenu,
+    foldAllEmitters, unfoldAllEmitters, hasEmitters,
+
+    // -- Dialogs
+    showAboutDialog, setShowAboutDialog,
+    showThemesDialog, setShowThemesDialog,
+    showMaterialLibrary, setShowMaterialLibrary,
+    showSettingsDialog, setShowSettingsDialog,
+    showPreferencesDialog, setShowPreferencesDialog,
+    showQuartzInstallModal, setShowQuartzInstallModal,
+    showNewFileDialog, setShowNewFileDialog,
+    particleDialogOpen, setParticleDialogOpen,
+    handleThemeApplied, handleCreateNewFile,
+
+    // -- Toasts
+    updateToastVersion, setUpdateToastVersion,
+    fileLoading, hashSyncToast, setHashSyncToast,
+    hashToastHideTimeoutRef, hashToastDismissedRef,
+
+    // -- Preferences side-effects
+    emitterHintsEnabled, syntaxCheckingEnabled,
+    updateEmitterNameDecorations, updateSyntaxMarkers,
+  };
+
   return (
-    <div className={`app-container ${isDragging ? 'dragging' : ''}`}>
-      <TitleBar
-        appIcon={appIcon}
-        isMaximized={isMaximized}
-        onThemes={handleThemes}
-        onPreferences={handlePreferences}
-        onSettings={handleSettings}
-        onAbout={handleAbout}
-        onMinimize={handleMinimize}
-        onMaximize={handleMaximize}
-        onClose={handleClose}
-        onParticleEditor={handleParticleEditor}
-        onMaterialLibrary={handleMaterialLibrary}
-        onQuartzAction={handleSendToQuartz}
-      />
-
-      <MenuBar
-        findActive={findWidgetOpen}
-        replaceActive={replaceWidgetOpen}
-        generalEditActive={generalEditPanelOpen}
-        particlePanelActive={particlePanelOpen}
-        particleDisabled={!isBinFileOpen()}
-        onNewFile={handleNew}
-        onOpenFile={handleOpen}
-        onSaveFile={handleSave}
-        onSaveFileAs={handleSaveAs}
-        onOpenLog={handleOpenLog}
-        onExit={handleClose}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        onCut={handleCut}
-        onCopy={handleCopy}
-        onPaste={handlePaste}
-        onFind={handleFind}
-        onReplace={handleReplace}
-        onCompareFiles={handleCompareFiles}
-        onSelectAll={handleSelectAll}
-        onGeneralEdit={handleGeneralEdit}
-        onParticlePanel={handleParticlePanel}
-        onThemes={handleThemes}
-        onSettings={handleSettings}
-        onAbout={handleAbout}
-        onMaterialLibrary={handleMaterialLibrary}
-        recentFiles={recentFiles}
-        onOpenRecentFile={openFileFromPath}
-        openFileDisabled={openFileDisabled}
-      />
-
-      {tabs.length > 0 && (
-        <TabBar
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onTabSelect={handleTabSelect}
-          onTabClose={handleTabClose}
-          onTabCloseAll={handleTabCloseAll}
-          onTabPin={handleTabPin}
-        />
-      )}
-
-      {tabs.length === 0 && !fileLoading && <WelcomeScreen onOpenFile={handleOpen} openFileDisabled={openFileDisabled} recentFiles={recentFiles} onOpenRecentFile={openFileFromPath} onMaterialLibrary={handleMaterialLibrary} appIcon={appIcon} />}
-      {/* Placeholder that fills the editor flex slot while a file is loading
-          and no tab is mounted yet — prevents the status bar from jumping
-          up to where the welcome screen used to be. */}
-      {tabs.length === 0 && fileLoading && <div className="file-loading-backdrop" />}
-
-      {/* Keep the editor container (and Monaco) always mounted.
-          Unmounting Monaco while a requestAnimationFrame render is in-flight
-          causes "Cannot read properties of undefined (reading 'domNode')".
-          We hide it with display:none when there are no tabs instead. */}
-      {/* Texture-preview tab: shown instead of Monaco when active tab is a texture */}
-      {activeTab?.tabType === 'texture-preview' && activeTab.filePath && (
-        <TexturePreviewTab
-          filePath={activeTab.filePath}
-          imageDataUrl={activeTab.textureDataUrl ?? null}
-          texWidth={activeTab.textureWidth ?? 0}
-          texHeight={activeTab.textureHeight ?? 0}
-          format={activeTab.textureFormat ?? 0}
-          error={activeTab.textureError ?? null}
-          isReloading={reloadingTexTabId === activeTab.id}
-          onEditImage={() => handleTexEditImage(activeTab.filePath)}
-          onShowInExplorer={() => handleTexShowInExplorer(activeTab.filePath)}
-          onReload={handleTexReload}
-        />
-      )}
-      {activeTab?.tabType === 'markdown-preview' && (
-        <MarkdownPreview content={mdPreviewContent} />
-      )}
-      {activeTab?.tabType === 'quartz-diff' && (
-        <QuartzDiffTab
-          fileName={activeTab.diffSourceFilePath ? getFileName(activeTab.diffSourceFilePath) : activeTab.fileName}
-          mode={activeTab.diffMode ?? 'paint'}
-          status={activeTab.diffStatus ?? 'pending'}
-          originalContent={activeTab.diffOriginalContent ?? ''}
-          modifiedContent={activeTab.diffModifiedContent ?? ''}
-          revisionIndex={activeDiffRevisionIndex}
-          revisionCount={Math.max(1, activeDiffEntries.length)}
-          onPrevRevision={() => switchQuartzDiffRevision(activeTab.id, 'prev')}
-          onNextRevision={() => switchQuartzDiffRevision(activeTab.id, 'next')}
-          onAccept={() => {
-            if (activeTab.diffEntryId) {
-              handleAcceptQuartzHistory(activeTab.diffEntryId);
-            }
-          }}
-          onReject={() => {
-            if (activeTab.diffEntryId) {
-              handleRejectQuartzHistory(activeTab.diffEntryId);
-            }
-          }}
-        />
-      )}
-
-      <div
-        className="editor-container"
-        style={
-          tabs.length === 0 || !isEditorTab(activeTab)
-            ? { display: 'none' }
-            : undefined
-        }
-      >
-        <Editor
-          height="100%"
-          defaultLanguage={RITOBIN_LANGUAGE_ID}
-          theme={editorTheme}
-          beforeMount={handleBeforeMount}
-          onMount={handleEditorMount}
-          onChange={handleEditorChange}
-          options={(() => {
-            const isBig = lineCount > BIG_FILE_LINES;
-            const isOn = (mode: PerfMode) => mode === 'on' ? true : mode === 'off' ? false : !isBig;
-            return {
-              minimap: { enabled: isOn(perfPrefs.minimap) },
-              glyphMargin: true,
-              fontSize: 14,
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-              fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
-              lineNumbersMinChars: 6,
-              fixedOverflowWidgets: true,
-              contextmenu: false,
-              // Monaco classifies models as "large" above ~20 MB or 300k lines
-              // and silently disables tokenization (no syntax colors), hover,
-              // folding, etc. Bin dumps for full skins routinely cross those
-              // thresholds, so opt out and keep all features on.
-              largeFileOptimizations: false,
-              maxTokenizationLineLength: 100_000,
-              folding: isOn(perfPrefs.folding),
-              occurrencesHighlight: (isOn(perfPrefs.occurrencesHighlight) ? 'singleFile' : 'off') as 'singleFile' | 'off',
-              selectionHighlight: isOn(perfPrefs.selectionHighlight),
-              renderLineHighlight: (isOn(perfPrefs.lineHighlight) ? 'all' : 'gutter') as 'all' | 'gutter',
-              stopRenderingLineAfter: isOn(perfPrefs.stopRenderingLine) ? -1 : 10000,
-              find: {
-                addExtraSpaceOnTop: false,
-                autoFindInSelection: 'never' as const,
-                seedSearchStringFromSelection: 'always' as const,
-              },
-              ...({
-                "bracketPairColorization.enabled": isOn(perfPrefs.bracketColors),
-                "suggest.maxVisibleSuggestions": 5,
-                "semanticHighlighting.enabled": false,
-              } as any),
-            };
-          })()}
-        />
-        {activeTab && isEditorTab(activeTab) && (() => {
-          const tabName = activeTab.filePath ?? activeTab.fileName;
-          const ext = getFileExtension(tabName);
-          const isMarkdown = ext === 'md' || ext === 'markdown';
-          if (isMarkdown) {
-            return (
-              <MarkdownEditPanel
-                isOpen={generalEditPanelOpen}
-                onClose={() => setGeneralEditPanelOpen(false)}
-                wrapSelection={mdWrapSelection}
-                prefixLines={mdPrefixLines}
-                insertAtCaret={mdInsertAtCaret}
-              />
-            );
-          }
-          return (
-            <GeneralEditPanel
-              isOpen={generalEditPanelOpen}
-              onClose={() => setGeneralEditPanelOpen(false)}
-              editorContent={editorRef.current?.getValue() || activeTab.content}
-              onContentChange={handleGeneralEditContentChange}
-              filePath={activeTab.filePath ?? undefined}
-              onLibraryInsert={recordJadelibInsert}
-            />
-          );
-        })()}
-        {activeTab && isEditorTab(activeTab) && (
-          <ParticleEditorPanel
-            isOpen={particlePanelOpen}
-            onClose={() => setParticlePanelOpen(false)}
-            editorContent={editorRef.current?.getValue() || activeTab.content}
-            onContentChange={handleGeneralEditContentChange}
-            onScrollToLine={handleScrollToLine}
-            onStatusUpdate={setStatusMessage}
-          />
-        )}
-      </div>
-
-      {ctxMenu && (
-        <EditorContextMenu
-          x={ctxMenu.x}
-          y={ctxMenu.y}
-          onClose={() => setCtxMenu(null)}
-          onCut={handleCut}
-          onCopy={handleCopy}
-          onPaste={handlePaste}
-          onSelectAll={handleSelectAll}
-          onFoldEmitters={foldAllEmitters}
-          onUnfoldEmitters={unfoldAllEmitters}
-          hasEmitters={hasEmitters()}
-        />
-      )}
-
-      {/* Texture hover popup */}
-      {texPopup && (
-        <TexHoverPopup
-          top={texPopup.top}
-          left={texPopup.left}
-          above={texPopup.above}
-          rawPath={texPopup.rawPath}
-          resolvedPath={texPopup.resolvedPath}
-          imageDataUrl={texPopup.imageDataUrl}
-          texWidth={texPopup.texWidth}
-          texHeight={texPopup.texHeight}
-          formatName={texPopup.formatStr}
-          error={texPopup.error}
-          onOpenFull={handleTexOpenFull}
-          onEditImage={() => handleTexEditImage(texPopup.resolvedPath)}
-          onShowInExplorer={() => handleTexShowInExplorer(texPopup.resolvedPath)}
-          onClose={closeTexPopup}
-          onMouseEnter={() => { isOverTexPopupRef.current = true; }}
-          onMouseLeave={() => { isOverTexPopupRef.current = false; }}
-        />
-      )}
-
-      <StatusBar
-        status={statusText}
-        lineCount={lineCount}
-        caretLine={caretPosition.line}
-        caretColumn={caretPosition.column}
-        ramUsage={appMemoryBytes > 0 ? `${(appMemoryBytes / (1024 * 1024)).toFixed(0)} MB` : ''}
-      />
-
-      <AboutDialog
-        isOpen={showAboutDialog}
-        onClose={() => setShowAboutDialog(false)}
-      />
-
-      <ThemesDialog
-        isOpen={showThemesDialog}
-        onClose={() => setShowThemesDialog(false)}
-        onThemeApplied={handleThemeApplied}
-      />
-
-      {showMaterialLibrary && (
-        <MaterialLibraryBrowser
-          onClose={() => setShowMaterialLibrary(false)}
-        />
-      )}
-
-      <SettingsDialog
-        isOpen={showSettingsDialog}
-        onClose={() => setShowSettingsDialog(false)}
-      />
-
-      <PreferencesDialog
-        isOpen={showPreferencesDialog}
-        onClose={() => setShowPreferencesDialog(false)}
-        onEmitterHintsChange={(enabled) => {
-          emitterHintsEnabled.current = enabled;
-          if (editorRef.current) updateEmitterNameDecorations(editorRef.current);
-        }}
-        onSyntaxCheckingChange={(enabled) => {
-          syntaxCheckingEnabled.current = enabled;
-          if (editorRef.current) updateSyntaxMarkers(editorRef.current);
-        }}
-      />
-
-      {updateToastVersion && (
-        <UpdateToast
-          version={updateToastVersion}
-          onOpenSettings={() => setShowSettingsDialog(true)}
-          onDismiss={() => setUpdateToastVersion(null)}
-        />
-      )}
-
-      {fileLoading && (
-        <FileLoadingToast fileName={fileLoading.name} detail={fileLoading.detail} />
-      )}
-
-      {hashSyncToast?.visible && (
-        <HashSyncToast
-          status={hashSyncToast.status}
-          message={hashSyncToast.message}
-          onDismiss={() => {
-            if (hashToastHideTimeoutRef.current) {
-              clearTimeout(hashToastHideTimeoutRef.current);
-              hashToastHideTimeoutRef.current = null;
-            }
-            // Latch dismissal so progress events from the backend don't
-            // re-open the toast for the rest of this check session.
-            hashToastDismissedRef.current = true;
-            setHashSyncToast(null);
-          }}
-        />
-      )}
-
-      {activeTab && isEditorTab(activeTab) && particleDialogOpen && (
-        <ParticleEditorDialog
-          isOpen={particleDialogOpen}
-          onClose={() => setParticleDialogOpen(false)}
-          editorContent={editorRef.current?.getValue() || activeTab.content}
-          onContentChange={handleGeneralEditContentChange}
-          onScrollToLine={handleScrollToLine}
-          onStatusUpdate={setStatusMessage}
-        />
-      )}
-
-      <QuartzInstallModal
-        isOpen={showQuartzInstallModal}
-        onClose={() => setShowQuartzInstallModal(false)}
-        onDownload={async () => {
-          try {
-            await invoke('open_url', { url: 'https://github.com/LeagueToolkit/Quartz/releases' });
-          } catch {
-            window.open('https://github.com/LeagueToolkit/Quartz/releases', '_blank', 'noopener,noreferrer');
-          }
-        }}
-      />
-
-      <NewFileDialog
-        isOpen={showNewFileDialog}
-        onCancel={() => setShowNewFileDialog(false)}
-        onCreate={handleCreateNewFile}
-      />
-
-      <SmokeOverlay active={cigaretteMode} />
-    </div>
+    <ShellProvider value={shellCtx}>
+      <ShellHost />
+    </ShellProvider>
   );
 }
 

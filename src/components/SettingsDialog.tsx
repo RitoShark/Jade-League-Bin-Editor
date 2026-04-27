@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { marked } from 'marked';
-import { HashIcon, SettingsIcon, ArrowUpIcon, ConverterIcon, LibraryIcon, BoltIcon } from './Icons';
+import { HashIcon, SettingsIcon, ArrowUpIcon, ConverterIcon, LibraryIcon, BoltIcon, PaletteIcon } from './Icons';
 import './SettingsDialog.css';
 
 interface SettingsDialogProps {
@@ -33,7 +33,7 @@ interface PreloadStatus {
     memory_bytes: number;
 }
 
-type NavSection = 'hashes' | 'converter' | 'behavior' | 'library' | 'performance' | 'updates';
+type NavSection = 'hashes' | 'converter' | 'behavior' | 'library' | 'performance' | 'appearance' | 'updates';
 
 const NAV_ITEMS: { id: NavSection; label: string; icon: React.ReactNode }[] = [
     { id: 'hashes',      label: 'Hash Files',    icon: <HashIcon size={15} />     },
@@ -41,8 +41,11 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: React.ReactNode }[] = [
     { id: 'behavior',    label: 'App Behavior',  icon: <SettingsIcon size={15} /> },
     { id: 'library',     label: 'Library',       icon: <LibraryIcon size={15} /> },
     { id: 'performance', label: 'Performance',   icon: <BoltIcon size={15} /> },
+    { id: 'appearance',  label: 'Appearance',    icon: <PaletteIcon size={15} /> },
     { id: 'updates',     label: 'Updates',       icon: <ArrowUpIcon size={15} /> },
 ];
+
+type ShellVariant = 'vscode' | 'word' | 'visualstudio';
 
 /* ── Performance prefs ──
    Each editor feature can be: kept on always, automatically disabled on
@@ -193,6 +196,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
     const [minimizeToTray, setMinimizeToTray] = useState(false);
     const [runAtStartup, setRunAtStartup] = useState(false);
     const [communicateWithQuartz, setCommunicateWithQuartz] = useState(true);
+    const [shellVariant, setShellVariant] = useState<ShellVariant>('vscode');
     const [isRegistered, setIsRegistered] = useState(false);
     const [converterEngine, setConverterEngine] = useState<string>('jade');
     const [engineChanged, setEngineChanged] = useState(false);
@@ -265,6 +269,12 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             setSilentUpdate((await invoke<string>('get_preference', { key: 'SilentUpdate', defaultValue: 'False' })) === 'True');
             setConverterEngine(await invoke<string>('get_preference', { key: 'ConverterEngine', defaultValue: 'jade' }));
             setMaterialMatchMode(parseInt(await invoke<string>('get_preference', { key: 'MaterialMatchMode', defaultValue: '3' })) || 3);
+            const shellRaw = await invoke<string>('get_preference', { key: 'UiShell', defaultValue: 'vscode' });
+            setShellVariant(
+                shellRaw === 'word' ? 'word'
+                    : shellRaw === 'visualstudio' ? 'visualstudio'
+                    : 'vscode'
+            );
             setEngineChanged(false);
         } catch (e) { console.error(e); }
     };
@@ -1050,12 +1060,93 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         );
     };
 
+    const handleShellChange = async (variant: ShellVariant) => {
+        if (variant === shellVariant) return;
+        setShellVariant(variant);
+        try { await invoke('set_preference', { key: 'UiShell', value: variant }); }
+        catch (e) { console.error(e); }
+        window.dispatchEvent(new CustomEvent('shell-changed', { detail: variant }));
+    };
+
+    const renderAppearance = () => (
+        <>
+            <h2 className="settings-section-title">Appearance</h2>
+            <p className="settings-section-subtitle">
+                Pick the overall layout style. Themes (colors) are picked separately
+                in Tools &gt; Themes.
+            </p>
+
+            <h3 className="settings-section-title" style={{ fontSize: 16, marginTop: 16 }}>Layout</h3>
+            <p className="settings-section-subtitle">
+                The shell controls the chrome around the editor — title bar, tab strip,
+                menu vs ribbon, panel docking. Switching takes effect immediately.
+            </p>
+
+            <div className="engine-switcher">
+                <button
+                    className={`engine-option${shellVariant === 'vscode' ? ' active' : ''}`}
+                    onClick={() => handleShellChange('vscode')}
+                >
+                    VSCode
+                </button>
+                <button
+                    className={`engine-option${shellVariant === 'word' ? ' active' : ''}`}
+                    onClick={() => handleShellChange('word')}
+                >
+                    MS Word
+                </button>
+                <button
+                    className={`engine-option${shellVariant === 'visualstudio' ? ' active' : ''}`}
+                    onClick={() => handleShellChange('visualstudio')}
+                >
+                    Visual Studio
+                </button>
+            </div>
+
+            <div className="engine-description">
+                {shellVariant === 'vscode' && (
+                    <>
+                        <span className="engine-description-title">VSCode</span>
+                        <p className="engine-description-text">
+                            The classic Jade chrome — tabs across the top, menu bar with
+                            File / Edit / Tools, floating popovers for Find / Replace /
+                            General Editing / Particle Editing.
+                        </p>
+                    </>
+                )}
+                {shellVariant === 'word' && (
+                    <>
+                        <span className="engine-description-title">MS Word</span>
+                        <p className="engine-description-text">
+                            Ribbon-driven layout — category tabs (File / Home / Insert /
+                            View / Help) across the top with large action buttons grouped
+                            underneath. Tools dock in a left task pane, editor renders
+                            as a centered "page" with stripped chrome.
+                        </p>
+                    </>
+                )}
+                {shellVariant === 'visualstudio' && (
+                    <>
+                        <span className="engine-description-title">Visual Studio</span>
+                        <p className="engine-description-text">
+                            Menu bar plus quick-action toolbar. Tool windows dock on the
+                            right (General Editing / Particle / Markdown) and bottom
+                            (Find / Replace), with drag-to-resize handles. Sizes persist
+                            between sessions.
+                        </p>
+                    </>
+                )}
+            </div>
+        </>
+    );
+
     const sectionContent: Record<NavSection, () => React.ReactElement> = {
         hashes: renderHashes,
         converter: renderConverter,
         behavior: renderBehavior,
         library: renderLibrary,
         performance: renderPerformance,
+        appearance: renderAppearance,
         updates: renderUpdates,
     };
 

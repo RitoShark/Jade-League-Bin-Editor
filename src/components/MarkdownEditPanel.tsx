@@ -12,6 +12,9 @@ export interface MarkdownEditPanelProps {
   prefixLines: (prefix: string) => boolean;
   /** Insert text at the caret position (no selection requirement). */
   insertAtCaret: (text: string) => boolean;
+  /** When true, render as a normal block element (used inside the Word
+   *  shell's left task pane). Skips the absolute-positioning logic. */
+  docked?: boolean;
 }
 
 export default function MarkdownEditPanel({
@@ -20,6 +23,7 @@ export default function MarkdownEditPanel({
   wrapSelection,
   prefixLines,
   insertAtCaret,
+  docked = false,
 }: MarkdownEditPanelProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [isRendered, setIsRendered] = useState(false);
@@ -56,16 +60,16 @@ export default function MarkdownEditPanel({
     if (isOpen) {
       setIsRendered(true);
       requestAnimationFrame(() => requestAnimationFrame(() => setIsVisible(true)));
-      updatePanelPosition();
+      if (!docked) updatePanelPosition();
     } else {
       setIsVisible(false);
-      const timer = setTimeout(() => setIsRendered(false), 200);
+      const timer = setTimeout(() => setIsRendered(false), docked ? 0 : 200);
       return () => clearTimeout(timer);
     }
-  }, [isOpen, updatePanelPosition]);
+  }, [isOpen, docked, updatePanelPosition]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || docked) return;
     const handler = () => updatePanelPosition();
     window.addEventListener('resize', handler);
     // Re-measure when a perf preference (minimap on/off etc.) changes
@@ -87,7 +91,7 @@ export default function MarkdownEditPanel({
       window.removeEventListener('perf-pref-changed', handlePerfPref);
       ro?.disconnect();
     };
-  }, [isOpen, updatePanelPosition]);
+  }, [isOpen, docked, updatePanelPosition]);
 
   const wrap = (before: string, after: string, label: string) => {
     if (!wrapSelection(before, after)) {
@@ -116,10 +120,10 @@ export default function MarkdownEditPanel({
   if (!isRendered) return null;
 
   return (
-    <div className="general-edit-panel-wrapper">
+    <div className={`general-edit-panel-wrapper${docked ? ' docked' : ''}`}>
       <div
-        className={`general-edit-panel ${isVisible ? 'visible' : ''}`}
-        style={{ right: panelRight }}
+        className={`general-edit-panel ${docked ? 'docked' : ''} ${isVisible ? 'visible' : ''}`}
+        style={docked ? undefined : { right: panelRight }}
       >
         <div className="gep-left-bar" />
         <div className="gep-header">

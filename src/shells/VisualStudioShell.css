@@ -1,0 +1,368 @@
+/* ─────────────────────────────────────────────────────────────────
+   Visual Studio Shell
+   ─────────────────────────────────────────────────────────────────
+   VS-style chrome: menu bar + quick-action toolbar + tab strip + a
+   center editor with right and bottom dock zones for tool windows.
+   Uses the same theme variables as the rest of the app.
+*/
+
+.visualstudio-shell {
+    display: flex;
+    flex-direction: column;
+}
+
+/* ───────────────────── Toolbar ───────────────────── */
+.visualstudio-shell .vs-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 8px;
+    background: var(--window-bg, #2d2d30);
+    border-bottom: 1px solid #3e3e42;
+    flex-shrink: 0;
+    min-height: 30px;
+}
+
+.visualstudio-shell .vs-toolbar-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 6px;
+    background: transparent;
+    color: #cccccc;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background-color 0.12s, border-color 0.12s;
+    min-width: 26px;
+    min-height: 22px;
+}
+
+.visualstudio-shell .vs-toolbar-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: #3e3e42;
+}
+
+.visualstudio-shell .vs-toolbar-btn.active {
+    background: var(--accent, #007acc);
+    color: #ffffff;
+    border-color: var(--accent, #007acc);
+}
+
+.visualstudio-shell .vs-toolbar-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.visualstudio-shell .vs-toolbar-sep {
+    width: 1px;
+    height: 18px;
+    background: #3e3e42;
+    margin: 0 6px;
+}
+
+.visualstudio-shell .vs-toolbar-spacer {
+    flex: 1;
+}
+
+/* ───────────────────── Body layout ───────────────────── */
+.visualstudio-shell .vs-shell-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.visualstudio-shell .vs-shell-center {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+}
+
+.visualstudio-shell .vs-shell-editor {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ───────────────────── Dock pane ───────────────────── */
+.vs-dock-pane {
+    background: var(--tab-bg, #2d2d30);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    color: #cccccc;
+}
+
+.vs-dock-right {
+    border-left: 1px solid #3e3e42;
+    flex-shrink: 0;
+}
+
+.vs-dock-left {
+    border-right: 1px solid #3e3e42;
+    flex-shrink: 0;
+}
+
+.vs-dock-bottom {
+    border-top: 1px solid #3e3e42;
+    flex-shrink: 0;
+}
+
+/* Resize handle. Sits on the inner edge — left of right pane,
+   top of bottom pane, right of left pane. Cursor changes to indicate
+   resizability. */
+.vs-dock-handle {
+    position: absolute;
+    background: transparent;
+    z-index: 5;
+    transition: background-color 0.15s;
+}
+
+.vs-dock-handle:hover,
+.vs-dock-handle:active {
+    background: var(--accent, #007acc);
+}
+
+/* Horizontal handle (resizes width) — vertical strip on the inner edge. */
+.vs-dock-handle-h {
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    cursor: col-resize;
+}
+
+.vs-dock-right .vs-dock-handle-h {
+    left: 0;
+}
+
+.vs-dock-left .vs-dock-handle-right {
+    right: 0;
+}
+
+/* Vertical handle (resizes height) — horizontal strip on the top edge. */
+.vs-dock-handle-v {
+    left: 0;
+    right: 0;
+    height: 4px;
+    cursor: row-resize;
+    top: 0;
+}
+
+/* Tabs across the top of a dock pane (used when multiple tool windows
+   share one dock — Phase 3a uses single tools so the title-only layout
+   below shows up). */
+.vs-dock-tabs {
+    display: flex;
+    flex: 1;
+    gap: 1px;
+    overflow-x: auto;
+}
+
+.vs-dock-tab {
+    padding: 4px 12px;
+    border: none;
+    background: transparent;
+    color: #969696;
+    font-size: 12px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+}
+
+.vs-dock-tab:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #cccccc;
+}
+
+.vs-dock-tab.active {
+    color: #ffffff;
+    border-bottom-color: var(--accent, #007acc);
+}
+
+.vs-dock-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* When the bottom dock hosts WordFindPane, the find pane needs padding
+   to look right inside the dock body. */
+.visualstudio-shell .vs-dock-bottom .word-find-pane {
+    padding: 8px 12px;
+}
+
+/* The right dock hosts a docked GeneralEditPanel/ParticleEditorPanel.
+   Their internal scroll handles their own content; the dock body just
+   passes through. */
+.visualstudio-shell .vs-dock-right .general-edit-panel.docked,
+.visualstudio-shell .vs-dock-right .particle-editor-panel.docked,
+.visualstudio-shell .vs-dock-left .general-edit-panel.docked,
+.visualstudio-shell .vs-dock-left .particle-editor-panel.docked {
+    background: transparent;
+}
+
+/* Draggable dock header — show a grab cursor + a subtle hover hint
+   on tabs and the title row to telegraph the drag interaction. */
+.vs-dock-header.draggable {
+    cursor: grab;
+}
+
+.vs-dock-header.draggable:active {
+    cursor: grabbing;
+}
+
+.vs-dock-tab {
+    cursor: grab;
+}
+
+.vs-dock-tab:active {
+    cursor: grabbing;
+}
+
+/* ───────────────────── Dock guides ─────────────────────
+   Shown over the body during a tool-window drag. Outer guides anchor
+   against the edges of the workspace; the center cluster sits in the
+   middle of the editor. The active guide (cursor over) lights up and
+   the corresponding edge of the body shows a translucent preview.
+*/
+.vs-dock-guides {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 50;
+}
+
+.vs-guide {
+    position: absolute;
+    background: rgba(45, 45, 48, 0.92);
+    border: 1px solid #555;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.12s, border-color 0.12s;
+}
+
+.vs-guide.active {
+    background: rgba(0, 122, 204, 0.92);
+    border-color: rgba(0, 122, 204, 1);
+}
+
+/* The arrow inside each guide square — uses border tricks for a clean
+   triangle on any DPI without needing an SVG. */
+.vs-guide-arrow {
+    width: 0;
+    height: 0;
+    border: 8px solid transparent;
+}
+
+.vs-guide-left .vs-guide-arrow {
+    border-right-color: #d4d4d4;
+    margin-left: -2px;
+}
+
+.vs-guide-right .vs-guide-arrow {
+    border-left-color: #d4d4d4;
+    margin-right: -2px;
+}
+
+.vs-guide-bottom .vs-guide-arrow {
+    border-top-color: #d4d4d4;
+    margin-top: -2px;
+}
+
+.vs-guide.active .vs-guide-arrow {
+    border-right-color: #ffffff;
+    border-left-color: #ffffff;
+    border-top-color: #ffffff;
+}
+
+/* Don't override the inactive transparent borders — only the directional
+   ones above ever get a visible color. */
+
+/* The translucent "where will it land" rectangle. Position is set
+   inline based on the body's bounding rect so the highlight always
+   matches what'd happen on drop. */
+.vs-guide-preview {
+    position: fixed;
+    background: rgba(0, 122, 204, 0.20);
+    border: 1px solid rgba(0, 122, 204, 0.7);
+    pointer-events: none;
+}
+
+/* ───────────────────── Floating tool windows ───────────────────── */
+.vs-float-window {
+    position: fixed;
+    z-index: 40;
+    background: var(--tab-bg, #2d2d30);
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    color: #cccccc;
+    min-width: 220px;
+    min-height: 160px;
+}
+
+.vs-float-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px 4px 10px;
+    background: var(--window-bg, #252526);
+    border-bottom: 1px solid #3e3e42;
+    cursor: grab;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.vs-float-header:active {
+    cursor: grabbing;
+}
+
+.vs-float-title {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.vs-float-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* Bottom-right corner resize grip — uses a CSS gradient to draw the
+   classic three-line texture. */
+.vs-float-resize {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 14px;
+    height: 14px;
+    cursor: nwse-resize;
+    background:
+        linear-gradient(135deg,
+            transparent 0,
+            transparent 40%,
+            rgba(255, 255, 255, 0.4) 40%,
+            rgba(255, 255, 255, 0.4) 50%,
+            transparent 50%,
+            transparent 65%,
+            rgba(255, 255, 255, 0.4) 65%,
+            rgba(255, 255, 255, 0.4) 75%,
+            transparent 75%);
+}
