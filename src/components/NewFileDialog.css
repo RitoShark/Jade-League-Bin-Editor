@@ -1,0 +1,291 @@
+/* ── New File Dialog ────────────────────────────────────────────── */
+/* Default: clear overlay — no dim, no fade. The dialog just appears.
+   Modern UI mode adds the backdrop dim + blur via the override below. */
+.newfile-overlay {
+    position: fixed;
+    inset: 0;
+    background: transparent;
+    z-index: 12000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@keyframes newfile-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Default: deliberately flat / utilitarian so the Modern UI toggle
+   creates a visible difference. Square-ish corners, single small
+   shadow, solid dark background — basically the vanilla VS Code dialog
+   look. The frosted-glass treatment lives entirely in the
+   [data-ui-mode="modern"] block at the bottom. */
+/* Default: matches the MaterialLibraryBrowser look — flat, no animation,
+   theme-driven surfaces. The frosted-glass + pop-in animation live
+   entirely in the [data-ui-mode="modern"] block at the bottom. */
+.newfile-dialog {
+    width: 380px;
+    max-width: 92vw;
+    background: var(--window-bg, #1f1f1f);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius, 4px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+    color: var(--text-color, #cccccc);
+    font-family: 'Segoe UI', sans-serif;
+}
+
+@keyframes newfile-pop-in {
+    from { transform: scale(0.97); opacity: 0; }
+    to   { transform: scale(1);    opacity: 1; }
+}
+
+.newfile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid #3E3E42;
+    background: var(--title-bar-bg);
+}
+.newfile-header h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+.newfile-close {
+    background: none;
+    border: none;
+    color: #9aa0a6;
+    cursor: pointer;
+    font-size: 18px;
+    width: 26px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    line-height: 1;
+}
+.newfile-close:hover {
+    color: var(--text-color, #ddd);
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.newfile-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.newfile-label {
+    font-size: 11px;
+    color: #9aa0a6;
+    margin-top: 4px;
+}
+
+.newfile-input {
+    width: 100%;
+    padding: 6px 8px;
+    background: var(--tab-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius, 4px);
+    color: var(--text-color, #ddd);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+}
+.newfile-input:focus {
+    border-color: var(--status-bar-bg);
+}
+
+.newfile-ext-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.newfile-ext-dot {
+    color: #9aa0a6;
+    font-size: 14px;
+}
+.newfile-input-ext {
+    width: 100px;
+    text-transform: lowercase;
+}
+
+.newfile-quick-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 2px;
+}
+.newfile-quick-btn {
+    padding: 4px 10px;
+    background: var(--tab-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius, 4px);
+    color: var(--text-color, #ddd);
+    font-size: 11px;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.newfile-quick-btn:hover {
+    background: var(--selected-tab-bg);
+    border-color: var(--status-bar-bg);
+}
+.newfile-quick-btn.active {
+    background: var(--status-bar-bg);
+    border-color: var(--status-bar-bg);
+    color: #fff;
+}
+
+.newfile-preview {
+    margin-top: 4px;
+    padding: 6px 10px;
+    background: var(--tab-bg);
+    border: 1px dashed #3E3E42;
+    border-radius: var(--border-radius, 4px);
+    font-size: 12px;
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+}
+.newfile-preview-label { color: #9aa0a6; }
+.newfile-preview-name {
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    color: var(--text-color, #ddd);
+    font-weight: 500;
+}
+
+.newfile-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid #3E3E42;
+    background: transparent;
+}
+.newfile-btn {
+    padding: 6px 14px;
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius, 4px);
+    font-size: 12px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.newfile-btn-cancel {
+    background: var(--tab-bg);
+    color: var(--text-color);
+}
+.newfile-btn-cancel:hover {
+    background: var(--selected-tab-bg);
+    border-color: var(--status-bar-bg);
+}
+.newfile-btn-create {
+    background: var(--status-bar-bg);
+    border-color: var(--status-bar-bg);
+    color: #fff;
+}
+.newfile-btn-create:hover {
+    filter: brightness(1.12);
+}
+
+/* ── Modern UI: glass morphism, matches SettingsDialog/ThemesDialog ── */
+[data-ui-mode="modern"] .newfile-overlay {
+    background: rgba(0, 0, 0, 0.45);
+}
+
+[data-ui-mode="modern"] .newfile-overlay {
+    animation: newfile-fade-in 0.15s ease;
+}
+
+[data-ui-mode="modern"] .newfile-dialog {
+    background: var(--modern-dialog-bg) !important;
+    backdrop-filter: saturate(180%) blur(24px);
+    -webkit-backdrop-filter: saturate(180%) blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    border-radius: 12px !important;
+    box-shadow:
+        0 32px 80px rgba(0, 0, 0, 0.60),
+        0 0 0 1px rgba(255, 255, 255, 0.04),
+        inset 0 1px 0 rgba(255, 255, 255, 0.09) !important;
+    animation: newfile-pop-in 0.18s ease;
+}
+
+[data-ui-mode="modern"] .newfile-header {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .newfile-footer {
+    background: rgba(255, 255, 255, 0.025) !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.07) !important;
+}
+
+[data-ui-mode="modern"] .newfile-input {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    border-radius: 6px !important;
+    transition: all 0.2s ease;
+}
+
+[data-ui-mode="modern"] .newfile-input:focus {
+    border-color: var(--modern-accent-50) !important;
+    box-shadow: 0 0 0 2px var(--modern-accent-15) !important;
+}
+
+[data-ui-mode="modern"] .newfile-quick-btn {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    border-radius: 6px !important;
+}
+
+[data-ui-mode="modern"] .newfile-quick-btn:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-color: var(--modern-accent-50) !important;
+    box-shadow: 0 0 8px var(--modern-accent-20);
+}
+
+[data-ui-mode="modern"] .newfile-quick-btn.active {
+    background: var(--modern-accent-25) !important;
+    border-color: var(--modern-accent) !important;
+    color: #fff !important;
+    box-shadow: 0 0 12px var(--modern-accent-30);
+}
+
+[data-ui-mode="modern"] .newfile-preview {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px dashed rgba(255, 255, 255, 0.12) !important;
+}
+
+[data-ui-mode="modern"] .newfile-btn-cancel {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    border-radius: 6px !important;
+}
+
+[data-ui-mode="modern"] .newfile-btn-cancel:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .newfile-btn-create {
+    background: var(--modern-accent) !important;
+    border-radius: 6px !important;
+    box-shadow: 0 0 12px var(--modern-accent-30);
+}
+
+[data-ui-mode="modern"] .newfile-btn-create:hover {
+    background: color-mix(in srgb, var(--modern-accent) 85%, white) !important;
+    box-shadow: 0 0 16px var(--modern-accent-50);
+}
+
+[data-ui-mode="modern"] .newfile-close:hover {
+    background-color: rgba(255, 255, 255, 0.08) !important;
+}

@@ -297,3 +297,96 @@
   white-space: nowrap;
   max-width: 100%;
 }
+
+/* ── Modern UI: glass surface matching Modern UI toggle aesthetic ──
+   Applied to BOTH GeneralEditPanel (bin tools) and MarkdownEditPanel
+   since they share the .general-edit-panel chrome. */
+[data-ui-mode="modern"] .general-edit-panel {
+  background: var(--modern-dialog-bg) !important;
+  backdrop-filter: var(--modern-blur);
+  -webkit-backdrop-filter: var(--modern-blur);
+  border-left: 1px solid var(--modern-glass-border) !important;
+  border-right: 1px solid var(--modern-glass-border) !important;
+  border-bottom: 1px solid var(--modern-glass-border) !important;
+  border-bottom-left-radius: 10px !important;
+  border-bottom-right-radius: 10px !important;
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.45),
+    0 0 0 1px var(--modern-accent-15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .general-edit-panel,
+[data-ui-mode="modern"] .general-edit-panel * {
+  color: var(--text-color) !important;
+}
+
+[data-ui-mode="modern"] .gep-left-bar {
+  background-color: var(--modern-accent) !important;
+  box-shadow: 0 0 10px var(--modern-accent-50);
+}
+
+[data-ui-mode="modern"] .gep-divider {
+  background-color: var(--modern-glass-border) !important;
+}
+
+[data-ui-mode="modern"] .gep-section + .gep-section {
+  border-top: 1px solid var(--modern-glass-border) !important;
+}
+
+[data-ui-mode="modern"] .gep-input {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 6px !important;
+  transition: all 0.2s ease;
+}
+
+[data-ui-mode="modern"] .gep-input:focus {
+  outline: none !important;
+  border-color: var(--modern-accent-50) !important;
+  box-shadow: 0 0 0 2px var(--modern-accent-15) !important;
+}
+
+[data-ui-mode="modern"] .gep-btn {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 6px !important;
+  transition: all 0.15s ease;
+}
+
+[data-ui-mode="modern"] .gep-btn:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  border-color: var(--modern-accent-50) !important;
+  box-shadow: 0 0 8px var(--modern-accent-20);
+}
+
+[data-ui-mode="modern"] .gep-btn-apply,
+[data-ui-mode="modern"] .gep-btn-add {
+  background-color: var(--modern-accent-25) !important;
+  border-color: var(--modern-accent-50) !important;
+  color: #fff !important;
+}
+
+[data-ui-mode="modern"] .gep-btn-apply:hover,
+[data-ui-mode="modern"] .gep-btn-add:hover {
+  background-color: var(--modern-accent) !important;
+  box-shadow: 0 0 12px var(--modern-accent-30);
+}
+
+[data-ui-mode="modern"] .gep-close-btn:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .gep-collapse-icon {
+  color: var(--text-color) !important;
+}
+
+[data-ui-mode="modern"] .gep-status {
+  color: var(--text-color) !important;
+  opacity: 0.65;
+}
+
+[data-ui-mode="modern"] .gep-percent-sign {
+  color: var(--text-color) !important;
+  opacity: 0.6;
+}

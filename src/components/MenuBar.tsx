@@ -7,6 +7,11 @@ interface MenuBarProps {
     replaceActive?: boolean;
     generalEditActive?: boolean;
     particlePanelActive?: boolean;
+    /** When true, the Particle Editing button is greyed out and ignores
+     *  clicks. Used to disable the feature for non-bin/.py tabs (markdown,
+     *  json, etc.) where it would have nothing to operate on. */
+    particleDisabled?: boolean;
+    onNewFile: () => void;
     onOpenFile: () => void;
     onSaveFile: () => void;
     onSaveFileAs: () => void;
@@ -37,6 +42,8 @@ export default function MenuBar({
     replaceActive = false,
     generalEditActive = false,
     particlePanelActive = false,
+    particleDisabled = false,
+    onNewFile,
     onOpenFile,
     onSaveFile,
     onSaveFileAs,
@@ -88,6 +95,10 @@ export default function MenuBar({
                 </button>
                 {activeMenu === 'file' && (
                     <div className="menu-dropdown">
+                        <button className="menu-option" onClick={() => handleMenuClick(onNewFile)}>
+                            <span>New</span>
+                            <span className="shortcut">Ctrl+N</span>
+                        </button>
                         <button className="menu-option" onClick={() => handleMenuClick(onOpenFile)} disabled={openFileDisabled}>
                             <span>Open...</span>
                         </button>
@@ -205,7 +216,12 @@ export default function MenuBar({
                             <span>General Editing...</span>
                             <span className="shortcut">Ctrl+O</span>
                         </button>
-                        <button className="menu-option" onClick={() => handleMenuClick(onParticlePanel)}>
+                        <button
+                            className="menu-option"
+                            onClick={() => handleMenuClick(onParticlePanel)}
+                            disabled={particleDisabled}
+                            title={particleDisabled ? 'Particle editing only works on .bin or .py files' : undefined}
+                        >
                             <span>Particle Editing...</span>
                             <span className="shortcut">Ctrl+P</span>
                         </button>
@@ -255,8 +271,9 @@ export default function MenuBar({
             </button>
             <button
                 className={`menu-icon-btn ${particlePanelActive ? 'active' : ''}`}
-                title="Particle Editing (Ctrl+P)"
+                title={particleDisabled ? 'Particle editing only works on .bin or .py files' : 'Particle Editing (Ctrl+P)'}
                 onClick={onParticlePanel}
+                disabled={particleDisabled}
             >
                 <SparklesIcon size={16} />
             </button>

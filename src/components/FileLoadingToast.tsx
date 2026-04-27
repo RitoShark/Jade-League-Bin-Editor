@@ -14,7 +14,7 @@ export default function FileLoadingToast({ fileName, detail }: FileLoadingToastP
         </div>
         <div className="file-loading-text">
           <div className="file-loading-title">Loading {fileName}</div>
-          <div className="file-loading-sub">{detail ?? 'Parsing bin — please wait a moment.'}</div>
+          <div className="file-loading-sub">{detail ?? 'Parsing bin - please wait a moment.'}</div>
         </div>
       </div>
     </div>

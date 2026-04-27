@@ -1,0 +1,59 @@
+/* ── Markdown Edit Panel: button grid (reuses GeneralEditPanel chrome) ── */
+.md-btn-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+}
+
+.md-btn-grid-3 {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+.md-btn {
+    height: 32px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid #3E3E42;
+    border-radius: 6px;
+    color: var(--text-color, #ddd);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, transform 0.05s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 8px;
+    white-space: nowrap;
+}
+
+.md-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--status-bar-bg, #0e639c);
+}
+
+.md-btn:active {
+    transform: translateY(1px);
+}
+
+.md-status {
+    margin-top: 8px;
+}
+
+[data-ui-mode="modern"] .md-btn {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    border-radius: 6px !important;
+    color: var(--text-color) !important;
+    transition: all 0.15s ease;
+}
+
+[data-ui-mode="modern"] .md-btn:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-color: var(--modern-accent-50) !important;
+    box-shadow: 0 0 10px var(--modern-accent-30);
+}
+
+[data-ui-mode="modern"] .md-status {
+    color: var(--text-color) !important;
+    opacity: 0.7;
+}

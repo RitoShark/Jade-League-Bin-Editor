@@ -65,27 +65,22 @@ export default function GeneralEditPanel({
   
   const isUpdatingFromPercentage = useRef(false);
 
+  // Mirrors the ParticleEditorPanel positioning logic exactly: pin the
+  // panel to the left edge of the minimap when one is rendered, otherwise
+  // park it 28px from the right edge. The earlier find-widget short-
+  // circuit produced inconsistent positions when Monaco reflowed (find
+  // widget closed/opened, minimap toggled), so we drop that branch.
   const updatePanelPosition = useCallback(() => {
     const editorContainer = document.querySelector('.editor-container') as HTMLElement | null;
     if (!editorContainer) return;
-
     const containerRect = editorContainer.getBoundingClientRect();
-    const findWidget = editorContainer.querySelector('.monaco-editor .find-widget') as HTMLElement | null;
-    if (findWidget) {
-      const widgetRect = findWidget.getBoundingClientRect();
-      const rightOffset = Math.max(0, containerRect.right - widgetRect.right);
-      setPanelRight(`${Math.round(rightOffset)}px`);
-      return;
-    }
-
     const minimap = editorContainer.querySelector('.monaco-editor .minimap') as HTMLElement | null;
-    if (minimap) {
+    if (minimap && minimap.offsetWidth > 0) {
       const minimapRect = minimap.getBoundingClientRect();
       const minimapWidth = Math.max(0, containerRect.right - minimapRect.left);
       setPanelRight(`${Math.round(minimapWidth + 14)}px`);
       return;
     }
-
     setPanelRight('28px');
   }, []);
 
@@ -112,11 +107,29 @@ export default function GeneralEditPanel({
     }
   }, [isOpen, updatePanelPosition]);
 
+  // Re-measure on window resize, perf-pref toggles (minimap on/off etc.)
+  // and any internal layout shift in the editor container.
   useEffect(() => {
     if (!isOpen) return;
     const handleResize = () => updatePanelPosition();
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    const handlePerfPref = () => {
+      requestAnimationFrame(() => requestAnimationFrame(updatePanelPosition));
+    };
+    window.addEventListener('perf-pref-changed', handlePerfPref);
+    let ro: ResizeObserver | null = null;
+    const container = document.querySelector('.editor-container');
+    if (container && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => updatePanelPosition());
+      ro.observe(container);
+      const monacoEl = container.querySelector('.monaco-editor');
+      if (monacoEl) ro.observe(monacoEl);
+    }
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('perf-pref-changed', handlePerfPref);
+      ro?.disconnect();
+    };
   }, [isOpen, updatePanelPosition]);
 
   // Load skinScale value from content

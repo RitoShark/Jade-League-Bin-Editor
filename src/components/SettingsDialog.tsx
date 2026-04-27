@@ -869,7 +869,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             <h2 className="settings-section-title">Performance</h2>
             <p className="settings-section-subtitle">
                 Editor features have a cost on huge bin dumps. Each option below can be kept on,
-                automatically dropped on big files (over 50,000 lines), or always off.
+                automatically dropped on big files (over 75,000 lines), or always off.
             </p>
 
             {PERF_KEYS.map(key => (

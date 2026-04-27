@@ -443,3 +443,93 @@
   color: var(--vscode-editorWidget-foreground);
   opacity: 0.7;
 }
+
+/* ── Modern UI: glass surface matching the General Edit panel ────── */
+[data-ui-mode="modern"] .particle-editor-panel {
+  background: var(--modern-dialog-bg) !important;
+  backdrop-filter: var(--modern-blur);
+  -webkit-backdrop-filter: var(--modern-blur);
+  border-left: 1px solid var(--modern-glass-border) !important;
+  border-right: 1px solid var(--modern-glass-border) !important;
+  border-bottom: 1px solid var(--modern-glass-border) !important;
+  border-bottom-left-radius: 10px !important;
+  border-bottom-right-radius: 10px !important;
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.45),
+    0 0 0 1px var(--modern-accent-15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .particle-editor-panel,
+[data-ui-mode="modern"] .particle-editor-panel * {
+  color: var(--text-color) !important;
+}
+
+[data-ui-mode="modern"] .pep-left-bar {
+  background-color: var(--modern-accent) !important;
+  box-shadow: 0 0 10px var(--modern-accent-50);
+}
+
+[data-ui-mode="modern"] .pep-divider {
+  background-color: var(--modern-glass-border) !important;
+}
+
+[data-ui-mode="modern"] .pep-input {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 6px !important;
+  transition: all 0.2s ease;
+}
+
+[data-ui-mode="modern"] .pep-input:focus {
+  outline: none !important;
+  border-color: var(--modern-accent-50) !important;
+  box-shadow: 0 0 0 2px var(--modern-accent-15) !important;
+}
+
+[data-ui-mode="modern"] .pep-nav-btn,
+[data-ui-mode="modern"] .pep-btn-tiny,
+[data-ui-mode="modern"] .pep-btn-small {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 6px !important;
+  transition: all 0.15s ease;
+}
+
+[data-ui-mode="modern"] .pep-nav-btn:hover:not(:disabled),
+[data-ui-mode="modern"] .pep-btn-tiny:hover:not(:disabled),
+[data-ui-mode="modern"] .pep-btn-small:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  border-color: var(--modern-accent-50) !important;
+  box-shadow: 0 0 8px var(--modern-accent-20);
+}
+
+[data-ui-mode="modern"] .pep-close-btn:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .pep-collapse-icon {
+  color: var(--text-color) !important;
+}
+
+[data-ui-mode="modern"] .pep-emitter-list-item {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 6px !important;
+}
+
+[data-ui-mode="modern"] .pep-emitter-list-item:hover {
+  background-color: rgba(255, 255, 255, 0.07) !important;
+  border-color: var(--modern-accent-50) !important;
+}
+
+[data-ui-mode="modern"] .pep-emitter-list-item.selected {
+  background-color: var(--modern-accent-22) !important;
+  border-color: var(--modern-accent) !important;
+  box-shadow: 0 0 12px var(--modern-accent-30);
+}
+
+[data-ui-mode="modern"] .pep-status {
+  color: var(--text-color) !important;
+  opacity: 0.65;
+}

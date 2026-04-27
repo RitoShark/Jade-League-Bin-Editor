@@ -9,8 +9,10 @@ export interface EditorTab {
     content: string;
     isModified: boolean;
     isPinned: boolean;
-    /** 'editor' (default), 'texture-preview', or 'quartz-diff' */
-    tabType?: 'editor' | 'texture-preview' | 'quartz-diff';
+    /** 'editor' (default), 'texture-preview', 'quartz-diff', or 'markdown-preview' */
+    tabType?: 'editor' | 'texture-preview' | 'quartz-diff' | 'markdown-preview';
+    /** For markdown-preview tabs: id of the source editor tab whose content we render. */
+    sourceTabId?: string;
     /** For texture-preview tabs: decoded PNG data URL */
     textureDataUrl?: string | null;
     /** For texture-preview tabs: pixel dimensions */
@@ -211,6 +213,20 @@ interface QuartzDiffTabParams {
     originalContent: string;
     modifiedContent: string;
     status?: 'pending' | 'accepted' | 'rejected';
+}
+
+// Create a markdown-preview tab tied to an existing markdown editor tab.
+export function createMarkdownPreviewTab(sourceTabId: string, sourceFileName: string): EditorTab {
+    return {
+        id: generateTabId(),
+        filePath: null,
+        fileName: `Preview: ${sourceFileName}`,
+        content: '',
+        isModified: false,
+        isPinned: false,
+        tabType: 'markdown-preview',
+        sourceTabId,
+    };
 }
 
 export function createQuartzDiffTab(params: QuartzDiffTabParams): EditorTab {

@@ -161,6 +161,7 @@ body {
   background: var(--editor-bg);
 }
 
+
 /* Syntax checker — error line highlight & glyph dot (red) */
 .syntax-error-line {
   background: rgba(255, 0, 0, 0.10) !important;

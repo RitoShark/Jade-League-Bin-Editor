@@ -6,13 +6,17 @@ import Editor, { Monaco } from "@monaco-editor/react";
 import type * as MonacoType from 'monaco-editor';
 import { registerRitobinLanguage, registerRitobinTheme, RITOBIN_LANGUAGE_ID, RITOBIN_THEME_ID } from "./lib/ritobinLanguage";
 import { registerColorProvider } from "./lib/colorProvider";
-import { openBinFile, saveBinFile, saveBinFileAs, readBinDirect, writeBinDirect } from "./lib/binOperations";
+import {
+  saveBinFile, readBinDirect, writeBinDirect,
+  openAnyEditorFile, saveAnyFileAs, saveAnyFileToPath, readTextDirect,
+  isBinLikePath, isPlainTextPath, getFileExtension,
+} from "./lib/binOperations";
 import { loadSavedTheme } from "./lib/themeApplicator";
 import { checkSyntax, suggestType } from "./lib/syntaxChecker";
 import { texBufferToDataURL, ddsBufferToDataURL, ddsFormatName } from "./lib/texFormat";
 import TitleBar from "./components/TitleBar";
 import MenuBar from "./components/MenuBar";
-import TabBar, { EditorTab, createQuartzDiffTab, createTab, createTexPreviewTab, getFileName } from "./components/TabBar";
+import TabBar, { EditorTab, createQuartzDiffTab, createMarkdownPreviewTab, createTab, createTexPreviewTab, getFileName } from "./components/TabBar";
 import StatusBar from "./components/StatusBar";
 import WelcomeScreen from "./components/WelcomeScreen";
 import AboutDialog from "./components/AboutDialog";
@@ -26,6 +30,9 @@ import ParticleEditorDialog from "./components/ParticleEditorDialog";
 import UpdateToast from "./components/UpdateToast";
 import HashSyncToast from "./components/HashSyncToast";
 import FileLoadingToast from "./components/FileLoadingToast";
+import MarkdownPreview from "./components/MarkdownPreview";
+import MarkdownEditPanel from "./components/MarkdownEditPanel";
+import NewFileDialog from "./components/NewFileDialog";
 import QuartzInstallModal from "./components/QuartzInstallModal";
 import TexHoverPopup from "./components/TexHoverPopup";
 import EditorContextMenu from "./components/EditorContextMenu";
@@ -87,6 +94,42 @@ type HashSyncToastState = {
   message: string;
 };
 
+/**
+ * Pick the Monaco language id for a given file path. Bins and their
+ * .py sidecars stay on the ritobin language so the existing syntax,
+ * decorations and language services keep working. Other formats fall
+ * back to a Monaco built-in or 'plaintext' so JSON/MD/etc. don't get
+ * ritobin coloring on them.
+ */
+function getMonacoLanguageForPath(filePath: string | null): string {
+  if (!filePath) return RITOBIN_LANGUAGE_ID;
+  const ext = getFileExtension(filePath);
+  if (!ext || ext === 'bin' || ext === 'py') return RITOBIN_LANGUAGE_ID;
+  switch (ext) {
+    case 'json':           return 'json';
+    case 'xml':            return 'xml';
+    case 'html':
+    case 'htm':            return 'html';
+    case 'css':            return 'css';
+    case 'js':
+    case 'mjs':
+    case 'cjs':
+    case 'jsx':            return 'javascript';
+    case 'ts':
+    case 'tsx':            return 'typescript';
+    case 'md':
+    case 'markdown':       return 'markdown';
+    case 'yaml':
+    case 'yml':            return 'yaml';
+    case 'sql':            return 'sql';
+    case 'sh':             return 'shell';
+    case 'bat':
+    case 'cmd':            return 'bat';
+    case 'ps1':            return 'powershell';
+    default:               return 'plaintext';
+  }
+}
+
 function App() {
   // Tab management - start with NO tabs (empty)
   const [tabs, setTabs] = useState<EditorTab[]>([]);
@@ -118,7 +161,7 @@ function App() {
     selectionHighlight: 'auto', lineHighlight: 'auto', folding: 'auto',
     stopRenderingLine: 'auto',
   };
-  const BIG_FILE_LINES = 50_000;
+  const BIG_FILE_LINES = 75_000;
   const [perfPrefs, setPerfPrefs] = useState<Record<PerfKey, PerfMode>>(PERF_DEFAULTS);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
   const [showThemesDialog, setShowThemesDialog] = useState(false);
@@ -135,6 +178,8 @@ function App() {
   const [replaceWidgetOpen, setReplaceWidgetOpen] = useState(false);
   const [generalEditPanelOpen, setGeneralEditPanelOpen] = useState(false);
   const [particlePanelOpen, setParticlePanelOpen] = useState(false);
+  const [mdPreviewContent, setMdPreviewContent] = useState<string>('');
+  const [showNewFileDialog, setShowNewFileDialog] = useState(false);
   const [particleDialogOpen, setParticleDialogOpen] = useState(false);
   const [monacoInstance, setMonacoInstance] = useState<Monaco | null>(null);
   const [editorTheme, setEditorTheme] = useState(RITOBIN_THEME_ID);
@@ -199,6 +244,7 @@ function App() {
   const openFileFromPathRef = useRef<((path: string) => Promise<void>) | null>(null);
   const openingFilesRef = useRef<Set<string>>(new Set()); // prevents duplicate concurrent opens
   const handleTabCloseRef = useRef<((tabId: string) => void) | null>(null);
+  const handleNewRef = useRef<(() => void) | null>(null);
   const handleOpenRef = useRef<(() => void) | null>(null);
   const handleSaveRef = useRef<(() => void) | null>(null);
   const handleSaveAsRef = useRef<(() => void) | null>(null);
@@ -303,6 +349,34 @@ function App() {
     window.addEventListener('perf-pref-changed', handler);
     return () => { cancelled = true; window.removeEventListener('perf-pref-changed', handler); };
   }, []);
+
+  // When the active tab is a markdown preview, mirror its source tab's
+  // content into mdPreviewContent. We subscribe to the source model's
+  // content change so the rendered preview stays current if the user
+  // switches back to the source, edits, and returns. Falls back to the
+  // last cached `content` field on the source tab if Monaco hasn't
+  // materialized a model for it yet (uncommon).
+  useEffect(() => {
+    if (activeTab?.tabType !== 'markdown-preview') {
+      return;
+    }
+    const sourceId = activeTab.sourceTabId;
+    if (!sourceId) {
+      setMdPreviewContent('');
+      return;
+    }
+    const sourceModel = monacoModelsRef.current.get(sourceId);
+    if (!sourceModel || sourceModel.isDisposed()) {
+      const sourceTab = tabsRef.current.find(t => t.id === sourceId);
+      setMdPreviewContent(sourceTab?.content ?? '');
+      return;
+    }
+    setMdPreviewContent(sourceModel.getValue());
+    const sub = sourceModel.onDidChangeContent(() => {
+      setMdPreviewContent(sourceModel.getValue());
+    });
+    return () => { sub.dispose(); };
+  }, [activeTabId, activeTab?.tabType, activeTab?.sourceTabId]);
 
   // Load custom icon and window state on mount
   useEffect(() => {
@@ -437,6 +511,7 @@ function App() {
     window.addEventListener('icon-changed', handleIconChange);
 
     // Event listeners for keyboard shortcuts
+    const handleAppNew = () => handleNewRef.current?.();
     const handleAppOpen = () => handleOpenRef.current?.();
     const handleAppSave = () => handleSaveRef.current?.();
     const handleAppSaveAs = () => handleSaveAsRef.current?.();
@@ -448,7 +523,35 @@ function App() {
         handleTabCloseRef.current?.(activeTabIdRef.current);
       }
     };
+    const handleAppToggleMdPreview = () => {
+      // Open (or focus) a Markdown preview tab tied to the current
+      // markdown editor tab. If the active tab IS already a preview, jump
+      // back to its source. If the active tab isn't markdown, do nothing.
+      const current = activeTabRef.current;
+      if (!current) return;
+      const all = tabsRef.current;
 
+      if (current.tabType === 'markdown-preview') {
+        if (current.sourceTabId) setActiveTabId(current.sourceTabId);
+        return;
+      }
+      // Fall back to fileName so unsaved tabs (e.g. File → New → README.md
+      // with filePath still null) are still recognised as markdown.
+      const ext = getFileExtension(current.filePath ?? current.fileName);
+      if (ext !== 'md' && ext !== 'markdown') return;
+
+      const existingPreview = all.find(t => t.tabType === 'markdown-preview' && t.sourceTabId === current.id);
+      if (existingPreview) {
+        setActiveTabId(existingPreview.id);
+        return;
+      }
+      const previewTab = createMarkdownPreviewTab(current.id, current.fileName);
+      setTabs(prev => [...prev, previewTab]);
+      setActiveTabId(previewTab.id);
+    };
+
+    window.addEventListener('app-new', handleAppNew);
+    window.addEventListener('app-toggle-md-preview', handleAppToggleMdPreview);
     window.addEventListener('app-open', handleAppOpen);
     window.addEventListener('app-save', handleAppSave);
     window.addEventListener('app-save-as', handleAppSaveAs);
@@ -459,13 +562,23 @@ function App() {
 
     // Keyboard shortcut for General Edit panel (Ctrl+O), Particle panel (Ctrl+Shift+P), Tab switching (Ctrl+Tab/Ctrl+Shift+Tab) and Escape to close
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Helper to check if current file is a bin file (using ref for up-to-date value)
+      // Helper to check if current file is bin or .py sidecar (ritobin
+      // content). Used to gate particle/material/skin shortcuts so they
+      // don't fire on markdown / json / plain-text tabs.
       const isBinFile = (): boolean => {
         const tab = activeTabRef.current;
         if (!tab) return false;
         if (!isEditorTab(tab)) return false;
-        return tab.fileName.toLowerCase().endsWith('.bin');
+        const name = (tab.filePath ?? tab.fileName).toLowerCase();
+        return name.endsWith('.bin') || name.endsWith('.py');
       };
+
+      // Ctrl+N - New file (untitled tab)
+      if (e.ctrlKey && (e.key === 'n' || e.key === 'N') && !e.shiftKey) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('app-new'));
+        return;
+      }
 
       // Ctrl+S - Save file
       if (e.ctrlKey && e.key === 's' && !e.shiftKey) {
@@ -479,6 +592,13 @@ function App() {
       if (e.ctrlKey && e.shiftKey && e.key === 'S') {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent('app-save-as'));
+        return;
+      }
+
+      // Ctrl+Shift+V - Toggle markdown preview (matches VS Code)
+      if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('app-toggle-md-preview'));
         return;
       }
 
@@ -656,7 +776,11 @@ function App() {
 
         for (const filePath of event.payload.paths) {
           console.log('Dropped file:', filePath);
-          if (filePath.toLowerCase().endsWith('.bin')) {
+          // Accept any file Jade knows how to open: bin/.py go through
+          // the bin pipeline, the curated plain-text list opens as raw
+          // text. Unknown extensions are ignored so dropping (say) a
+          // .exe doesn't try to render binary garbage.
+          if (isBinLikePath(filePath) || isPlainTextPath(filePath)) {
             await openFileFromPathRef.current?.(filePath);
           }
         }
@@ -687,6 +811,8 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('cigarette-mode-changed', handleCigaretteModeChanged);
       window.removeEventListener('quartz-interop-changed', handleQuartzInteropChanged);
+      window.removeEventListener('app-new', handleAppNew);
+      window.removeEventListener('app-toggle-md-preview', handleAppToggleMdPreview);
       window.removeEventListener('app-open', handleAppOpen);
       window.removeEventListener('app-save', handleAppSave);
       window.removeEventListener('app-save-as', handleAppSaveAs);
@@ -1242,7 +1368,10 @@ function App() {
         return;
       }
 
-      const content = await readBinForEditor(filePath);
+      const isBin = isBinLikePath(filePath);
+      const content = isBin
+        ? await readBinForEditor(filePath)
+        : await readTextDirect(filePath);
       setFileLoading({ name: fileName, detail: 'Rendering editor…' });
       const newTab = createTab(filePath, content);
       // Store initial mtime so the auto-reload poller doesn't fire immediately
@@ -1369,6 +1498,12 @@ function App() {
     if (closedFileKey && tabToClose.tabType !== 'quartz-diff') {
       newTabs = newTabs.filter(t => !(t.tabType === 'quartz-diff' && t.diffSourceFilePath?.toLowerCase() === closedFileKey));
     }
+    // Closing a markdown editor tab also closes any preview tabs that
+    // were rendering its content — the source is gone, the preview has
+    // nothing to show.
+    if (tabToClose.tabType !== 'markdown-preview') {
+      newTabs = newTabs.filter(t => !(t.tabType === 'markdown-preview' && t.sourceTabId === tabId));
+    }
     let nextActiveId: string | null = null;
     if (tabId === activeTabId) {
       if (newTabs.length > 0) {
@@ -1395,7 +1530,7 @@ function App() {
           const existing = monaco.editor.getModel(uri);
           nextModel = (existing && !existing.isDisposed())
             ? existing
-            : monaco.editor.createModel(nextTab.content, RITOBIN_LANGUAGE_ID, uri);
+            : monaco.editor.createModel(nextTab.content, getMonacoLanguageForPath(nextTab.filePath ?? nextTab.fileName), uri);
           monacoModelsRef.current.set(nextActiveId, nextModel!);
         }
         if (nextModel) {
@@ -1418,7 +1553,7 @@ function App() {
           const existing = monaco.editor.getModel(uri);
           fallbackModel = (existing && !existing.isDisposed())
             ? existing
-            : monaco.editor.createModel(fallbackEditorTab.content, RITOBIN_LANGUAGE_ID, uri);
+            : monaco.editor.createModel(fallbackEditorTab.content, getMonacoLanguageForPath(fallbackEditorTab.filePath ?? fallbackEditorTab.fileName), uri);
         }
         if (fallbackModel) {
           monacoModelsRef.current.set(fallbackEditorTab.id, fallbackModel);
@@ -1606,7 +1741,7 @@ function App() {
         }
       }
 
-      model = monaco.editor.createModel(activeTab.content, RITOBIN_LANGUAGE_ID, uri);
+      model = monaco.editor.createModel(activeTab.content, getMonacoLanguageForPath(activeTab.filePath ?? activeTab.fileName), uri);
       monacoModelsRef.current.set(activeTabId, model!);
     }
 
@@ -1720,27 +1855,43 @@ function App() {
     const decorations: MonacoType.editor.IModelDeltaDecoration[] = [];
     const lineCount = model.getLineCount();
 
-    // First pass: index every StaticMaterialDef name → its line.
-    //             And every material link → its line.
-    // Case-insensitive because field names in bin files are usually
-    // capitalised (Material:, SamplerValues:, TextureName:, etc.).
-    const defByName = new Map<string, number>();
-    const linksByName = new Map<string, number[]>();
-    const defLineRe = /^\s*"([^"]+)"\s*=\s*StaticMaterialDef\s*\{/i;
-    const linkLineRe = /material\s*:\s*link\s*=\s*"([^"]+)"/i;
+    // Both forms can appear when a bin gets re-saved and the toolchain
+    // doesn't have the original string in its hash table:
+    //   "Some/Material/Path" = StaticMaterialDef { ... }     (named)
+    //   0x029ad92c            = StaticMaterialDef { ... }    (hashed)
+    //   Material: link = "Some/Material/Path"
+    //   Material: link = 0x029ad92c
+    // Bin hashing is deterministic, so a hashed link points at a def with
+    // the same hex within the same file. Index both kinds under one
+    // keyspace ("s:<name>" or "h:<lowercase-hex>") so either side can be
+    // hashed or named without losing the match.
+    const defByKey = new Map<string, number>();
+    const linksByKey = new Map<string, number[]>();
+    const defLineRe = /^\s*(?:"([^"]+)"|(0x[0-9a-fA-F]+))\s*=\s*StaticMaterialDef\s*\{/i;
+    const linkLineRe = /material\s*:\s*link\s*=\s*(?:"([^"]+)"|(0x[0-9a-fA-F]+))/i;
+
+    const keyOf = (named: string | undefined, hex: string | undefined): string | null => {
+      if (named) return 's:' + named;
+      if (hex) return 'h:' + hex.toLowerCase();
+      return null;
+    };
 
     for (let ln = 1; ln <= lineCount; ln++) {
       const line = model.getLineContent(ln);
       const dm = defLineRe.exec(line);
       if (dm) {
-        defByName.set(dm[1], ln);
+        const key = keyOf(dm[1], dm[2]);
+        if (key) defByKey.set(key, ln);
         continue;
       }
       const lm = linkLineRe.exec(line);
       if (lm) {
-        const arr = linksByName.get(lm[1]) ?? [];
-        arr.push(ln);
-        linksByName.set(lm[1], arr);
+        const key = keyOf(lm[1], lm[2]);
+        if (key) {
+          const arr = linksByKey.get(key) ?? [];
+          arr.push(ln);
+          linksByKey.set(key, arr);
+        }
       }
     }
 
@@ -1751,8 +1902,8 @@ function App() {
 
       const lm = linkLineRe.exec(line);
       if (lm) {
-        const name = lm[1];
-        const targetLine = defByName.get(name);
+        const key = keyOf(lm[1], lm[2]);
+        const targetLine = key ? defByKey.get(key) : undefined;
         if (targetLine !== undefined) {
           const col = line.length + 1;
           decorations.push({
@@ -1770,8 +1921,8 @@ function App() {
 
       const dm = defLineRe.exec(line);
       if (dm) {
-        const name = dm[1];
-        const targets = linksByName.get(name);
+        const key = keyOf(dm[1], dm[2]);
+        const targets = key ? linksByKey.get(key) : undefined;
         if (targets && targets.length > 0) {
           const col = line.length + 1;
           decorations.push({
@@ -2178,7 +2329,19 @@ function App() {
     const model = editor.getModel();
     if (!monaco || !model || model.isDisposed()) return;
 
-    if (!syntaxCheckingEnabled.current) {
+    // The syntax checker is bin/ritobin-specific. Skip it for plain-text
+    // tabs (json, md, txt, etc.) so we don't paint nonsense errors on
+    // unrelated formats.
+    const modelUriPath = model.uri.path || '';
+    const isRitobinTab = (() => {
+      const ext = getFileExtension(modelUriPath);
+      // Untitled buffers have no extension — treat as ritobin so the
+      // existing default-language behavior is preserved.
+      if (!ext) return true;
+      return ext === 'bin' || ext === 'py';
+    })();
+
+    if (!syntaxCheckingEnabled.current || !isRitobinTab) {
       monaco.editor.setModelMarkers(model, 'syntax-checker', []);
       syntaxDecorationIds.current = model.deltaDecorations(syntaxDecorationIds.current, []);
       return;
@@ -2510,7 +2673,7 @@ function App() {
           if (existing && !existing.isDisposed()) {
             model = existing;
           } else {
-            model = monaco.editor.createModel(activeTabData.content, RITOBIN_LANGUAGE_ID, uri);
+            model = monaco.editor.createModel(activeTabData.content, getMonacoLanguageForPath(activeTabData.filePath ?? activeTabData.fileName), uri);
           }
           monacoModelsRef.current.set(activeTabId, model);
           editor.setModel(model);
@@ -2658,15 +2821,90 @@ function App() {
   const handleClose = () => getCurrentWindow().close();
 
   // File Operations
+  const handleNew = () => {
+    setShowNewFileDialog(true);
+  };
+
+  // Markdown panel helpers — used by MarkdownEditPanel buttons. Each
+  // returns true if it applied a change so the panel can show a status
+  // when the user clicked something but had nothing selected.
+  const mdWrapSelection = useCallback((before: string, after: string): boolean => {
+    const editor = editorRef.current;
+    if (!editor) return false;
+    const sel = editor.getSelection();
+    const model = editor.getModel();
+    if (!sel || !model || sel.isEmpty()) return false;
+    const text = model.getValueInRange(sel);
+    editor.executeEdits('md-wrap', [{ range: sel, text: before + text + after }]);
+    editor.focus();
+    return true;
+  }, []);
+
+  const mdPrefixLines = useCallback((prefix: string): boolean => {
+    const editor = editorRef.current;
+    if (!editor) return false;
+    const sel = editor.getSelection();
+    const model = editor.getModel();
+    if (!sel || !model) return false;
+    const monaco = monacoRef.current;
+    if (!monaco) return false;
+    const startLine = sel.startLineNumber;
+    const endLine = sel.endLineNumber;
+    const edits: MonacoType.editor.IIdentifiedSingleEditOperation[] = [];
+    for (let ln = startLine; ln <= endLine; ln++) {
+      edits.push({
+        range: new monaco.Range(ln, 1, ln, 1),
+        text: prefix,
+      });
+    }
+    editor.executeEdits('md-prefix', edits);
+    editor.focus();
+    return true;
+  }, []);
+
+  const mdInsertAtCaret = useCallback((text: string): boolean => {
+    const editor = editorRef.current;
+    if (!editor) return false;
+    const sel = editor.getSelection();
+    if (!sel) return false;
+    editor.executeEdits('md-insert', [{ range: sel, text }]);
+    editor.focus();
+    return true;
+  }, []);
+
+  const handleCreateNewFile = (fileName: string) => {
+    // Build an unsaved tab with the chosen name. filePath stays null
+    // (the file isn't on disk yet), but tab.fileName carries the
+    // extension so Monaco language detection and the panel switch
+    // (markdown vs bin tools) pick the right behavior.
+    saveCurrentViewState();
+    const newTab: EditorTab = {
+      ...createTab(null, ''),
+      fileName,
+    };
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+    setShowNewFileDialog(false);
+    setStatusMessage(`New file: ${fileName}`);
+    statusMessageRef.current = `New file: ${fileName}`;
+  };
+
   const handleOpen = async () => {
     try {
       // Block hash status updates while opening file
       allowHashStatusUpdateRef.current = false;
-      const result = await openBinFile();
+      const result = await openAnyEditorFile();
       if (result) {
         setFileLoading({ name: getFileName(result.path) });
         try {
-          const resolvedContent = await readBinForEditor(result.path, result.content);
+          // Bin and .py sidecars run through the bin pipeline (which also
+          // handles the Quartz py-sidecar workflow). Plain-text files
+          // (json, txt, md, etc.) are read directly and skip linked-bin
+          // resolution since that's a bin-only feature.
+          const isBin = isBinLikePath(result.path);
+          const resolvedContent = isBin
+            ? await readBinForEditor(result.path, result.content)
+            : result.content;
           setFileLoading({ name: getFileName(result.path), detail: 'Rendering editor…' });
           addTab(result.path, resolvedContent);
           setStatusMessage(`Opened ${result.path}`);
@@ -2676,8 +2914,9 @@ function App() {
             await addToRecentFiles(result.path);
           }
 
-          // Open linked bin files if preference enabled
-          await openLinkedBinFiles(result.path, resolvedContent);
+          if (isBin) {
+            await openLinkedBinFiles(result.path, resolvedContent);
+          }
         } finally {
           requestAnimationFrame(() => setFileLoading(null));
         }
@@ -2752,10 +2991,13 @@ function App() {
       if (activeTab.filePath) {
         // Read content from editor for active tab, or from state for inactive tabs
         const content = editorRef.current?.getValue() || activeTab.content;
-        await persistPySidecarIfNeeded(activeTab.filePath, content);
-        await saveBinFile(content, activeTab.filePath);
+        const isBin = isBinLikePath(activeTab.filePath);
+        if (isBin) {
+          await persistPySidecarIfNeeded(activeTab.filePath, content);
+        }
+        await saveAnyFileToPath(content, activeTab.filePath);
         try {
-          if (quartzInteropEnabled) {
+          if (isBin && quartzInteropEnabled) {
             const session = quartzSessionsRef.current.get(activeTab.filePath.toLowerCase());
             const mode = session?.mode || 'paint';
             await invoke('notify_quartz_bin_updated', {
@@ -2819,11 +3061,17 @@ function App() {
       allowHashStatusUpdateRef.current = false;
       // Read content from editor for active tab, or from state for inactive tabs
       const content = editorRef.current?.getValue() || activeTab.content;
-      const newPath = await saveBinFileAs(content);
+      const defaultName = activeTab.filePath
+        ? getFileName(activeTab.filePath)
+        : (activeTab.fileName && activeTab.fileName !== 'Untitled' ? activeTab.fileName : 'Untitled.txt');
+      const newPath = await saveAnyFileAs(content, defaultName);
       if (newPath) {
-        await persistPySidecarIfNeeded(newPath, content);
+        const isBin = isBinLikePath(newPath);
+        if (isBin) {
+          await persistPySidecarIfNeeded(newPath, content);
+        }
         try {
-          if (quartzInteropEnabled) {
+          if (isBin && quartzInteropEnabled) {
             const oldSession = activeTab.filePath
               ? quartzSessionsRef.current.get(activeTab.filePath.toLowerCase())
               : null;
@@ -2932,6 +3180,7 @@ function App() {
 
   const handleCompareFiles = () => console.log('Compare Files');
 
+  handleNewRef.current = handleNew;
   handleOpenRef.current = handleOpen;
   handleSaveRef.current = () => {
     void handleSave();
@@ -3079,12 +3328,14 @@ function App() {
   const handleSettings = () => setShowSettingsDialog(true);
   const handleAbout = () => setShowAboutDialog(true);
 
-  // Helper to check if current file is a bin file
+  // Helper to check if the active tab is a bin (or .py sidecar) file —
+  // i.e. ritobin content. Used to gate particle/material/skin tools so
+  // they don't show up on markdown / json / plain-text tabs.
   const isBinFileOpen = (): boolean => {
     if (!activeTab) return false;
     if (!isEditorTab(activeTab)) return false;
-    const fileName = activeTab.fileName.toLowerCase();
-    return fileName.endsWith('.bin');
+    const name = (activeTab.filePath ?? activeTab.fileName).toLowerCase();
+    return name.endsWith('.bin') || name.endsWith('.py');
   };
 
   // Particle Editor handlers
@@ -3596,6 +3847,8 @@ function App() {
         replaceActive={replaceWidgetOpen}
         generalEditActive={generalEditPanelOpen}
         particlePanelActive={particlePanelOpen}
+        particleDisabled={!isBinFileOpen()}
+        onNewFile={handleNew}
         onOpenFile={handleOpen}
         onSaveFile={handleSave}
         onSaveFileAs={handleSaveAs}
@@ -3656,6 +3909,9 @@ function App() {
           onShowInExplorer={() => handleTexShowInExplorer(activeTab.filePath)}
           onReload={handleTexReload}
         />
+      )}
+      {activeTab?.tabType === 'markdown-preview' && (
+        <MarkdownPreview content={mdPreviewContent} />
       )}
       {activeTab?.tabType === 'quartz-diff' && (
         <QuartzDiffTab
@@ -3733,16 +3989,32 @@ function App() {
             };
           })()}
         />
-        {activeTab && isEditorTab(activeTab) && (
-          <GeneralEditPanel
-            isOpen={generalEditPanelOpen}
-            onClose={() => setGeneralEditPanelOpen(false)}
-            editorContent={editorRef.current?.getValue() || activeTab.content}
-            onContentChange={handleGeneralEditContentChange}
-            filePath={activeTab.filePath ?? undefined}
-            onLibraryInsert={recordJadelibInsert}
-          />
-        )}
+        {activeTab && isEditorTab(activeTab) && (() => {
+          const tabName = activeTab.filePath ?? activeTab.fileName;
+          const ext = getFileExtension(tabName);
+          const isMarkdown = ext === 'md' || ext === 'markdown';
+          if (isMarkdown) {
+            return (
+              <MarkdownEditPanel
+                isOpen={generalEditPanelOpen}
+                onClose={() => setGeneralEditPanelOpen(false)}
+                wrapSelection={mdWrapSelection}
+                prefixLines={mdPrefixLines}
+                insertAtCaret={mdInsertAtCaret}
+              />
+            );
+          }
+          return (
+            <GeneralEditPanel
+              isOpen={generalEditPanelOpen}
+              onClose={() => setGeneralEditPanelOpen(false)}
+              editorContent={editorRef.current?.getValue() || activeTab.content}
+              onContentChange={handleGeneralEditContentChange}
+              filePath={activeTab.filePath ?? undefined}
+              onLibraryInsert={recordJadelibInsert}
+            />
+          );
+        })()}
         {activeTab && isEditorTab(activeTab) && (
           <ParticleEditorPanel
             isOpen={particlePanelOpen}
@@ -3885,6 +4157,12 @@ function App() {
             window.open('https://github.com/LeagueToolkit/Quartz/releases', '_blank', 'noopener,noreferrer');
           }
         }}
+      />
+
+      <NewFileDialog
+        isOpen={showNewFileDialog}
+        onCancel={() => setShowNewFileDialog(false)}
+        onCreate={handleCreateNewFile}
       />
 
       <SmokeOverlay active={cigaretteMode} />

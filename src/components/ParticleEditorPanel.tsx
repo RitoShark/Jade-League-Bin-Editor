@@ -406,8 +406,11 @@ export default function ParticleEditorPanel({
     if (!editorContainer) return;
 
     const containerRect = editorContainer.getBoundingClientRect();
+    // Monaco keeps .minimap in the DOM even when disabled — its rect
+    // collapses to zero and the offset math then pushes the panel
+    // off-screen. Only count it when it actually has width.
     const minimap = editorContainer.querySelector('.monaco-editor .minimap') as HTMLElement | null;
-    if (minimap) {
+    if (minimap && minimap.offsetWidth > 0) {
       const minimapRect = minimap.getBoundingClientRect();
       const minimapWidth = Math.max(0, containerRect.right - minimapRect.left);
       setPanelRight(`${Math.round(minimapWidth + 14)}px`);
@@ -434,6 +437,31 @@ export default function ParticleEditorPanel({
       }, 200);
       return () => clearTimeout(timer);
     }
+  }, [isOpen, updatePanelPosition]);
+
+  // Re-measure on window resize, perf-pref toggles (minimap on/off etc.)
+  // and any internal layout shift in the editor container.
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleResize = () => updatePanelPosition();
+    window.addEventListener('resize', handleResize);
+    const handlePerfPref = () => {
+      requestAnimationFrame(() => requestAnimationFrame(updatePanelPosition));
+    };
+    window.addEventListener('perf-pref-changed', handlePerfPref);
+    let ro: ResizeObserver | null = null;
+    const container = document.querySelector('.editor-container');
+    if (container && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => updatePanelPosition());
+      ro.observe(container);
+      const monacoEl = container.querySelector('.monaco-editor');
+      if (monacoEl) ro.observe(monacoEl);
+    }
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('perf-pref-changed', handlePerfPref);
+      ro?.disconnect();
+    };
   }, [isOpen, updatePanelPosition]);
 
   // Helper to set status with timeout (for user actions)
