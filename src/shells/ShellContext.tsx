@@ -112,6 +112,9 @@ export interface ShellContextValue {
 
     // -- Editor wiring
     editorTheme: string;
+    /** Active editor font family (CSS font-family value). Driven by the
+     *  theme system's `jade-editor-font-changed` event. */
+    editorFontFamily: string;
     perfPrefs: Record<PerfKey, PerfMode>;
     bigFileLines: number;
     handleBeforeMount: (monaco: Monaco) => void;

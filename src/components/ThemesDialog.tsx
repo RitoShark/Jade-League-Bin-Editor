@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import FontPicker from './FontPicker';
 import {
     THEMES,
     PRESET_FONTS,
@@ -58,6 +59,7 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
     const [cigaretteMode, setCigaretteMode] = useState(false);
     const [useCustomBackground, setUseCustomBackground] = useState(false);
     const [useThemeBackground, setUseThemeBackground] = useState(true);
+    const [themeBgBlur, setThemeBgBlur] = useState(4);
     const [customBackgroundImage, setCustomBackgroundImage] = useState('');
     const [customBackgroundName, setCustomBackgroundName] = useState('');
     const [customBackgroundBlur, setCustomBackgroundBlur] = useState(8);
@@ -286,6 +288,7 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             const cigarette  = await invoke<string>('get_preference', { key: 'CigaretteMode',   defaultValue: 'false' });
             const useBackground = await invoke<string>('get_preference', { key: 'UseCustomBackgroundImage', defaultValue: 'false' });
             const useThemeBg = await invoke<string>('get_preference', { key: 'UseThemeBackground', defaultValue: 'true' });
+            const themeBgBlurRaw = await invoke<string>('get_preference', { key: 'ThemeBackgroundBlur', defaultValue: '4' });
             // Background image bytes are stored as a real file in the
             // config dir (not inlined into preferences.json). Read via
             // the dedicated command which returns a data URL on demand.
@@ -311,6 +314,10 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             setCustomBackgroundName(backgroundName);
             setUseCustomBackground(useBackground === 'true' && backgroundImage.length > 0);
             setUseThemeBackground(useThemeBg !== 'false');
+            {
+                const bl = Number.parseInt(themeBgBlurRaw, 10);
+                if (Number.isFinite(bl)) setThemeBgBlur(Math.max(0, Math.min(40, bl)));
+            }
             {
                 const parsedBlur = Number.parseInt(backgroundBlurRaw, 10);
                 const blur = Number.isFinite(parsedBlur) ? clampBlur(parsedBlur) : 8;
@@ -472,6 +479,7 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             await invoke('set_preference', { key: 'CigaretteMode',  value: cigaretteMode.toString()    });
             await invoke('set_preference', { key: 'UseCustomBackgroundImage', value: (useCustomBackground && customBackgroundImage.length > 0).toString() });
             await invoke('set_preference', { key: 'UseThemeBackground', value: useThemeBackground.toString() });
+            await invoke('set_preference', { key: 'ThemeBackgroundBlur', value: String(themeBgBlur) });
             // Background image bytes go to a real file via dedicated command;
             // we never store the data URL in preferences.json anymore.
             if (customBackgroundImage.length > 0) {
@@ -515,7 +523,7 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
                     applyCustomBackground({
                         enabled: true,
                         imageDataUrl: themeForBg!.defaultBackground!,
-                        blur: 0,
+                        blur: themeBgBlur,
                         brightness: 1,
                         saturation: 1,
                         opacity: 1,
@@ -561,9 +569,9 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             // Ensure the chosen preset font is loaded from CDN before applying
             if (activeFont) await ensurePresetFontLoaded(activeFont);
 
-            const resolvedEditorFont = activeFont
-                ? `"${activeFont}", 'JetBrains Mono', 'Fira Code', Consolas, monospace`
-                : "'JetBrains Mono', 'Fira Code', Consolas, monospace";
+            // Empty string when no font is selected — App.tsx leaves Monaco's
+            // fontFamily undefined so the editor uses its built-in default.
+            const resolvedEditorFont = activeFont ? `"${activeFont}", monospace` : "";
             window.dispatchEvent(new CustomEvent('jade-editor-font-changed', { detail: resolvedEditorFont }));
 
             window.dispatchEvent(new CustomEvent('cigarette-mode-changed', { detail: cigaretteMode }));
@@ -634,44 +642,6 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
 
     const renderUI = () => {
         const currentIsLight = isLightTheme(currentTheme.windowBg);
-        const activeFont = !useCustomTheme ? getTheme(selectedTheme)?.font : undefined;
-        const editorBg   = currentTheme.editorBg;
-        const textColor  = currentTheme.text;
-
-        // Always reflect the clicked UI theme's own syntax — independent of the
-        // syntax override flag, which only applies to the editor, not this preview.
-        const previewSyntaxId = !useCustomTheme ? selectedTheme : 'Default';
-        const previewSyntax   = getSyntaxColors(previewSyntaxId);
-        const previewBrackets = getBracketColors(previewSyntaxId);
-
-        const syntaxAndFontPreview = (
-            <div
-                className="syntax-preview"
-                style={{
-                    fontFamily: activeFont ? `"${activeFont}", monospace` : undefined,
-                    backgroundColor: editorBg,
-                    color: textColor,
-                }}
-            >
-                <pre><code>
-                    <span style={{ color: previewBrackets.color1 }}>{'{'}</span>{'\n'}
-                    {'  '}<span style={{ color: previewSyntax.comment }}>{'# This is a comment'}</span>{'\n'}
-                    {'  '}<span style={{ color: previewSyntax.propertyColor }}>{'name'}</span>
-                    {': '}<span style={{ color: previewSyntax.keyword }}>{'string'}</span>
-                    {' = '}<span style={{ color: previewSyntax.stringColor }}>{'"Example"'}</span>{'\n'}
-                    {'  '}<span style={{ color: previewSyntax.propertyColor }}>{'value'}</span>
-                    {': '}<span style={{ color: previewSyntax.keyword }}>{'f32'}</span>
-                    {' = '}<span style={{ color: previewSyntax.number }}>{'3.14'}</span>{'\n'}
-                    {'  '}<span style={{ color: previewSyntax.propertyColor }}>{'enabled'}</span>
-                    {': '}<span style={{ color: previewSyntax.keyword }}>{'bool'}</span>
-                    {' = '}<span style={{ color: previewSyntax.keyword }}>{'true'}</span>{'\n'}
-                    {'  '}<span style={{ color: previewSyntax.propertyColor }}>{'data'}</span>
-                    {': '}<span style={{ color: previewSyntax.keyword }}>{'hash'}</span>
-                    {' = '}<span style={{ color: previewSyntax.number }}>{'0xDEADBEEF'}</span>{'\n'}
-                    <span style={{ color: previewBrackets.color1 }}>{'}'}</span>
-                </code></pre>
-            </div>
-        );
 
         return (
             <>
@@ -687,13 +657,16 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
                 <div className="syntax-split-layout">
                     {!useCustomTheme ? (
                         <div className="theme-list">
-                            {THEMES.map(theme => (
+                            {THEMES.map(theme => {
+                                const lockedByModern = !!theme.requiresModernUI && !modernUI;
+                                return (
                                 <div
                                     key={theme.id}
-                                    className={`theme-item${selectedTheme === theme.id ? ' selected' : ''}`}
-                                    onClick={() => handleThemeSelect(theme.id)}
+                                    className={`theme-item${selectedTheme === theme.id ? ' selected' : ''}${lockedByModern ? ' disabled' : ''}`}
+                                    onClick={() => { if (!lockedByModern) handleThemeSelect(theme.id); }}
+                                    title={lockedByModern ? 'This theme requires Modern UI' : undefined}
                                 >
-                                    <span>{theme.displayName}</span>
+                                    <span>{theme.displayName}{lockedByModern && <span className="theme-item-lock"> · Modern UI only</span>}</span>
                                     {theme.icon ? (
                                         <img
                                             src={theme.icon}
@@ -712,7 +685,8 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
                                         </div>
                                     )}
                                 </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     ) : (
                         <div className="custom-theme-editor compact">
@@ -735,10 +709,7 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
                             ))}
                         </div>
                     )}
-                    <div className="ui-preview-right">
-                        {syntaxAndFontPreview}
-                        {uiPreview}
-                    </div>
+                    {uiPreview}
                 </div>
             </>
         );
@@ -863,26 +834,44 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
 
             {hasThemeDefaultBg && (
                 <div className="theme-bg-section">
-                    <label className="checkbox-label">
-                        <input
-                            type="checkbox"
-                            checked={useThemeBackground}
-                            onChange={e => setUseThemeBackground(e.target.checked)}
-                        />
-                        <span>
-                            <strong>Theme background</strong>
-                            <span style={{ display: 'block', fontSize: 11, opacity: 0.5, fontWeight: 400 }}>
-                                Bundled with {themeForBg!.displayName}
-                                {hasCustomBg && ' · overridden by your image'}
+                    <div className="theme-bg-row">
+                        <label className="checkbox-label">
+                            <input
+                                type="checkbox"
+                                checked={useThemeBackground}
+                                onChange={e => setUseThemeBackground(e.target.checked)}
+                            />
+                            <span>
+                                <strong>Theme background</strong>
+                                <span style={{ display: 'block', fontSize: 11, opacity: 0.5, fontWeight: 400 }}>
+                                    Bundled with {themeForBg!.displayName}
+                                    {hasCustomBg && ' · overridden by your image'}
+                                </span>
                             </span>
-                        </span>
-                    </label>
-                    <img
-                        src={themeForBg!.defaultBackground}
-                        className="theme-bg-thumbnail"
-                        alt=""
-                        draggable={false}
-                    />
+                        </label>
+                        <img
+                            src={themeForBg!.defaultBackground}
+                            className="theme-bg-thumbnail"
+                            alt=""
+                            draggable={false}
+                        />
+                    </div>
+                    {useThemeBackground && (
+                        <div className="background-slider-row theme-bg-blur">
+                            <label htmlFor="theme-bg-blur-slider">
+                                Blur <strong>{themeBgBlur}px</strong>
+                            </label>
+                            <input
+                                id="theme-bg-blur-slider"
+                                type="range"
+                                min={0}
+                                max={40}
+                                step={1}
+                                value={themeBgBlur}
+                                onChange={e => setThemeBgBlur(Math.max(0, Math.min(40, Number.parseInt(e.target.value, 10) || 0)))}
+                            />
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -1151,7 +1140,22 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             <div className="themes-options" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
                 <label className="checkbox-label">
                     <input type="checkbox" checked={modernUI}
-                        onChange={e => setModernUI(e.target.checked)} />
+                        onChange={e => {
+                            const next = e.target.checked;
+                            setModernUI(next);
+                            // Themes that depend on the glass morphism look
+                            // can't survive the classic chrome — bounce back
+                            // to Default when modern UI is turned off, and
+                            // reset the matching syntax scheme so the editor
+                            // doesn't keep monochrome tokens on a dark bg.
+                            if (!next) {
+                                const cur = getTheme(selectedTheme);
+                                if (cur?.requiresModernUI) {
+                                    setSelectedTheme('Default');
+                                    setSelectedSyntaxTheme('Default');
+                                }
+                            }
+                        }} />
                     <span>
                         <strong>Modern UI</strong>
                         <span style={{ display: 'block', fontSize: 11, opacity: 0.5, fontWeight: 400 }}>
@@ -1200,10 +1204,12 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
 
     const renderFonts = () => {
         const activeThemeFont = ('font' in currentTheme) ? (currentTheme as ThemeColors).font : undefined;
-        const previewFont = editorFont || activeThemeFont || '';
+        const previewFont = editorFont || '';
+        // When nothing is picked, the editor leaves Monaco to its own default
+        // — fall back to the same stack so the preview matches.
         const previewFontStack = previewFont
             ? `"${previewFont}", monospace`
-            : "'JetBrains Mono', 'Fira Code', Consolas, monospace";
+            : 'Menlo, Monaco, "Courier New", monospace';
 
         const themeOnlyFonts = [...new Set(
             THEMES.filter(t => t.font && !PRESET_FONTS.includes(t.font)).map(t => t.font!)
@@ -1219,28 +1225,26 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
                     <div className="font-list-panel">
                         <div className="font-ui-row">
                             <span className="font-assignment-label">UI Font</span>
-                            <select
-                                className="font-select"
+                            <FontPicker
+                                label="UI Font"
                                 value={uiFont}
-                                onChange={e => setUiFont(e.target.value)}
-                            >
-                                <option value="">(Default)</option>
-                                <optgroup label="Popular Fonts">
-                                    {PRESET_FONTS.map(f => <option key={f} value={f}>{f}</option>)}
-                                </optgroup>
-                                {themeOnlyFonts.length > 0 && (
-                                    <optgroup label="Theme Fonts">
-                                        {themeOnlyFonts.map(f => <option key={f} value={f}>{f}</option>)}
-                                    </optgroup>
-                                )}
-                                {fontLibrary.length > 0 && (
-                                    <optgroup label="Imported">
-                                        {fontLibrary.map(f => (
-                                            <option key={f.fileName} value={f.name}>{f.name}</option>
-                                        ))}
-                                    </optgroup>
-                                )}
-                            </select>
+                                onChange={setUiFont}
+                                groups={[
+                                    { items: [{ value: '', label: '(Default)' }] },
+                                    {
+                                        title: 'Popular Fonts',
+                                        items: PRESET_FONTS.map(f => ({ value: f, label: f, fontFamily: `"${f}", monospace` })),
+                                    },
+                                    ...(themeOnlyFonts.length > 0 ? [{
+                                        title: 'Theme Fonts',
+                                        items: themeOnlyFonts.map(f => ({ value: f, label: f, fontFamily: `"${f}", monospace` })),
+                                    }] : []),
+                                    ...(fontLibrary.length > 0 ? [{
+                                        title: 'Imported',
+                                        items: fontLibrary.map(f => ({ value: f.name, label: f.name, fontFamily: `"${f.name}", monospace` })),
+                                    }] : []),
+                                ]}
+                            />
                         </div>
 
                         <div className="font-list-label">Editor Font</div>

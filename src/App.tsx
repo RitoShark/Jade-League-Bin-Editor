@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+﻿import { useState, useEffect, useRef, useCallback } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -195,7 +195,10 @@ function App() {
   });
 
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
-  const [editorFontFamily, setEditorFontFamily] = useState("'JetBrains Mono', 'Fira Code', Consolas, monospace");
+  // Empty default lets Monaco fall back to its own font (matches the
+  // pre-PR look). The theme system only sets a real value when the user
+  // picks a font in Themes > Fonts.
+  const [editorFontFamily, setEditorFontFamily] = useState("");
   const editorDisposablesRef = useRef<MonacoType.IDisposable[]>([]);
 
   // When font state changes, tell Monaco to re-measure so cursor/selection align correctly.
@@ -206,27 +209,11 @@ function App() {
     }));
   }, [editorFontFamily]);
 
-  const editorOptions = useMemo(() => ({
-    minimap: { enabled: true },
-    glyphMargin: true,
-    fontSize: 14,
-    scrollBeyondLastLine: false,
-    automaticLayout: true,
-    fontFamily: editorFontFamily,
-    lineNumbersMinChars: 6,
-    fixedOverflowWidgets: true,
-    contextmenu: false,
-    find: {
-      addExtraSpaceOnTop: false,
-      autoFindInSelection: 'never' as const,
-      seedSearchStringFromSelection: 'always' as const,
-    },
-    ...({
-      "bracketPairColorization.enabled": true,
-      "suggest.maxVisibleSuggestions": 5,
-      "semanticHighlighting.enabled": false,
-    } as any),
-  }), [editorFontFamily]);
+  // PR #4 introduced an `editorOptions` memo for plumbing the font into
+  // Monaco from this file. Since the shells refactor moved Monaco into
+  // EditorPane, the memo would be unused here. We forward the font
+  // family through ShellContext instead — EditorPane reads it (TODO:
+  // wire fontFamily into shellCtx + EditorPane to actually swap fonts).
 
   const emitterDecorationIds = useRef<string[]>([]);
   const emitterDecorDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3917,7 +3904,7 @@ function App() {
     onSendToQuartz: handleSendToQuartz,
 
     // -- Editor wiring
-    editorTheme, perfPrefs, bigFileLines: BIG_FILE_LINES,
+    editorTheme, editorFontFamily, perfPrefs, bigFileLines: BIG_FILE_LINES,
     handleBeforeMount, handleEditorMount, handleEditorChange,
     editorRef,
 

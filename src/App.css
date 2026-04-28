@@ -63,6 +63,19 @@
   --custom-bg-color: transparent;
   --title-bar-accent-overlay: transparent;
 
+  /* Top-bar foreground colors — one variable per element so each can be
+     tuned independently per theme. They cascade through `--chrome-fg`
+     (which falls back to `--title-bar-text` then `--text-color`), so a
+     theme that wants every chrome element a single color only needs to
+     override `--chrome-fg`. Per-element overrides win when set. */
+  --chrome-fg:           var(--title-bar-text, var(--text-color));
+  --title-bar-name-fg:   var(--chrome-fg); /* "Jade - BIN Editor" app-name text */
+  --title-bar-btn-fg:    var(--chrome-fg); /* main toolbar buttons in title bar */
+  --window-control-fg:   var(--chrome-fg); /* min / max / close window controls */
+  --menu-text-fg:        var(--chrome-fg); /* File / Edit / Tools menu triggers */
+  --menu-icon-btn-fg:    var(--chrome-fg); /* search / replace / edit / sparkles icon buttons */
+  --gradient-top:        var(--editor-bg); /* paint surface for sticky scroll, etc. */
+
   /* Syntax highlight color for string literals / file paths — updated by
      themeApplicator when a syntax theme is applied */
   --syntax-string-color: #CE9178;
@@ -165,6 +178,15 @@ body {
 
 [data-custom-background='true'] .app-container::after {
   opacity: 1;
+}
+
+/* Sticky scroll always paints opaque so code under it stays readable.
+   When the theme has a gradient, sit on the gradient's top color so the
+   strip blends with the window edge; otherwise fall back to editor-bg. */
+.monaco-editor .sticky-widget,
+.monaco-editor .stickyScrollWidget {
+  background: var(--gradient-top, var(--editor-bg)) !important;
+  background-color: var(--gradient-top, var(--editor-bg)) !important;
 }
 
 [data-theme-gradient='true'] .editor-container {

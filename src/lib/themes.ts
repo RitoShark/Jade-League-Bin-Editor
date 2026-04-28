@@ -15,17 +15,27 @@ export interface ThemeColors {
     icon?: string;              // Optional icon path (served from public/)
     defaultBackground?: string;   // Optional default background image path (served from public/)
     statusBarText?: string;       // Optional override for status bar text color
-    titleBarText?: string;        // Optional override for title bar text color
+    titleBarText?: string;        // Optional override for title bar text color (app-name + chrome fallback)
+    /** One color that drives every top-bar element (window controls, toolbar
+     *  buttons, menu triggers, menu icon buttons). Light themes (e.g.
+     *  YoRHa) set this dark so chrome icons stay readable. Per-element
+     *  overrides via the matching CSS variables still win when set. */
+    chromeForeground?: string;
     titleBarGradient?: string;    // Optional CSS gradient overlaid on the title bar background
     windowGradient?: string;      // Optional CSS gradient for the app window background
     themeBackgroundSize?: string;       // CSS background-size for defaultBackground (overrides per-theme default)
     themeBackgroundPositionX?: number; // 0–100 horizontal position for defaultBackground (default 50)
     themeBackgroundPositionY?: number; // 0–100 vertical position for defaultBackground (default 50)
+    /** When true, this theme depends on the modern UI's frosted glass + gradients
+     *  to look right. The theme list disables it when Modern UI is off, and
+     *  toggling Modern UI off while one is active reverts to the Default theme. */
+    requiresModernUI?: boolean;
 }
 
+// Cascadia Code already covers the Cascadia family — its Mono variant
+// is the same metrics minus ligatures, so we expose only one entry.
 export const PRESET_FONTS = [
     'Cascadia Code',
-    'Cascadia Mono',
     'Comic Sans MS',
     'Consolas',
     'Courier New',
@@ -203,6 +213,9 @@ export const THEMES: ThemeColors[] = [
         defaultBackground: '/theme-icons/bg2077.png',
         statusBarText: '#0A0A10',
         titleBarText: '#0A0A10',
+        // Yellow title bar — keep all chrome icons dark for readability.
+        chromeForeground: '#0A0A10',
+        requiresModernUI: true,
         windowGradient: 'linear-gradient(to bottom, #071220 0%, #030508 100%)',
         themeBackgroundSize: 'min(594px, 58%) auto',
         themeBackgroundPositionY: 52
@@ -224,7 +237,8 @@ export const THEMES: ThemeColors[] = [
         titleBarText: '#6BFBFC',
         windowGradient: 'linear-gradient(to bottom, #2E0A0A 0%, #080405 100%)',
         themeBackgroundSize: 'auto 68%',
-        themeBackgroundPositionY: 57
+        themeBackgroundPositionY: 57,
+        requiresModernUI: true,
     },
     {
         id: 'YoRHa',
@@ -240,9 +254,12 @@ export const THEMES: ThemeColors[] = [
         icon: '/theme-icons/yorhalogo.png',
         defaultBackground: '/theme-icons/yorhabg.png',
         statusBarText: '#F0EBE0',
+        // Light tan title bar — chrome elements need to be dark to read.
+        chromeForeground: '#2A2620',
         themeBackgroundSize: '91% auto',
         themeBackgroundPositionX: 0,
         themeBackgroundPositionY: 97,
+        requiresModernUI: true,
     },
     {
         id: 'LetsAllLoveLain',
@@ -257,7 +274,8 @@ export const THEMES: ThemeColors[] = [
         font: 'Lovelt__',
         icon: '/theme-icons/lain.png',
         defaultBackground: '/theme-icons/bglain.png',
-        statusBarText: '#000000'
+        statusBarText: '#000000',
+        requiresModernUI: true,
     }
 ];
 

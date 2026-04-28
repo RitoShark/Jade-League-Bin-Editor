@@ -42,7 +42,6 @@ interface CustomBackgroundOptions {
 const BUNDLED_FONTS: { name: string; url: string; weight: string; format?: string; mimeType?: string }[] = [
     { name: 'Cascadia Code',   url: '/fonts/cascadia-code-400.woff2',   weight: '400' },
     { name: 'Cascadia Code',   url: '/fonts/cascadia-code-700.woff2',   weight: '700' },
-    { name: 'Cascadia Mono',   url: '/fonts/cascadia-mono-400.woff2',   weight: '400' },
     { name: 'Fira Code',       url: '/fonts/fira-code-400.woff2',       weight: '400' },
     { name: 'Fira Code',       url: '/fonts/fira-code-700.woff2',       weight: '700' },
     { name: 'Hack',            url: '/fonts/hack-400.woff2',            weight: '400' },
@@ -164,6 +163,19 @@ function makeTextAccent(hex: string): string {
 }
 
 /**
+ * Pull the first hex / rgb color out of a CSS gradient string. Used so
+ * shell surfaces (sticky scroll, etc.) can paint with the same color the
+ * theme's gradient begins with. Returns null if no color can be parsed.
+ */
+function extractFirstColor(gradient: string): string | null {
+    const hexMatch = gradient.match(/#[0-9A-Fa-f]{3,8}\b/);
+    if (hexMatch) return hexMatch[0];
+    const rgbMatch = gradient.match(/rgba?\([^)]+\)/);
+    if (rgbMatch) return rgbMatch[0];
+    return null;
+}
+
+/**
  * Calculate scrollbar colors based on theme
  */
 function calculateScrollbarColors(selectedTab: string, _editorBg: string): { thumb: string; thumbHover: string } {
@@ -208,9 +220,11 @@ export function applyTheme(themeId: string, customColors?: CustomThemeColors) {
         // Custom themes have no per-theme text or gradient overrides
         root.style.removeProperty('--status-bar-text');
         root.style.removeProperty('--title-bar-text');
+        root.style.removeProperty('--chrome-fg');
         root.style.removeProperty('--window-gradient');
         root.removeAttribute('data-theme-gradient');
         root.style.removeProperty('--title-bar-accent-overlay');
+        root.style.setProperty('--gradient-top', customColors.editorBg);
 
         // Update Monaco editor background
         updateMonacoBackground(customColors.editorBg);
@@ -254,13 +268,31 @@ export function applyTheme(themeId: string, customColors?: CustomThemeColors) {
                 root.style.removeProperty('--title-bar-text');
             }
 
+            // One-shot override for every chrome foreground (window controls,
+            // toolbar buttons, menu triggers, menu icons). Light themes set
+            // this so icons stay readable on bright bars; per-element CSS
+            // vars (--title-bar-btn-fg etc.) still win when overridden.
+            if (theme.chromeForeground) {
+                root.style.setProperty('--chrome-fg', theme.chromeForeground);
+            } else {
+                root.style.removeProperty('--chrome-fg');
+            }
+
             // Per-theme window background gradient
             if (theme.windowGradient) {
                 root.style.setProperty('--window-gradient', theme.windowGradient);
                 root.setAttribute('data-theme-gradient', 'true');
+                // Pull the first color stop out of the gradient string so
+                // sticky-scroll / similar surfaces can paint with the same
+                // top-edge color the gradient starts with. Falls back to
+                // editorBg when extraction fails (handles rare gradient
+                // forms we don't parse here).
+                const topColor = extractFirstColor(theme.windowGradient) ?? theme.editorBg;
+                root.style.setProperty('--gradient-top', topColor);
             } else {
                 root.style.removeProperty('--window-gradient');
                 root.removeAttribute('data-theme-gradient');
+                root.style.setProperty('--gradient-top', theme.editorBg);
             }
 
             // Per-theme title bar accent gradient (adds colored wash over flat title-bar-bg)
@@ -630,19 +662,21 @@ export async function loadSavedTheme(
                 zoom: Number.isFinite(Number.parseFloat(customBackgroundZoomRaw)) ? Math.max(1, Number.parseFloat(customBackgroundZoomRaw)) : 1,
             });
         } else if (hasThemeBg) {
-            // Gradient themes: transparent bg-color so the gradient shows through
-            // the PNG's transparent areas; solid themes use their windowBg.
+            // Theme-supplied default background. Blur is user-controllable
+            // (default 4px) so loud branded logos can be softened without
+            // touching the theme files; opacity stays at full so the
+            // image keeps its intended color.
             const hasGradient = !!bgTheme?.windowGradient;
+            const themeBgBlurRaw = await invoke('get_preference', { key: 'ThemeBackgroundBlur', defaultValue: '4' }) as string;
+            const themeBgBlur = Math.max(0, Math.min(40, Number.parseInt(themeBgBlurRaw, 10) || 0));
             applyCustomBackground({
                 enabled: true,
                 imageDataUrl: bgTheme!.defaultBackground!,
-                blur: 0,
+                blur: themeBgBlur,
                 brightness: 1,
                 saturation: 1,
                 opacity: 1,
                 vignette: 0,
-                positionX: 50,
-                positionY: 50,
                 zoom: 1,
                 backgroundSize: bgTheme?.themeBackgroundSize ?? (hasGradient ? 'contain' : 'auto'),
                 positionX: bgTheme?.themeBackgroundPositionX ?? 50,
@@ -792,18 +826,13 @@ export async function loadSavedFonts(
         // Start fetching all bundled preset fonts in the background
         preloadBundledFonts();
 
-        // User preference takes priority; theme font is the fallback.
-        // Fuzzy-match the theme font name against stored filenames so that
-        // 'FOT-Rodin Pro DB' (theme) finds 'fot-rodin-pro-db' (filename), etc.
-        const themeId  = await invoke('get_preference', { key: 'Theme', defaultValue: 'Default' }) as string;
-        const theme    = getTheme(themeId);
-        const normFont = (s: string) => s.toLowerCase().replace(/[-_\s]+/g, '');
-        const storedFamilies = storedFonts.map(fontFileNameToFamily);
-        const resolvedThemeFont = theme?.font
-            ? (storedFamilies.find(n => normFont(n) === normFont(theme.font!)) ?? theme.font)
-            : undefined;
-        const activeUIFont     = uiFont     || resolvedThemeFont || '';
-        const activeFont       = editorFont || resolvedThemeFont || '';
+        // Default is the app's classic stack (JetBrains Mono → Fira Code →
+        // Consolas). A theme's `font` is exposed in the picker as a
+        // "Theme Fonts" suggestion the user can opt into, but doesn't
+        // auto-override the editor — themes shouldn't force a display font
+        // on people. User-set EditorFont / UIFont prefs win when present.
+        const activeUIFont = uiFont || '';
+        const activeFont   = editorFont || '';
 
         // Ensure bundled fonts are loaded before applying
         if (activeUIFont) await ensurePresetFontLoaded(activeUIFont);
@@ -812,10 +841,13 @@ export async function loadSavedFonts(
         // Ensure the chosen preset font is loaded before telling Monaco to use it
         if (activeFont && activeFont !== activeUIFont) await ensurePresetFontLoaded(activeFont);
 
-        // Notify App.tsx to update Monaco's fontFamily
+        // Notify App.tsx to update Monaco's fontFamily. When no font is
+        // selected we dispatch an empty string so Monaco falls back to
+        // its built-in default (matches the look the app had before the
+        // font system was added).
         const resolvedEditorFont = activeFont
-            ? `"${activeFont}", 'JetBrains Mono', 'Fira Code', Consolas, monospace`
-            : "'JetBrains Mono', 'Fira Code', Consolas, monospace";
+            ? `"${activeFont}", monospace`
+            : "";
         window.dispatchEvent(new CustomEvent('jade-editor-font-changed', { detail: resolvedEditorFont }));
 
     } catch (error) {

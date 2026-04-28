@@ -210,6 +210,24 @@
     color: var(--text-color);
 }
 
+.theme-item.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.theme-item.disabled:hover {
+    background: transparent;
+    border-color: transparent;
+}
+
+.theme-item-lock {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-left: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
 .theme-preview-dots {
     display: flex;
     gap: 5px;
@@ -352,24 +370,9 @@
 }
 
 .syntax-split-layout > .syntax-preview,
-.syntax-split-layout > .ui-preview-container,
-.syntax-split-layout > .ui-preview-right {
+.syntax-split-layout > .ui-preview-container {
     flex: 1 1 50%;
     min-width: 0;
-}
-
-.ui-preview-right {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    min-height: 0;
-}
-
-.ui-preview-right .syntax-preview {
-    flex: 0 0 auto;
-    font-size: 11px;
-    line-height: 1.45;
-    padding: 10px 12px;
 }
 
 /* ── UI theme live iframe preview (camera style) ── */
@@ -423,14 +426,20 @@
 /* ── Theme default background row ── */
 .theme-bg-section {
     display: flex;
-    align-items: center;
-    gap: 12px;
+    flex-direction: column;
+    gap: 10px;
     padding: 10px 14px;
     margin-bottom: 10px;
     background: var(--tab-bg);
     border: 1px solid #3E3E42;
     border-radius: var(--border-radius);
     flex-shrink: 0;
+}
+
+.theme-bg-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 
 .theme-bg-thumbnail {
@@ -441,6 +450,11 @@
     border: 1px solid rgba(255, 255, 255, 0.12);
     flex-shrink: 0;
     margin-left: auto;
+}
+
+.theme-bg-blur {
+    padding-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .background-options {
@@ -754,6 +768,118 @@
     align-items: center;
     gap: 8px;
     flex-shrink: 0;
+}
+
+/* ── FontPicker (custom themed dropdown) ─────────────────────────── */
+.font-picker {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.font-picker-trigger {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--tab-bg);
+    color: var(--text-color);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color 0.12s, background 0.12s;
+}
+
+.font-picker-trigger:hover {
+    background: var(--selected-tab-bg);
+    border-color: var(--jade-accent, #4a4a4a);
+}
+
+.font-picker.open .font-picker-trigger {
+    border-color: var(--jade-accent, #007acc);
+}
+
+.font-picker-trigger-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+    flex: 1 1 auto;
+}
+
+.font-picker-chevron {
+    display: inline-flex;
+    align-items: center;
+    transform: rotate(90deg);
+    transition: transform 0.15s;
+    opacity: 0.7;
+    margin-left: 8px;
+    flex-shrink: 0;
+}
+
+.font-picker-chevron.open {
+    transform: rotate(-90deg);
+}
+
+.font-picker-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 100;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--window-bg);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+    padding: 4px 0;
+}
+
+.font-picker-group + .font-picker-group {
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    margin-top: 4px;
+    padding-top: 4px;
+}
+
+.font-picker-group-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    padding: 6px 12px 4px;
+    user-select: none;
+}
+
+.font-picker-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    color: var(--text-color);
+    border: none;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.font-picker-item:hover {
+    background: var(--selected-tab-bg);
+}
+
+.font-picker-item.selected {
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 28%, transparent);
+    color: var(--jade-accent-text, #ffffff);
+}
+
+.font-picker-item.selected:hover {
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 40%, transparent);
 }
 
 .font-list-label {

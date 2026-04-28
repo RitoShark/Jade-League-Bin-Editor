@@ -22,6 +22,9 @@
   --modern-surface-bg:      color-mix(in srgb, var(--window-bg)      55%, transparent);
   --modern-tab-bg:          color-mix(in srgb, var(--tab-bg)         50%, transparent);
   --modern-active-tab-bg:   color-mix(in srgb, var(--selected-tab-bg) 75%, transparent);
+  /* Pre-merge formulas — subtle tinted strips. Vibrant themes (2077,
+     2023, lain) require Modern UI to render correctly anyway, so the
+     low-opacity wash is the look they were designed against. */
   --modern-status-bg:       color-mix(in srgb, var(--title-bar-bg)   60%, transparent);
   --modern-title-bg:        color-mix(in srgb, var(--title-bar-bg)   55%, transparent);
   --modern-dialog-bg:       color-mix(in srgb, var(--window-bg)      92%, transparent);
@@ -61,7 +64,7 @@
 
 /* ── Title Bar: frosted glass ── */
 [data-ui-mode="modern"] .title-bar {
-  background: linear-gradient(rgba(0,0,0,0.28), rgba(0,0,0,0.28)), var(--title-bar-bg) !important;
+  background: var(--modern-title-bg) !important;
   backdrop-filter: var(--modern-blur);
   -webkit-backdrop-filter: var(--modern-blur);
   border-bottom: 1px solid var(--modern-glass-border) !important;
@@ -114,7 +117,7 @@
 
 /* ── Menu Bar: glass treatment ── */
 [data-ui-mode="modern"] .menu-bar {
-  background: linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), var(--title-bar-bg) !important;
+  background: var(--modern-title-bg) !important;
   backdrop-filter: var(--modern-blur);
   -webkit-backdrop-filter: var(--modern-blur);
   border-bottom: 1px solid var(--modern-glass-border) !important;
@@ -218,12 +221,12 @@
   box-shadow: inset 4px 0 8px var(--modern-accent-20);
 }
 
-/* ── Status Bar: always solid so themed text color stays readable ── */
+/* ── Status Bar: deep glass strip ── */
 [data-ui-mode="modern"] .status-bar {
-  background: var(--status-bar-bg) !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  border-top: 1px solid rgba(0, 0, 0, 0.3) !important;
+  background: var(--modern-status-bg) !important;
+  backdrop-filter: var(--modern-blur);
+  -webkit-backdrop-filter: var(--modern-blur);
+  border-top: 1px solid var(--modern-glass-border) !important;
   box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25);
 }
 
@@ -258,8 +261,11 @@
  */
 [data-ui-mode="modern"] .monaco-editor .sticky-widget,
 [data-ui-mode="modern"] .monaco-editor .stickyScrollWidget {
-  background: var(--editor-bg) !important;
-  background-color: var(--editor-bg) !important;
+  /* Match the gradient's top color when the theme has one — keeps the
+     pinned strip visually flush with the window background. Themes
+     without a gradient fall back to editor-bg so behaviour is unchanged. */
+  background: var(--gradient-top, var(--editor-bg)) !important;
+  background-color: var(--gradient-top, var(--editor-bg)) !important;
 }
 
 /*
@@ -1249,23 +1255,13 @@
   background: transparent !important;
 }
 
+/* Tab bar / tab actions stay on the unified glass so the background
+   image shows through behind the tab strip. The title bar and menu bar
+   keep their themed color (--title-bar-bg, mixed via --modern-title-bg
+   in modern mode) so vibrant theme accents survive the override. */
 [data-custom-background="true"] .tab-bar,
 [data-custom-background="true"] .tabs-actions {
   background: var(--custom-chrome-bg) !important;
-  backdrop-filter: blur(14px) saturate(135%) !important;
-  -webkit-backdrop-filter: blur(14px) saturate(135%) !important;
-  box-shadow: none !important;
-}
-
-[data-custom-background="true"] .menu-bar {
-  background: linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), var(--title-bar-bg) !important;
-  backdrop-filter: blur(14px) saturate(135%) !important;
-  -webkit-backdrop-filter: blur(14px) saturate(135%) !important;
-  box-shadow: none !important;
-}
-
-[data-custom-background="true"] .title-bar {
-  background: linear-gradient(rgba(0,0,0,0.28), rgba(0,0,0,0.28)), var(--title-bar-bg) !important;
   backdrop-filter: blur(14px) saturate(135%) !important;
   -webkit-backdrop-filter: blur(14px) saturate(135%) !important;
   box-shadow: none !important;
@@ -1278,10 +1274,7 @@
 }
 
 [data-custom-background="true"] .status-bar {
-  background: var(--status-bar-bg) !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  border-top: 1px solid rgba(0, 0, 0, 0.3) !important;
+  border-top: 1px solid var(--custom-chrome-border) !important;
 }
 
 [data-custom-background="true"] .toolbar-separator,
@@ -1348,27 +1341,11 @@
   box-shadow: 0 0 8px var(--jade-accent) !important;
 }
 
-/* ── Modern UI + custom background: higher-specificity overrides ──
-   [data-ui-mode="modern"][data-custom-background="true"] has two attribute
-   selectors so it beats either single-attribute rule above, regardless of
-   source order. Status bar stays solid/themed; active tab uses themed glass. */
-[data-ui-mode="modern"][data-custom-background="true"] .status-bar {
-  background: var(--status-bar-bg) !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  border-top: 1px solid rgba(0, 0, 0, 0.3) !important;
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25) !important;
-}
-
+/* ── Modern UI + custom background ──
+   Active tab keeps the themed glass; the title and menu bars are left
+   to their normal modern-mode rules so vibrant theme accents (yellow,
+   red, pink) actually show through. */
 [data-ui-mode="modern"][data-custom-background="true"] .tab.active {
   background: var(--modern-active-tab-bg) !important;
-}
-
-[data-ui-mode="modern"][data-custom-background="true"] .title-bar {
-  background: linear-gradient(rgba(0,0,0,0.28), rgba(0,0,0,0.28)), var(--title-bar-bg) !important;
-}
-
-[data-ui-mode="modern"][data-custom-background="true"] .menu-bar {
-  background: linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), var(--title-bar-bg) !important;
 }
 

@@ -18,7 +18,7 @@
 .menu-trigger {
     background: transparent;
     border: none;
-    color: var(--text-color);
+    color: var(--menu-text-fg);
     padding: 4px 8px;
     font-size: 13px;
     cursor: pointer;
@@ -93,7 +93,7 @@
     background: transparent;
     border: 1px solid transparent;
     border-radius: var(--border-radius);
-    color: var(--text-color);
+    color: var(--menu-icon-btn-fg);
     font-size: 14px;
     cursor: pointer;
     display: flex;

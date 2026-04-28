@@ -99,9 +99,13 @@ export default function EditorPane() {
                             fontSize: stripChrome ? 13 : 14,
                             scrollBeyondLastLine: false,
                             automaticLayout: true,
+                            // Word shell deliberately uses a sans-serif "document" font.
+                            // Other shells honor the user-selected editor font; when
+                            // none is set, leave fontFamily undefined so Monaco falls
+                            // back to its own default (matches pre-PR behavior).
                             fontFamily: stripChrome
                                 ? "'Aptos', 'Calibri', 'Segoe UI', system-ui, sans-serif"
-                                : "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+                                : (s.editorFontFamily || undefined),
                             lineNumbersMinChars: stripChrome ? 0 : 6,
                             fixedOverflowWidgets: true,
                             contextmenu: false,
