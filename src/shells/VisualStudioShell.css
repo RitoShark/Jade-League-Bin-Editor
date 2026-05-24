@@ -54,10 +54,30 @@
     margin: 0;
     cursor: pointer;
     flex-shrink: 0;
-    display: inline-flex;
+    /* Stack the logo and the hover-arrow in the same slot so they
+       cross-fade cleanly on hover. */
+    display: inline-grid;
+    grid-template-areas: 'stack';
     align-items: center;
-    justify-content: center;
+    justify-items: center;
     -webkit-app-region: no-drag;
+}
+.vs-title-icon-btn > * {
+    grid-area: stack;
+    transition: opacity 140ms ease;
+}
+.vs-title-icon-hover {
+    color: var(--text-color, #cccccc);
+    /* Mirror the right-pointing enter-arrow so it reads as "exit
+       back to the welcome screen on the left". */
+    transform: scaleX(-1);
+    opacity: 0;
+}
+.vs-title-icon-btn:hover .vs-title-icon-default {
+    opacity: 0;
+}
+.vs-title-icon-btn:hover .vs-title-icon-hover {
+    opacity: 1;
 }
 .vs-title-icon-btn:hover {
     background: rgba(255, 255, 255, 0.08);

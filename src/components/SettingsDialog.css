@@ -126,10 +126,18 @@
 }
 
 .settings-nav-icon {
-    font-size: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
     line-height: 1;
     flex-shrink: 0;
-    opacity: 0.8;
+    opacity: 0.85;
+}
+
+.settings-nav-icon svg {
+    display: block;
 }
 
 /* ── Content pane ── */

@@ -1,0 +1,738 @@
+/* File Explorer pane — dockable folder browser.
+   Styling pulls from the app-wide theme tokens (--editor-bg,
+   --text-color, --jade-accent, --border-color, --border-radius)
+   so a theme swap or modern-UI toggle re-skins this pane along
+   with the rest of the chrome. Modern-UI overrides at the bottom
+   layer the `--modern-accent-XX` translucent tints used by every
+   other modern panel for hover / selection feel. */
+
+.file-explorer-pane {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    color: var(--text-color);
+    background: var(--editor-bg);
+    outline: none;
+    font-size: 12px;
+    font-family: inherit;
+}
+
+.file-explorer-pane:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--jade-accent);
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+.fe-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--editor-bg);
+    flex: 0 0 auto;
+}
+
+.fe-root-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.fe-header-btns {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 0 0 auto;
+}
+
+.fe-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: none;
+    background: transparent;
+    color: var(--text-color);
+    cursor: pointer;
+    border-radius: var(--border-radius, 3px);
+    padding: 0;
+    transition: background-color 80ms ease, color 80ms ease;
+}
+
+.fe-icon-btn:hover {
+    background: var(--selected-tab-bg);
+    color: var(--jade-accent-text, var(--jade-accent));
+}
+
+.fe-icon-btn:active {
+    background: color-mix(in srgb, var(--jade-accent) 25%, transparent);
+}
+
+.fe-icon-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ── Filter row + sort dropdown ────────────────────────────── */
+.fe-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--editor-bg);
+    flex: 0 0 auto;
+}
+
+.fe-filter-icon {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+}
+
+.fe-filter-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 22px;
+    background: var(--tab-bg);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius, 3px);
+    padding: 0 6px;
+    font: inherit;
+    font-size: 11px;
+    outline: none;
+    transition: border-color 80ms ease, box-shadow 80ms ease;
+}
+
+.fe-filter-input::placeholder {
+    color: var(--text-muted);
+}
+
+.fe-filter-input:focus {
+    border-color: var(--jade-accent);
+    box-shadow: 0 0 0 1px var(--jade-accent);
+}
+
+.fe-filter-clear {
+    width: 18px;
+    height: 18px;
+}
+
+.fe-sort-wrap {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.fe-sort-btn {
+    width: auto;
+    padding: 0 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    border: 1px solid transparent;
+}
+
+.fe-sort-btn:hover {
+    color: var(--text-color);
+    border-color: var(--border-color);
+}
+
+.fe-sort-label {
+    white-space: nowrap;
+}
+
+.fe-sort-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    z-index: 50;
+    background: var(--tab-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius, 3px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    padding: 4px 0;
+    min-width: 170px;
+    display: flex;
+    flex-direction: column;
+}
+
+.fe-sort-menu button {
+    background: transparent;
+    border: none;
+    color: var(--text-color);
+    text-align: left;
+    padding: 6px 12px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    transition: background-color 60ms ease;
+}
+
+.fe-sort-menu button:hover {
+    background: var(--selected-tab-bg);
+    color: var(--jade-accent-text, var(--jade-accent));
+}
+
+.fe-sort-active {
+    color: var(--jade-accent-text, var(--jade-accent)) !important;
+    font-weight: 600;
+}
+
+/* ── Breadcrumb (grid mode) ─────────────────────────────────── */
+.fe-breadcrumb {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 11px;
+    background: var(--editor-bg);
+    flex: 0 0 auto;
+}
+
+.fe-breadcrumb-up {
+    margin-right: 4px;
+}
+
+.fe-breadcrumb-up:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.fe-crumb-wrap {
+    display: inline-flex;
+    align-items: center;
+}
+
+.fe-crumb {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 3px 8px;
+    cursor: pointer;
+    border-radius: var(--border-radius, 3px);
+    font: inherit;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: background-color 80ms ease, color 80ms ease;
+}
+
+.fe-crumb:hover {
+    background: var(--selected-tab-bg);
+    color: var(--text-color);
+}
+
+.fe-crumb-active {
+    color: var(--text-color);
+    font-weight: 600;
+}
+
+.fe-crumb-sep {
+    color: var(--text-muted);
+    opacity: 0.5;
+    padding: 0 2px;
+}
+
+/* ── Grid view ──────────────────────────────────────────────── */
+.fe-grid {
+    display: grid;
+    padding: 10px;
+    align-content: start;
+}
+
+.fe-grid-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--text-muted);
+    padding: 24px;
+    font-size: 12px;
+    font-style: italic;
+}
+
+.fe-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 4px;
+    border-radius: var(--border-radius, 4px);
+    cursor: default;
+    user-select: none;
+    border: 1px solid transparent;
+    min-width: 0;
+    transition: background-color 80ms ease, border-color 80ms ease;
+}
+
+.fe-cell:hover {
+    background: var(--selected-tab-bg);
+}
+
+.fe-cell-selected {
+    background: color-mix(in srgb, var(--jade-accent) 18%, transparent);
+    border-color: var(--jade-accent);
+}
+
+.fe-cell-selected:hover {
+    background: color-mix(in srgb, var(--jade-accent) 25%, transparent);
+}
+
+.fe-cell-thumb {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    background: var(--tab-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius, 3px);
+    overflow: hidden;
+    color: var(--text-color);
+}
+
+.fe-cell-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    image-rendering: -webkit-optimize-contrast;
+}
+
+.fe-cell-name {
+    width: 100%;
+    text-align: center;
+    font-size: 11px;
+    line-height: 1.3;
+    color: var(--text-color);
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    word-break: break-all;
+    min-height: 28px;
+}
+
+/* ── Tree body ──────────────────────────────────────────────── */
+.fe-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    position: relative;
+    /* Match the editor scrollbar styling so the tree feels like
+       part of the same surface as the editor pane. */
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.fe-body::-webkit-scrollbar {
+    width: 10px;
+}
+
+.fe-body::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 5px;
+    border: 2px solid var(--editor-bg);
+    background-clip: padding-box;
+}
+
+.fe-body::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+    background-clip: padding-box;
+    border: 2px solid var(--editor-bg);
+}
+
+.fe-rows {
+    position: relative;
+    width: 100%;
+}
+
+.fe-row {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding-right: 6px;
+    cursor: default;
+    user-select: none;
+    color: var(--text-color);
+    border-left: 2px solid transparent;
+    transition: background-color 60ms ease;
+}
+
+.fe-row:hover {
+    background: var(--selected-tab-bg);
+}
+
+.fe-row-selected {
+    background: color-mix(in srgb, var(--jade-accent) 20%, transparent);
+    border-left-color: var(--jade-accent);
+}
+
+.fe-row-selected:hover {
+    background: color-mix(in srgb, var(--jade-accent) 28%, transparent);
+}
+
+.fe-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+
+.fe-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    color: var(--text-color);
+}
+
+.fe-name {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fe-edit-input {
+    flex: 1 1 auto;
+    height: 18px;
+    background: var(--tab-bg);
+    color: var(--text-color);
+    border: 1px solid var(--jade-accent);
+    border-radius: var(--border-radius, 2px);
+    padding: 0 4px;
+    font: inherit;
+    outline: none;
+    min-width: 0;
+    box-shadow: 0 0 0 1px var(--jade-accent);
+}
+
+.fe-error {
+    padding: 8px 10px;
+    color: var(--vscode-errorForeground, #f48771);
+    font-size: 11px;
+}
+
+/* ── Empty state ─────────────────────────────────────────────── */
+.file-explorer-empty {
+    justify-content: center;
+    align-items: center;
+}
+
+.fe-empty-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-muted);
+    padding: 28px;
+    text-align: center;
+}
+
+.fe-empty-title {
+    font-size: 13px;
+    color: var(--text-color);
+}
+
+.fe-empty-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.fe-btn {
+    background: var(--tab-bg);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius, 3px);
+    padding: 6px 14px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background-color 80ms ease, border-color 80ms ease;
+}
+
+.fe-btn:hover {
+    background: var(--selected-tab-bg);
+    border-color: var(--jade-accent);
+}
+
+.fe-btn-primary {
+    background: var(--button-bg);
+    color: #fff;
+    border-color: var(--button-bg);
+}
+
+.fe-btn-primary:hover {
+    background: var(--button-hover-bg);
+    border-color: var(--button-hover-bg);
+}
+
+.fe-btn-danger {
+    background: #b14040;
+    color: #fff;
+    border-color: #b14040;
+}
+
+.fe-btn-danger:hover {
+    background: #c85050;
+    border-color: #c85050;
+}
+
+/* ── Context menu ────────────────────────────────────────────── */
+.fe-ctx-menu {
+    position: fixed;
+    z-index: 2000;
+    background: var(--tab-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius, 3px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    padding: 4px 0;
+    min-width: 180px;
+    display: flex;
+    flex-direction: column;
+}
+
+.fe-ctx-menu button {
+    background: transparent;
+    border: none;
+    color: var(--text-color);
+    text-align: left;
+    padding: 6px 12px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    transition: background-color 60ms ease;
+}
+
+.fe-ctx-menu button:hover {
+    background: var(--selected-tab-bg);
+    color: var(--jade-accent-text, var(--jade-accent));
+}
+
+.fe-ctx-menu .fe-ctx-danger {
+    color: #f5a0a0;
+}
+
+.fe-ctx-menu .fe-ctx-danger:hover {
+    background: #b14040;
+    color: #fff;
+}
+
+.fe-ctx-sep {
+    height: 1px;
+    background: var(--border-color);
+    margin: 4px 0;
+}
+
+/* ── Delete confirm modal ────────────────────────────────────── */
+.fe-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2100;
+    backdrop-filter: blur(2px);
+}
+
+.fe-modal {
+    background: var(--editor-bg);
+    border: 1px solid var(--border-color);
+    border-radius: calc(var(--border-radius, 0px) + 4px);
+    padding: 20px 24px;
+    min-width: 320px;
+    max-width: 420px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    color: var(--text-color);
+}
+
+.fe-modal-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text-color);
+}
+
+.fe-modal-body {
+    font-size: 12px;
+    margin-bottom: 18px;
+}
+
+.fe-modal-body code {
+    background: var(--tab-bg);
+    border: 1px solid var(--border-color);
+    padding: 2px 6px;
+    border-radius: var(--border-radius, 3px);
+    font-family: var(--editor-font-family, monospace);
+    color: var(--text-color);
+}
+
+.fe-modal-warn {
+    color: #e8b25c;
+    margin-top: 8px;
+    font-size: 11px;
+}
+
+.fe-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Modern UI variant.
+
+   Every selector that the modern UI re-skins uses the same
+   `--modern-accent-XX` translucent-tint palette the rest of the
+   app uses (see App.modernui.css), and softer rounding via
+   `--border-radius` boosted to 6-8px. The base styles above
+   already use theme tokens, so this section only needs to
+   layer the modern aesthetic on top.
+   ───────────────────────────────────────────────────────────── */
+[data-ui-mode="modern"] .file-explorer-pane {
+    font-size: 12.5px;
+}
+
+[data-ui-mode="modern"] .fe-header,
+[data-ui-mode="modern"] .fe-filter-row,
+[data-ui-mode="modern"] .fe-breadcrumb {
+    padding: 6px 10px;
+}
+
+[data-ui-mode="modern"] .fe-icon-btn,
+[data-ui-mode="modern"] .fe-crumb,
+[data-ui-mode="modern"] .fe-sort-btn {
+    border-radius: 6px;
+}
+
+[data-ui-mode="modern"] .fe-icon-btn:hover {
+    background: var(--modern-accent-12, color-mix(in srgb, var(--jade-accent) 12%, transparent));
+    color: var(--jade-accent-text, var(--jade-accent));
+}
+
+[data-ui-mode="modern"] .fe-crumb:hover,
+[data-ui-mode="modern"] .fe-cell:hover {
+    background: var(--modern-accent-07, color-mix(in srgb, var(--jade-accent) 7%, transparent));
+}
+
+[data-ui-mode="modern"] .fe-row:hover {
+    background: var(--modern-accent-07, color-mix(in srgb, var(--jade-accent) 7%, transparent));
+}
+
+[data-ui-mode="modern"] .fe-row-selected {
+    background: var(--modern-accent-20, color-mix(in srgb, var(--jade-accent) 20%, transparent));
+}
+
+[data-ui-mode="modern"] .fe-row-selected:hover {
+    background: var(--modern-accent-25, color-mix(in srgb, var(--jade-accent) 25%, transparent));
+}
+
+[data-ui-mode="modern"] .fe-cell-selected {
+    background: var(--modern-accent-15, color-mix(in srgb, var(--jade-accent) 15%, transparent));
+    border-color: var(--jade-accent);
+    box-shadow: 0 0 0 1px var(--modern-accent-35, color-mix(in srgb, var(--jade-accent) 35%, transparent));
+}
+
+[data-ui-mode="modern"] .fe-cell-selected:hover {
+    background: var(--modern-accent-22, color-mix(in srgb, var(--jade-accent) 22%, transparent));
+}
+
+[data-ui-mode="modern"] .fe-cell,
+[data-ui-mode="modern"] .fe-cell-thumb {
+    border-radius: 8px;
+}
+
+[data-ui-mode="modern"] .fe-filter-input,
+[data-ui-mode="modern"] .fe-btn {
+    border-radius: 8px;
+    height: 26px;
+}
+
+[data-ui-mode="modern"] .fe-filter-input {
+    padding: 0 10px;
+}
+
+[data-ui-mode="modern"] .fe-filter-input:focus {
+    border-color: var(--jade-accent);
+    box-shadow: 0 0 0 2px var(--modern-accent-25, color-mix(in srgb, var(--jade-accent) 25%, transparent));
+}
+
+[data-ui-mode="modern"] .fe-btn {
+    padding: 0 16px;
+}
+
+[data-ui-mode="modern"] .fe-btn:hover {
+    background: var(--modern-accent-10, color-mix(in srgb, var(--jade-accent) 10%, transparent));
+}
+
+[data-ui-mode="modern"] .fe-btn-primary {
+    background: var(--jade-accent);
+    border-color: var(--jade-accent);
+    color: #fff;
+    box-shadow: 0 1px 6px var(--modern-accent-30, color-mix(in srgb, var(--jade-accent) 30%, transparent));
+}
+
+[data-ui-mode="modern"] .fe-btn-primary:hover {
+    background: var(--button-hover-bg, var(--jade-accent));
+    border-color: var(--button-hover-bg, var(--jade-accent));
+    filter: brightness(1.08);
+}
+
+[data-ui-mode="modern"] .fe-ctx-menu,
+[data-ui-mode="modern"] .fe-sort-menu {
+    border-radius: 8px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    padding: 6px;
+}
+
+[data-ui-mode="modern"] .fe-ctx-menu button,
+[data-ui-mode="modern"] .fe-sort-menu button {
+    border-radius: 6px;
+    padding: 7px 12px;
+    margin: 0 2px;
+}
+
+[data-ui-mode="modern"] .fe-ctx-menu button:hover,
+[data-ui-mode="modern"] .fe-sort-menu button:hover {
+    background: var(--modern-accent-15, color-mix(in srgb, var(--jade-accent) 15%, transparent));
+    color: var(--jade-accent-text, var(--jade-accent));
+}
+
+[data-ui-mode="modern"] .fe-ctx-sep {
+    margin: 6px 4px;
+}
+
+[data-ui-mode="modern"] .fe-modal {
+    border-radius: 12px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+[data-ui-mode="modern"] .fe-modal-body code {
+    border-radius: 6px;
+    padding: 3px 8px;
+}

@@ -10,10 +10,13 @@ import HashSyncToast from '../components/HashSyncToast';
 import FileLoadingToast from '../components/FileLoadingToast';
 import NewFileDialog from '../components/NewFileDialog';
 import QuartzInstallModal from '../components/QuartzInstallModal';
+import CompareFilesPicker from '../components/CompareFilesPicker';
+import AssetGalleryDialog from '../components/AssetGalleryDialog';
 import TexHoverPopup from '../components/TexHoverPopup';
 import EditorContextMenu from '../components/EditorContextMenu';
 import SmokeOverlay from '../components/SmokeOverlay';
 import JamesOverlay from '../components/JamesOverlay';
+import GuideOverlay from '../components/GuideOverlay';
 import { useShell } from './ShellContext';
 
 /**
@@ -65,6 +68,14 @@ export default function SharedDialogs() {
             <AboutDialog
                 isOpen={s.showAboutDialog}
                 onClose={() => s.setShowAboutDialog(false)}
+                onRestartGuide={() => {
+                    invoke('set_preference', { key: 'GuideCompleted', value: 'False' }).catch(() => {});
+                    // The guide's first steps point at the welcome screen, so
+                    // force it open — the user may be restarting from inside
+                    // the editor where the rail / quick-actions don't exist.
+                    s.setWelcomeOverride('force');
+                    s.setShowGuideOverlay(true);
+                }}
             />
 
             <ThemesDialog
@@ -147,6 +158,36 @@ export default function SharedDialogs() {
                 }}
             />
 
+            {s.assetGalleryTabId && (() => {
+                const tab = s.tabs.find(t => t.id === s.assetGalleryTabId);
+                if (!tab) return null;
+                // Prefer the live editor value so user edits to the
+                // .md report (e.g. removing entries before review) are
+                // reflected in the gallery.
+                const liveContent = s.editorRef.current?.getValue();
+                const content = (s.activeTabId === tab.id && liveContent) || tab.content || '';
+                return (
+                    <AssetGalleryDialog
+                        content={content}
+                        baseFile={tab.filePath}
+                        onClose={() => s.setAssetGalleryTabId(null)}
+                    />
+                );
+            })()}
+
+            {s.comparePicker && (
+                <CompareFilesPicker
+                    editorTabs={s.tabs.filter(t => (t.tabType ?? 'editor') === 'editor')}
+                    initialLeftId={s.comparePicker.leftId}
+                    initialRightId={s.comparePicker.rightId}
+                    onCancel={() => s.setComparePicker(null)}
+                    onConfirm={(leftId, rightId) => {
+                        s.setComparePicker(null);
+                        s.openCompareTab(leftId, rightId);
+                    }}
+                />
+            )}
+
             <NewFileDialog
                 isOpen={s.showNewFileDialog}
                 onCancel={() => s.setShowNewFileDialog(false)}
@@ -155,6 +196,9 @@ export default function SharedDialogs() {
 
             <SmokeOverlay active={s.cigaretteMode} />
             <JamesOverlay active={s.jamesMode} />
+            {s.showGuideOverlay && (
+                <GuideOverlay onDone={() => s.setShowGuideOverlay(false)} />
+            )}
         </>
     );
 }

@@ -42,6 +42,7 @@ import { GridMaterial } from '@babylonjs/materials/grid/gridMaterial';
 
 import { createEngine } from '../lib/babylon/engine';
 import { buildSknMeshes, type SknDTO } from '../lib/babylon/meshBuilder';
+import { buildBinaryStl } from '../lib/stlExport';
 import {
     buildBabylonSkeleton,
     buildSkeletonJoints,
@@ -65,6 +66,68 @@ interface MeshPreviewProps {
         | { kind: 'wad'; mountId: number; pathHashHex: string };
     /** Optional caption shown in the corner. Useful while debugging. */
     label?: string;
+    /** When true, MeshPreview suppresses its own overlay UI (settings
+     *  + animations panels, format pill, loading text). Used by hosts
+     *  like the Viewer's model stage that drive interactions via the
+     *  controlled props below and render their own controls. */
+    controlled?: boolean;
+    /** Controlled selection of the current animation clip by name. Only
+     *  honored when `controlled` is true. `null` clears playback. */
+    selectedAnimationName?: string | null;
+    /** Controlled visibility for each submesh, keyed by submesh name.
+     *  Unknown names are ignored. Only honored when `controlled`. */
+    submeshVisibility?: Record<string, boolean>;
+    /** Controlled playback paused-state. Honored only when `controlled`. */
+    playerPaused?: boolean;
+    /** Controlled playback speed (1 = normal). Honored only when `controlled`. */
+    playerSpeed?: number;
+    /** Chroma id (CDragon, e.g. 266001). `null` = base skin (no
+     *  overrides applied). Only honored when `controlled`. */
+    chromaId?: number | null;
+    /** Render the alternate "shadow / demon" diffuse instead of the
+     *  default when the resolved material has one (Evelynn's shadow
+     *  form). Only honored when `controlled`. */
+    shadowForm?: boolean;
+    /** Enable alpha-test/blend on textures that carry an alpha channel.
+     *  When `false`, materials render fully opaque regardless of
+     *  texture alpha (closer to in-game look for skins like Evelynn
+     *  where ALPHATEST clips visible pixels). Default: true. */
+    transparencyEnabled?: boolean;
+    /** Alpha-test cutoff (0..1). Pixels with alpha below this are
+     *  discarded. Lower = more pixels kept (better for Aurelion Sol's
+     *  soft tail); higher = harsher clip. Default: 0.2. */
+    alphaCutoff?: number;
+    /** Fires when the resolved material declares (or doesn't declare)
+     *  an alternate shadow-form texture. Host uses this to decide
+     *  whether to surface the shadow-form toggle in its UI. */
+    onShadowAvailable?: (available: boolean) => void;
+    /** Fires whenever the per-submesh texture bindings get resolved
+     *  (initial load + chroma swap). Hosts use this to pipe the
+     *  viewer's authoritative mapping through to other consumers
+     *  (e.g. Photo Studio's "Send to Photo Studio" handoff). */
+    onTextureBindingsReady?: (
+        entries: Array<{ submeshName: string; chunkHashHex: string | null }>,
+    ) => void;
+    /** Fires once the animation listing for this source resolves. */
+    onAnimationsLoaded?: (listing: AnimationListing | null) => void;
+    /** Fires once the SKN submesh names are known (in source order). */
+    onSubmeshesLoaded?: (names: string[]) => void;
+    /** Notified with the resolved alternate-form availability so the host
+     *  can show / hide the toggle. */
+    /** When provided, MeshPreview writes a callable into `.current` that
+     *  builds a binary STL of all currently-visible meshes (world-space).
+     *  Hosts (e.g. the Viewer's Export accordion) keep this ref alive
+     *  across renders and call it when the user clicks "Export STL".
+     *  The callable returns `null` when there's nothing to serialize. */
+    exportStlRef?: React.MutableRefObject<(() => Uint8Array | null) | null>;
+    /** Fires on every render-loop tick with the live animation player
+     *  state. Hosts use this to drive a seek-bar UI. `duration` is 0
+     *  when no clip is loaded; `time` resets to 0 on clip change. */
+    onPlayerProgress?: (info: { time: number; duration: number; paused: boolean }) => void;
+    /** When provided, MeshPreview writes a callable into `.current` that
+     *  seeks the active animation player to a given time (seconds).
+     *  No-op when no clip is loaded. */
+    seekRef?: React.MutableRefObject<((time: number) => void) | null>;
 }
 
 type ShadingMode = 'flat' | 'lit';
@@ -91,7 +154,26 @@ interface SubmeshSlot {
     chunkHash: string | null;
 }
 
-export function MeshPreview({ source, label }: MeshPreviewProps) {
+export function MeshPreview({
+    source,
+    label,
+    controlled = false,
+    selectedAnimationName,
+    submeshVisibility,
+    playerPaused: controlledPaused,
+    playerSpeed: controlledSpeed,
+    chromaId,
+    shadowForm,
+    transparencyEnabled = true,
+    alphaCutoff = 0.2,
+    onAnimationsLoaded,
+    onSubmeshesLoaded,
+    onShadowAvailable,
+    onTextureBindingsReady,
+    exportStlRef,
+    onPlayerProgress,
+    seekRef,
+}: MeshPreviewProps) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const sceneRef = useRef<Scene | null>(null);
     const meshesRef = useRef<Mesh[]>([]);
@@ -131,6 +213,10 @@ export function MeshPreview({ source, label }: MeshPreviewProps) {
     const skeletonLinesRef = useRef<LinesMesh | null>(null);
     const skeletonOctaRef = useRef<Mesh | null>(null);
     const skeletonJointsRef = useRef<Mesh | null>(null);
+    /// Latest loaded SknDTO — kept so the chroma swap effect can re-run
+    /// the same per-submesh texture binding cascade without rebuilding
+    /// the mesh from scratch. Cleared on source change.
+    const sknRef = useRef<SknDTO | null>(null);
     /// Babylon Skeleton built from the same SKL the visualisations
     /// above came from. Attached to the SKN meshes (mesh.skeleton =)
     /// so Babylon's skinning shader picks up bone-driven vertex
@@ -235,25 +321,221 @@ export function MeshPreview({ source, label }: MeshPreviewProps) {
                 ? (placeholderTexRef.current ??= buildPlaceholderTexture(scene))
                 : null;
         const doubleSided = doubleSidedRef.current;
+        // `transparencyEnabled` masks `hasAlpha` so the host can force
+        // opaque rendering on skins where Riot's alpha bleed renders
+        // wrong without engine-level cleanup (Evelynn's hair pixels).
         for (const slot of slots) {
             const real = slot.chunkHash ? loaded.get(slot.chunkHash) : undefined;
             if (real) {
-                applyTexturedMaterial(slot.mat, real.tex, real.hasAlpha);
+                applyTexturedMaterial(
+                    slot.mat,
+                    real.tex,
+                    real.hasAlpha && transparencyEnabled,
+                    alphaCutoff,
+                );
             } else if (placeholder) {
-                applyTexturedMaterial(slot.mat, placeholder, false);
+                applyTexturedMaterial(slot.mat, placeholder, false, alphaCutoff);
             } else {
                 applyHueMaterial(slot.mat, slot.hue);
             }
             slot.mat.unlit = shadingMode === 'flat';
-            // Static meshes are usually flat / particle / single-
-            // sided geometry — disable culling so users can see
-            // them from any angle. SKN meshes are closed solids
-            // and keep culling on.
             if (doubleSided) {
                 slot.mat.backFaceCulling = false;
             }
         }
-    }, [missingStyle, shadingMode]);
+    }, [missingStyle, shadingMode, transparencyEnabled, alphaCutoff]);
+
+    // Expose a "build binary STL of all currently-visible meshes" callable
+    // through the host's ref. Captured fresh each render so the host
+    // always sees the latest meshes / pose / visibility — invoked on
+    // demand when the user hits Export STL.
+    useEffect(() => {
+        if (!exportStlRef) return;
+        exportStlRef.current = () => {
+            const meshes = meshesRef.current;
+            if (!meshes || meshes.length === 0) return null;
+            return buildBinaryStl(meshes, 'Jade STL — League mesh export');
+        };
+        return () => {
+            if (exportStlRef) exportStlRef.current = null;
+        };
+    }, [exportStlRef]);
+
+    // -------------------- controlled-mode wiring --------------------
+    // Notify hosts that consumed the listings; honor controlled props.
+    // Refs avoid feedback loops when the host sets a prop in response
+    // to our notification.
+
+    useEffect(() => {
+        if (onAnimationsLoaded) onAnimationsLoaded(animations);
+    }, [animations, onAnimationsLoaded]);
+
+    useEffect(() => {
+        if (!onSubmeshesLoaded) return;
+        if (submeshes.length === 0) return;
+        onSubmeshesLoaded(submeshes.map((s) => s.name));
+        // Fire once per load — re-runs whenever the names actually
+        // change. Toggling visibility doesn't change names so the
+        // effect's deps array (submeshes.length + first name) avoids
+        // spamming on each click.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [submeshes.length, submeshes[0]?.name]);
+
+    // Controlled: parent picks an animation by name. We look it up in
+    // the loaded listing and forward to internal state.
+    useEffect(() => {
+        if (!controlled) return;
+        if (!animations) return;
+        if (selectedAnimationName == null) {
+            setSelectedAnimation(null);
+            return;
+        }
+        const clip = animations.clips.find((c) => c.name === selectedAnimationName);
+        if (clip) setSelectedAnimation(clip);
+    }, [controlled, selectedAnimationName, animations]);
+
+    // Controlled: parent dictates pause + speed for the active player.
+    useEffect(() => {
+        if (!controlled) return;
+        if (controlledPaused === undefined) return;
+        setPlayerPaused(controlledPaused);
+    }, [controlled, controlledPaused]);
+
+    useEffect(() => {
+        if (!controlled) return;
+        if (controlledSpeed === undefined) return;
+        setPlayerSpeed(controlledSpeed);
+    }, [controlled, controlledSpeed]);
+
+    // Controlled: chroma swap. When `chromaId` changes (or clears to
+    // null), re-resolve textures via the chroma command (or the base
+    // command for null) and re-apply them to the already-built meshes.
+    // No re-fetch of the SKN itself — only the texture bindings change.
+    useEffect(() => {
+        if (!controlled) return;
+        if (source.kind !== 'wad') return; // disk chromas aren't a thing yet
+        const skn = sknRef.current;
+        const scene = sceneRef.current;
+        if (!skn || !scene) return;
+        const slots = slotsRef.current;
+        if (slots.length === 0) return;
+        let cancelled = false;
+        const mountId = source.mountId;
+        const sknPathHash = source.pathHashHex;
+
+        (async () => {
+            // Fetch the right binding set. chromaId === null falls back
+            // to the base bindings; otherwise pull the merged chroma map.
+            let map: SknTextureBindings | null = null;
+            try {
+                if (chromaId == null) {
+                    map = await invoke<SknTextureBindings | null>('wad_read_skin_textures', {
+                        id: mountId,
+                        pathHashHex: sknPathHash,
+                    });
+                } else {
+                    map = await invoke<SknTextureBindings | null>('wad_read_chroma_textures', {
+                        id: mountId,
+                        pathHashHex: sknPathHash,
+                        chromaId,
+                    });
+                    // Chroma not found in BIN → silently skip (keeps
+                    // whatever the model was last showing). Logged so
+                    // we can see why a click did nothing.
+                    if (!map) {
+                        console.warn(`[MeshPreview] chroma ${chromaId} not in BIN — keeping base bindings`);
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn('[MeshPreview] chroma fetch failed:', e);
+                return;
+            }
+            if (cancelled || !map) return;
+
+            // Surface shadow-form availability so the host can hide the
+            // toggle when there's no alternate.
+            if (onShadowAvailable) {
+                onShadowAvailable(!!map.shadow_chunk_hash_hex);
+            }
+
+            const bindingByName = new Map<string, TextureBinding>();
+            for (const b of map.bindings) {
+                bindingByName.set(b.material.toLowerCase(), b);
+            }
+
+            // Pick the effective default — shadow texture wins when the
+            // host has toggled shadow form on AND the BIN supplies one.
+            const effectiveDefault =
+                shadowForm && map.shadow_chunk_hash_hex
+                    ? map.shadow_chunk_hash_hex
+                    : map.default_chunk_hash_hex;
+
+            const indicesByHash = new Map<string, number[]>();
+            for (let i = 0; i < skn.submeshes.length; i++) {
+                const name = skn.submeshes[i].name.toLowerCase();
+                const b = bindingByName.get(name);
+                const hash = b?.chunk_hash_hex ?? effectiveDefault;
+                if (!hash) continue;
+                const slot = slots[i];
+                if (slot) slot.chunkHash = hash;
+                const list = indicesByHash.get(hash) ?? [];
+                list.push(i);
+                indicesByHash.set(hash, list);
+            }
+
+            // Surface the per-submesh binding to the host so it can be
+            // forwarded to other consumers (Photo Studio handoff).
+            if (onTextureBindingsReady) {
+                onTextureBindingsReady(
+                    skn.submeshes.map((sm, i) => ({
+                        submeshName: sm.name,
+                        chunkHashHex: slots[i]?.chunkHash ?? null,
+                    })),
+                );
+            }
+
+            const loaded = loadedTexturesRef.current;
+            const work = Array.from(indicesByHash.keys()).map(async (hash) => {
+                if (loaded.has(hash)) return; // already in cache
+                const decoded = await loadTextureFromHash(mountId, hash, scene);
+                if (cancelled || !decoded) return;
+                loaded.set(hash, decoded);
+            });
+            await Promise.allSettled(work);
+            if (!cancelled) refreshMaterials();
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+        // `source` is a fresh object reference on every parent render,
+        // so listing it as a dep here would re-fire this effect every
+        // single frame once the seek bar started ticking — re-reading
+        // and re-parsing the skin BIN on the Rust side at render rate
+        // (the "BIN converting on loop / 100% CPU" symptom). Depend on
+        // the stable `sourceKey` instead; the closure still captures
+        // the freshest `source` object via `source.mountId / .pathHashHex`.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [controlled, chromaId, shadowForm, sourceKey, refreshMaterials, onShadowAvailable]);
+
+    // Controlled: parent dictates per-submesh visibility by name.
+    useEffect(() => {
+        if (!controlled) return;
+        if (!submeshVisibility) return;
+        setSubmeshes((prev) => {
+            let mutated = false;
+            const next = prev.map((s, i) => {
+                const want = submeshVisibility[s.name];
+                if (want === undefined || want === s.visible) return s;
+                mutated = true;
+                const mesh = meshesRef.current[i];
+                if (mesh) mesh.setEnabled(want);
+                return { ...s, visible: want };
+            });
+            return mutated ? next : prev;
+        });
+    }, [controlled, submeshVisibility]);
 
     // Re-apply when toggles change. Texture/binding refs are unchanged
     // by the toggle itself, so we just rebuild the visual state.
@@ -324,15 +606,29 @@ export function MeshPreview({ source, label }: MeshPreviewProps) {
 
                 // Drive the player from Babylon's beforeRender — fires
                 // once per render frame regardless of monitor refresh,
-                // and `getEngine().getDeltaTime()` returns ms.
+                // and `getEngine().getDeltaTime()` returns ms. Also
+                // emits player state each tick for the host's seek bar.
                 const engine = scene.getEngine();
                 const observer = scene.onBeforeRenderObservable.add(() => {
                     const dt = engine.getDeltaTime() / 1000;
                     player.tick(dt);
+                    if (onPlayerProgress) {
+                        onPlayerProgress({
+                            time: player.time,
+                            duration: player.duration,
+                            paused: player.paused,
+                        });
+                    }
                 });
                 animUnsubscribeRef.current = () => {
                     if (observer) scene.onBeforeRenderObservable.remove(observer);
                 };
+                // Hand the host a seek callable bound to this player.
+                if (seekRef) {
+                    seekRef.current = (t: number) => {
+                        player.time = Math.max(0, Math.min(player.duration, t));
+                    };
+                }
             } catch (e) {
                 console.warn('[MeshPreview] animation load failed:', e);
             }
@@ -343,6 +639,7 @@ export function MeshPreview({ source, label }: MeshPreviewProps) {
             animUnsubscribeRef.current?.();
             animUnsubscribeRef.current = null;
             animPlayerRef.current = null;
+            if (seekRef) seekRef.current = null;
         };
         // Depend on `sourceKey` (a stable string), not `source` (a
         // fresh object every parent render). Without this, the player
@@ -665,6 +962,7 @@ export function MeshPreview({ source, label }: MeshPreviewProps) {
                     sklDto?.influences,
                 );
                 meshesRef.current = built.meshes;
+                sknRef.current = skn;
                 // Seed the visibility panel — mirrors `built.meshes`
                 // order so toggle indices line up 1:1 with the ref.
                 setSubmeshes(
@@ -966,10 +1264,9 @@ export function MeshPreview({ source, label }: MeshPreviewProps) {
             )}
             {/* Animation picker — top-right. Shows up after the SKN's
                 skin BIN → animation BIN walk lands; clicking opens a
-                scrollable, filterable list of clip names. Selection is
-                tracked locally for now (highlighted entry); we'll wire
-                actual playback to the selected ANM in the next phase. */}
-            {!loading && !error && animations && animations.clips.length > 0 && (
+                scrollable, filterable list of clip names. Hidden when
+                a parent host drives selection via `controlled`. */}
+            {!controlled && !loading && !error && animations && animations.clips.length > 0 && (
                 <AnimationPickerPanel
                     listing={animations}
                     panelOpen={animationsPanelOpen}
@@ -986,7 +1283,7 @@ export function MeshPreview({ source, label }: MeshPreviewProps) {
                 player has reported its duration). Bottom-left so it
                 mirrors the submesh panel at bottom-right and doesn't
                 clash with the picker at top-right. */}
-            {!loading && !error && selectedAnimation && playerDuration > 0 && (
+            {!controlled && !loading && !error && selectedAnimation && playerDuration > 0 && (
                 <AnimationControlsBar
                     name={selectedAnimation.name}
                     paused={playerPaused}
@@ -1021,7 +1318,7 @@ export function MeshPreview({ source, label }: MeshPreviewProps) {
                 panel is also shown for skeleton-only previews so the
                 user has somewhere to find the skeleton-visibility
                 control (and any future skeleton-specific settings). */}
-            {!loading && !error && (submeshes.length > 0 || skeletonAvailable) && (
+            {!controlled && !loading && !error && (submeshes.length > 0 || skeletonAvailable) && (
                 <div
                     style={{
                         position: 'absolute',
@@ -2069,8 +2366,16 @@ async function loadTextureBlob(
             /* invertY */ true,
             Texture.TRILINEAR_SAMPLINGMODE,
         );
-        tex.wrapU = Texture.CLAMP_ADDRESSMODE;
-        tex.wrapV = Texture.CLAMP_ADDRESSMODE;
+        // WRAP, not CLAMP. League SKN mod authors (and most DCC tools
+        // by default) leave UV islands outside the `[0, 1]` box —
+        // sometimes the entire unwrap sits in `v < 0` for re-textured
+        // submeshes. CLAMP would freeze every sample on those tris to
+        // the texture's edge pixel, which is what produced the dark
+        // banded look on champs like Ahri / Karma re-skins. WRAP tiles
+        // the texture modulo 1, matching Blender / Maya / Substance
+        // default sampling behaviour and what Photo Studio does.
+        tex.wrapU = Texture.WRAP_ADDRESSMODE;
+        tex.wrapV = Texture.WRAP_ADDRESSMODE;
         tex.hasAlpha = hasAlpha;
         return { tex, hasAlpha };
     } catch (e) {
@@ -2086,14 +2391,19 @@ async function loadTextureBlob(
 // Keeps the PBR transparency / culling / depth-pre-pass settings in a
 // single place — easier to evolve without hunting for stragglers.
 
-function applyTexturedMaterial(mat: PBRMaterial, tex: RawTexture, hasAlpha: boolean): void {
+function applyTexturedMaterial(
+    mat: PBRMaterial,
+    tex: RawTexture,
+    hasAlpha: boolean,
+    alphaCutoff: number = 0.2,
+): void {
     mat.albedoTexture = tex;
     mat.albedoColor = new Color3(1, 1, 1);
     mat.backFaceCulling = true;
     if (hasAlpha) {
         mat.useAlphaFromAlbedoTexture = true;
         mat.transparencyMode = Material.MATERIAL_ALPHATESTANDBLEND;
-        mat.alphaCutOff = 0.2;
+        mat.alphaCutOff = alphaCutoff;
         mat.needDepthPrePass = true;
     } else {
         mat.useAlphaFromAlbedoTexture = false;
@@ -2185,7 +2495,7 @@ function buildPlaceholderTexture(scene: Scene): RawTexture {
 // texture (also pre-resolved server-side).
 // ─────────────────────────────────────────────────────────────────────
 
-interface AnimationClip {
+export interface AnimationClip {
     name: string;
     anm_path: string;
     anm_chunk_hash_hex: string | null;
@@ -2194,7 +2504,7 @@ interface AnimationClip {
      *  is populated, never both. */
     anm_disk_path?: string | null;
 }
-interface AnimationListing {
+export interface AnimationListing {
     bin_path: string;
     bin_path_hash_hex: string;
     clips: AnimationClip[];
@@ -2239,6 +2549,12 @@ interface SknTextureBindings {
     default_chunk_hash_hex: string | null;
     default_texture_disk_path?: string | null;
     bindings: TextureBinding[];
+    /** Alt diffuse (shadow / demon / transformed form). Populated when
+     *  the resolved material has a ShadowTexture sampler. Frontend
+     *  swaps with `default_chunk_hash_hex` when the user toggles the
+     *  shadow-form option. */
+    shadow_texture?: string | null;
+    shadow_chunk_hash_hex?: string | null;
 }
 
 /// SCB/SCO texture pipeline. Mirrors `applyTextures` for the SKN

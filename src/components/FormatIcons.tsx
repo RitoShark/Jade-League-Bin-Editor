@@ -17,6 +17,9 @@ import {
     Boxes,
     Clapperboard,
     FileText,
+    Mic,
+    BookAudio,
+    Volume2,
     type LucideIcon,
 } from 'lucide-react';
 
@@ -33,6 +36,11 @@ const LUCIDE_GLYPHS: Record<'bone' | 'box' | 'boxes' | 'clapperboard' | 'file-te
 interface FormatIconProps {
     /** File extension without the leading dot, lowercased. */
     extension?: string;
+    /** Optional full filename. When supplied, audio name patterns
+     *  (e.g. `vo_audio.bnk`, `*.wpk`, `sfx_events.bnk`) get a more
+     *  specific Lucide icon than the bare `.bnk` extension would
+     *  imply. Ignored if the filename doesn't match a known pattern. */
+    fileName?: string;
     /** Set to true to render a folder icon instead of a file. */
     isFolder?: boolean;
     /** Pixel width — height auto-derives at the icon's natural aspect. */
@@ -108,6 +116,114 @@ export function getFormatConfig(extension?: string): FormatConfig {
     return FORMAT_CONFIGS[extension.toLowerCase()] ?? DEFAULT_CONFIG;
 }
 
+/** Audio assets in League's WAD layout have a few canonical filenames
+ *  whose role isn't visible from the extension alone — `*.bnk` covers
+ *  both voice and SFX, and the meaning hinges on the basename. Match
+ *  these by filename pattern so the row icon tells the user immediately
+ *  whether they're looking at VO audio, VO events, SFX audio, or SFX
+ *  events, instead of every audio container getting the same glyph.
+ *
+ *  Patterns are deliberately loose (substring match on the lowercased
+ *  basename) so siblings like `skin0_vo_audio.bnk` are still picked up.
+ *  Wwise WPK packs always carry voice clips in League's content tree,
+ *  so they ride the mic icon too. */
+export function getAudioIconForFileName(fileName: string): LucideIcon | null {
+    const lower = fileName.toLowerCase();
+    // Order matters: check `vo_events` before `vo_audio` since both
+    // contain the substring `vo_`; longer / more specific tokens win.
+    if (lower.includes('vo_events.bnk') || lower.includes('sfx_events.bnk')) {
+        return BookAudio;
+    }
+    if (lower.includes('vo_audio.bnk') || lower.endsWith('.wpk')) {
+        return Mic;
+    }
+    if (lower.includes('sfx_audio.bnk')) {
+        return Volume2;
+    }
+    return null;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Shared file-glyph helpers — kept in sync with the icons the
+   Extract Files tab in WelcomeScreen renders, so the File
+   Explorer pane uses the same visual vocabulary. The local
+   `DocIcon` + `TextureIcon` here mirror the outlined glyphs
+   from WelcomeScreen; deliberately re-implemented (not imported)
+   to avoid the welcome screen pulling its big icon set into
+   every consumer.
+   ───────────────────────────────────────────────────────────── */
+
+function ExplorerDocIcon({ size = 16 }: { size?: number }) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+        >
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+        </svg>
+    );
+}
+
+function ExplorerTextureIcon({ size = 16 }: { size?: number }) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+        >
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="9" r="1.5" />
+            <path d="M21 15l-4.5-4.5a1.5 1.5 0 0 0-2.12 0L4 21" />
+        </svg>
+    );
+}
+
+/** File-glyph picker shared by the Extract Files tab and the File
+ *  Explorer pane. The two surfaces show the same files, so they
+ *  should pick the same icons:
+ *   - VO / SFX `.bnk` and `.wpk` → audio role icon (mic / books / volume)
+ *   - DDS / TEX / PNG / JPG / JPEG / BMP → picture-frame texture icon
+ *   - SKL / SKN / SCB / SCO / ANM → 3D-asset pictograms (FormatIcon)
+ *   - everything else → page outline (ExplorerDocIcon)
+ *
+ *  `fileName` is optional — pass it whenever you have it so the
+ *  audio basename match can fire. */
+export function FileTypeIcon({
+    extension,
+    fileName,
+    size = 16,
+}: { extension?: string; fileName?: string; size?: number }) {
+    const lower = (extension ?? '').toLowerCase();
+    if (fileName) {
+        const audio = getAudioIconForFileName(fileName);
+        if (audio) {
+            const Glyph = audio;
+            return <Glyph width={size} height={size} strokeWidth={1.8} aria-hidden="true" />;
+        }
+    }
+    if (lower === 'dds' || lower === 'tex' || lower === 'png' || lower === 'jpg' || lower === 'jpeg' || lower === 'bmp' || lower === 'webp' || lower === 'gif') {
+        return <ExplorerTextureIcon size={size} />;
+    }
+    if (getFormatConfig(lower).glyph) {
+        return <FormatIcon extension={lower} size={size} />;
+    }
+    return <ExplorerDocIcon size={size} />;
+}
+
 /** Extract the extension (lowercase, no dot) from a file path or name.
  *  Returns '' for paths with no extension. */
 export function extractExtension(filePath: string): string {
@@ -117,7 +233,7 @@ export function extractExtension(filePath: string): string {
     return name.slice(idx + 1).toLowerCase();
 }
 
-export function FormatIcon({ extension, isFolder, size = 28, className = '' }: FormatIconProps) {
+export function FormatIcon({ extension, fileName, isFolder, size = 28, className = '' }: FormatIconProps) {
     if (isFolder) {
         return (
             <svg
@@ -134,6 +250,25 @@ export function FormatIcon({ extension, isFolder, size = 28, className = '' }: F
                 <path d="M2 4a1 1 0 0 1 1-1h6l2 2h10a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" />
             </svg>
         );
+    }
+
+    // Filename-driven audio overrides take precedence over the
+    // extension-based config — `.bnk` alone can't tell VO from SFX, so
+    // when the caller passes a filename we check those patterns first.
+    if (fileName) {
+        const audioIcon = getAudioIconForFileName(fileName);
+        if (audioIcon) {
+            const Glyph = audioIcon;
+            return (
+                <Glyph
+                    width={size}
+                    height={size}
+                    strokeWidth={1.8}
+                    className={className}
+                    aria-hidden="true"
+                />
+            );
+        }
     }
 
     const cfg = getFormatConfig(extension);

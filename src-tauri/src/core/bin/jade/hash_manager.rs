@@ -20,7 +20,7 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use crate::core::hash::get_frogtools_hash_dir;
+use crate::core::hash::{get_frogtools_hash_dir, get_frogtools_text_hash_dir};
 use crate::core::wad::lookup_wad;
 
 pub struct HashManager {
@@ -72,6 +72,10 @@ impl HashManager {
 
     /// Load BIN hashes from text into RAM. Always RAM-backed for BIN
     /// names — LMDB is reserved for WAD lookups.
+    ///
+    /// `hash_dir` is the parent FrogTools hashes folder (where the
+    /// shared LMDB env lives). The `.txt` files we walk for BIN names
+    /// live in the `text/` subfolder underneath, isolated from Quartz.
     pub fn load(hash_dir: &Path) -> Self {
         if !hash_dir.exists() {
             eprintln!(
@@ -83,14 +87,27 @@ impl HashManager {
         Self::load_bin_text(hash_dir)
     }
 
-    /// Walk every `.txt` file in the hash dir, collecting only 8-char-
-    /// hex (FNV1a u32) entries into the BIN table. 16-char-hex entries
-    /// (xxh64 / WAD names) are skipped — those go through LMDB.
+    /// Walk every `.txt` file in the text-hashes dir, collecting only
+    /// 8-char-hex (FNV1a u32) entries into the BIN table. 16-char-hex
+    /// entries (xxh64 / WAD names) are skipped — those go through LMDB.
     fn load_bin_text(hash_dir: &Path) -> Self {
         let mut mgr = Self::new();
+        // Keep the parent dir on the manager so WAD lookups (which
+        // open the shared LMDB env) still point at the right place.
         mgr.hash_dir = Some(hash_dir.to_path_buf());
 
-        let entries: Vec<_> = match std::fs::read_dir(hash_dir) {
+        // Text hashes live in `<hash_dir>/text/` after the Jade/Quartz
+        // split — fall back to scanning `<hash_dir>` directly if the
+        // text dir doesn't exist (early-startup ordering / a fresh
+        // install where get_frogtools_text_hash_dir hasn't been
+        // touched yet).
+        let text_dir_owned;
+        let text_dir: &Path = match get_frogtools_text_hash_dir() {
+            Ok(p) => { text_dir_owned = p; &text_dir_owned }
+            Err(_) => hash_dir,
+        };
+
+        let entries: Vec<_> = match std::fs::read_dir(text_dir) {
             Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
             Err(e) => {
                 eprintln!("[jade::hash_manager] Failed to read hash dir: {}", e);

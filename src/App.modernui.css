@@ -1349,3 +1349,74 @@
   background: var(--modern-active-tab-bg) !important;
 }
 
+
+/* ── Guide Overlay: glass morphism ─────────────────────────────────── */
+
+[data-ui-mode="modern"] .guide-card {
+  background: var(--modern-dialog-bg) !important;
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 12px !important;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .guide-skip-confirm-card {
+  background: var(--modern-dialog-bg) !important;
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 12px !important;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .guide-card-next {
+  background: var(--jade-accent) !important;
+  border-radius: 6px !important;
+  box-shadow: 0 0 14px var(--modern-accent-40) !important;
+  transition: filter 0.15s, box-shadow 0.15s !important;
+}
+
+[data-ui-mode="modern"] .guide-card-next:hover {
+  filter: brightness(1.15) !important;
+  box-shadow: 0 0 20px var(--modern-accent-50) !important;
+}
+
+[data-ui-mode="modern"] .guide-spotlight {
+  box-shadow: 0 0 0 2px var(--jade-accent),
+              0 0 0 4px color-mix(in srgb, var(--jade-accent) 20%, transparent),
+              0 0 24px 6px color-mix(in srgb, var(--jade-accent) 25%, transparent) !important;
+}
+
+[data-ui-mode="modern"] .guide-theme-card {
+  border-radius: 8px !important;
+}
+
+[data-ui-mode="modern"] .guide-theme-card.selected {
+  border-color: var(--jade-accent) !important;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--jade-accent) 40%, transparent) !important;
+}
+
+[data-ui-mode="modern"] .guide-step-label {
+  color: color-mix(in srgb, var(--jade-accent) 80%, var(--text-color)) !important;
+  letter-spacing: 0.06em !important;
+}
+
+[data-ui-mode="modern"] .guide-skip-confirm-no {
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 6px !important;
+}
+
+[data-ui-mode="modern"] .guide-skip-confirm-no:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-ui-mode="modern"] .guide-skip-confirm-yes {
+  border-radius: 6px !important;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--jade-accent) 40%, transparent) !important;
+}

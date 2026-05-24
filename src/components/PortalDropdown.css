@@ -1,0 +1,167 @@
+/* PortalDropdown — themed select replacement. The menu portal-renders
+   at document.body so it can't be clipped by accordions / dock panels. */
+
+.portal-dd {
+    position: relative;
+    display: inline-flex;
+    min-width: 0;
+}
+
+.portal-dd-trigger {
+    display: inline-flex;
+    align-items: center;
+    width: 100%;
+    min-height: 28px;
+    padding: 4px 6px 4px 10px;
+    font: inherit;
+    font-size: 12px;
+    background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: 4px;
+    color: var(--text-color, #cccccc);
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.portal-dd-trigger:hover:not(:disabled) {
+    border-color: var(--jade-accent, #007acc);
+}
+
+.portal-dd-trigger.is-open {
+    border-color: var(--jade-accent, #007acc);
+    background: rgba(0, 122, 204, 0.08);
+}
+
+.portal-dd-trigger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.portal-dd-value {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.portal-dd-caret {
+    flex-shrink: 0;
+    margin-left: 6px;
+    color: var(--text-muted, #8a8a8a);
+    transition: transform 120ms ease;
+}
+
+.portal-dd-trigger.is-open .portal-dd-caret {
+    transform: rotate(180deg);
+}
+
+[data-ui-mode="modern"] .portal-dd-trigger {
+    background: transparent;
+    border-color: var(--modern-glass-border);
+}
+
+[data-ui-mode="modern"] .portal-dd-trigger:hover:not(:disabled),
+[data-ui-mode="modern"] .portal-dd-trigger.is-open {
+    background: var(--modern-accent-05);
+    border-color: var(--modern-accent);
+}
+
+/* Portal-rendered popup. Z-index high so it stacks over ribbon /
+   accordion / floating panels alike. */
+.portal-dd-menu {
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    /* max-height is set inline based on available viewport space.
+       This is just the floor / failsafe if inline doesn't apply. */
+    max-height: 320px;
+    background: var(--window-bg, #1f1f1f);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: 4px;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+    animation: portal-dd-pop 110ms ease;
+}
+
+@keyframes portal-dd-pop {
+    from { opacity: 0; transform: translateY(-3px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.portal-dd-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(0, 0, 0, 0.2);
+    flex-shrink: 0;
+}
+
+.portal-dd-search-icon {
+    color: #8b8b8b;
+    flex-shrink: 0;
+}
+
+.portal-dd-search-input {
+    flex: 1;
+    min-width: 0;
+    padding: 3px 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    font: inherit;
+    font-size: 12px;
+    color: #ffffff;
+}
+
+.portal-dd-search-input::placeholder {
+    color: #6b6b6b;
+}
+
+.portal-dd-list {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 2px 0;
+}
+
+.portal-dd-item {
+    display: block;
+    width: 100%;
+    padding: 5px 12px;
+    background: transparent;
+    border: none;
+    text-align: left;
+    font: inherit;
+    font-size: 12px;
+    color: var(--text-color, #cccccc);
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.portal-dd-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #ffffff;
+}
+
+.portal-dd-item.is-selected {
+    background: var(--jade-accent, #007acc);
+    color: #ffffff;
+}
+
+.portal-dd-item.is-selected:hover {
+    filter: brightness(1.1);
+    background: var(--jade-accent, #007acc);
+}
+
+.portal-dd-empty {
+    padding: 12px;
+    text-align: center;
+    font-size: 11.5px;
+    color: #6e6e6e;
+    font-style: italic;
+}

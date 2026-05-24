@@ -75,6 +75,14 @@ const H_MATERIAL: u32 = fnv1a_lower("material");
 const H_SAMPLER_VALUES: u32 = fnv1a_lower("samplerValues");
 const H_TEXTURE_NAME: u32 = fnv1a_lower("textureName");
 const H_TEXTURE_PATH: u32 = fnv1a_lower("texturePath");
+// Chroma resolution
+const H_CHROMAS: u32 = fnv1a_lower("chromas");
+const H_CHROMA_LIST: u32 = fnv1a_lower("chromaList");
+const H_ID: u32 = fnv1a_lower("id");
+const H_CHILD_SKIN: u32 = fnv1a_lower("childSkin");
+// SKN path resolution — `simpleSkin` is the canonical pointer on
+// `skinMeshProperties` to the .skn the engine actually renders.
+pub const H_SIMPLE_SKIN: u32 = fnv1a_lower("simpleSkin");
 
 // ── Public types (unchanged shape — frontend consumers stay valid) ─
 
@@ -90,6 +98,11 @@ pub struct SkinTextureMap {
     pub bin_path_hash_hex: String,
     pub default_texture: Option<String>,
     pub materials: Vec<MaterialTexture>,
+    /// Alternate diffuse for shadow / demon / transformed forms — e.g.
+    /// Evelynn's `ShadowTexture` sampler. `None` when the resolved
+    /// material has no such sampler. Frontend can offer a toggle to
+    /// swap the default with this.
+    pub shadow_texture: Option<String>,
 }
 
 // ── End-to-end command path ─────────────────────────────────────────
@@ -103,26 +116,177 @@ pub struct SkinTextureMap {
 pub fn read_skin_textures_for_skn_disk(
     skn_disk_path: &str,
 ) -> Result<Option<SkinTextureMap>, String> {
-    use super::skin_bin::find_skin_bin_disk;
+    use super::skin_bin::{data_path_variants, disk_layout_for_skn, find_skin_bin_disk};
 
     let skin_bin_path = match find_skin_bin_disk(skn_disk_path) {
         Some(p) => p,
+        // Folder-scan fallback for BIN-less mods is implemented in
+        // the Tauri command wrapper (`read_skn_textures_disk`) so
+        // the returned disk paths can be absolute. Here we just
+        // signal "no map" and let the caller take over.
         None => return Ok(None),
     };
     let bytes = std::fs::read(&skin_bin_path)
         .map_err(|e| format!("read skin bin '{}': {}", skin_bin_path, e))?;
-    let tree = read_bin_ltk(&bytes).map_err(|e| format!("parse skin bin: {e}"))?;
-    let (default_texture, materials) = extract_textures_from_tree(&tree);
+    let primary_tree = read_bin_ltk(&bytes).map_err(|e| format!("parse skin bin: {e}"))?;
+
+    // Parse every BIN listed in the primary's `linked:` dependency list,
+    // so champions like Evelynn — whose `Material: link` points at a
+    // `StaticMaterialDef` defined in a sibling multi-skin BIN — resolve
+    // their diffuse correctly. Without this the disk-side binder only
+    // sees the placeholder texture path from `texture: string` (or
+    // nothing at all if the BIN omits that field).
+    //
+    // Failures (file missing, parse error) are non-fatal: skip the dep
+    // and continue — the same forgiving behavior the WAD-side walker
+    // uses.
+    let mut linked_trees: Vec<BinTree> = Vec::new();
+    let mut loaded_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+    loaded_paths.insert(skin_bin_path.replace('\\', "/").to_lowercase());
+
+    if let Some(layout) = disk_layout_for_skn(skn_disk_path) {
+        // (1) Walk the primary's `linked:` dependencies. These are
+        //     the BIN files Riot explicitly tags as required. Most
+        //     champion-level material defs come through here.
+        for dep in &primary_tree.dependencies {
+            let lower = dep.to_lowercase();
+            // Dependencies are `DATA/Characters/...` strings; only the
+            // `data/`-rooted ones matter for material resolution.
+            let Some(_rel) = lower.strip_prefix("data/") else { continue };
+            for candidate in data_path_variants(&lower, &layout) {
+                if !std::path::Path::new(&candidate).is_file() {
+                    continue;
+                }
+                let key = candidate.replace('\\', "/").to_lowercase();
+                if loaded_paths.contains(&key) {
+                    break;
+                }
+                let dep_bytes = match std::fs::read(&candidate) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("[textures] linked BIN '{}' read failed: {}", candidate, e);
+                        break;
+                    }
+                };
+                match read_bin_ltk(&dep_bytes) {
+                    Ok(t) => {
+                        loaded_paths.insert(key);
+                        linked_trees.push(t);
+                    }
+                    Err(e) => eprintln!("[textures] linked BIN '{}' parse failed: {}", candidate, e),
+                }
+                break;
+            }
+        }
+
+        // (2) Sibling-BIN sweep. The WAD walker effectively has every
+        //     BIN in the mounted archive available; the disk walker
+        //     only sees what's actually on the user's drive. Mods
+        //     commonly ship just `skin{N}.bin` and lean on Riot's
+        //     base material defs for the per-submesh `material: link`s.
+        //     When those base BINs are NOT in the dependencies list
+        //     but happen to sit next to the skin BIN, load them anyway.
+        //     We sweep:
+        //       a) every other `skin*.bin` in the same `skins/` folder
+        //          (skin0.bin frequently owns the base StaticMaterialDef
+        //          objects that `materialOverride` entries link to).
+        //       b) the champion-root BIN one level up
+        //          (`data/characters/<champ>/<champ>.bin`).
+        //       c) any other `.bin` at the champion root
+        //          (e.g. `evelynn_multi_skins_*.bin`).
+        let skn_norm = skn_disk_path.replace('\\', "/").to_lowercase();
+        let mut champion: Option<&str> = None;
+        if let Some(after_chars) = skn_norm.split("characters/").nth(1) {
+            if let Some(name) = after_chars.split('/').next() {
+                if !name.is_empty() {
+                    champion = Some(name);
+                }
+            }
+        }
+
+        if let Some(champ) = champion {
+            let try_load = |path_str: &str, linked: &mut Vec<BinTree>, loaded: &mut std::collections::HashSet<String>| {
+                let key = path_str.replace('\\', "/").to_lowercase();
+                if loaded.contains(&key) {
+                    return;
+                }
+                if !std::path::Path::new(path_str).is_file() {
+                    return;
+                }
+                let bytes = match std::fs::read(path_str) {
+                    Ok(b) => b,
+                    Err(_) => return,
+                };
+                match read_bin_ltk(&bytes) {
+                    Ok(t) => {
+                        loaded.insert(key);
+                        linked.push(t);
+                    }
+                    Err(e) => eprintln!("[textures] sibling BIN '{}' parse failed: {}", path_str, e),
+                }
+            };
+
+            // (a) every sibling skin BIN
+            let skins_dir_rel = format!("data/characters/{champ}/skins/");
+            for variant in data_path_variants(&skins_dir_rel, &layout) {
+                let path = std::path::Path::new(&variant);
+                let Ok(entries) = std::fs::read_dir(path) else { continue };
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if !p.is_file() { continue; }
+                    let Some(name) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                    let lower = name.to_lowercase();
+                    if !lower.ends_with(".bin") { continue; }
+                    if !lower.starts_with("skin") { continue; }
+                    let abs = p.to_string_lossy().into_owned();
+                    try_load(&abs, &mut linked_trees, &mut loaded_paths);
+                }
+                break; // first variant that exists wins
+            }
+
+            // (b) champion-root BIN
+            let champ_root_rel = format!("data/characters/{champ}/{champ}.bin");
+            for variant in data_path_variants(&champ_root_rel, &layout) {
+                try_load(&variant, &mut linked_trees, &mut loaded_paths);
+            }
+
+            // (c) all other BINs at the champion root (multi-skin
+            //     material defs etc.)
+            let champ_dir_rel = format!("data/characters/{champ}/");
+            for variant in data_path_variants(&champ_dir_rel, &layout) {
+                let path = std::path::Path::new(&variant);
+                let Ok(entries) = std::fs::read_dir(path) else { continue };
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if !p.is_file() { continue; }
+                    let Some(name) = p.file_name().and_then(|n| n.to_str()) else { continue };
+                    if !name.to_lowercase().ends_with(".bin") { continue; }
+                    let abs = p.to_string_lossy().into_owned();
+                    try_load(&abs, &mut linked_trees, &mut loaded_paths);
+                }
+                break;
+            }
+        }
+    }
+
+    eprintln!(
+        "[textures] disk walker loaded {} BIN trees (primary + {} linked) for {}",
+        1 + linked_trees.len(),
+        linked_trees.len(),
+        skn_disk_path
+    );
+
+    let mut trees: Vec<BinTree> = Vec::with_capacity(1 + linked_trees.len());
+    trees.push(primary_tree);
+    trees.extend(linked_trees);
+    let (default_texture, materials, shadow_texture) = extract_textures_from_trees(&trees);
 
     Ok(Some(SkinTextureMap {
         bin_path: skin_bin_path.replace('\\', "/").to_lowercase(),
-        // Disk source has no xxh64 chunk hash — fill with zeros so
-        // the field stays serializable and frontend code that
-        // doesn't care about it (the disk path is what's used)
-        // doesn't have to special-case Optional vs Required.
         bin_path_hash_hex: format!("{:016x}", 0u64),
         default_texture,
         materials,
+        shadow_texture,
     }))
 }
 
@@ -147,102 +311,366 @@ pub fn read_skin_textures_for_skn(
     .ok_or_else(|| format!("bin chunk {} not in mount {}", bin_match.path_hash_hex, mount_id))?;
     let bytes = read_chunk_decompressed_bytes(&info.0, &info.1)
         .map_err(|e| format!("read bin chunk: {e}"))?;
+    let primary_tree = read_bin_ltk(&bytes).map_err(|e| format!("parse bin tree: {e}"))?;
 
-    // Parse the binary directly — no text round-trip.
-    let tree = read_bin_ltk(&bytes).map_err(|e| format!("parse bin tree: {e}"))?;
-    let (default_texture, materials) = extract_textures_from_tree(&tree);
+    // Parse every BIN in the primary's `linked:` dependency list.
+    // Evelynn's MaterialDef lives in a sibling multi-skin BIN, so the
+    // `Material: link` in skin0.bin points at an object that simply
+    // isn't in skin0's own tree — we need the linked BINs to resolve.
+    // We collect them once here so the extractor can search across the
+    // whole bundle. Failures (chunk missing, parse error) are non-fatal:
+    // skip the BIN and continue.
+    let deps_paths: Vec<String> = primary_tree.dependencies.clone();
+    let mut linked_trees: Vec<BinTree> = Vec::with_capacity(deps_paths.len());
+    for dep_path in &deps_paths {
+        let lower = dep_path.to_lowercase();
+        let dep_hash = xxh64_path(&lower);
+        let dep_info = with_mount(mount_id, |m| {
+            m.chunks
+                .iter()
+                .find(|c| c.path_hash == dep_hash)
+                .map(|c| (m.path.clone(), *c))
+        })
+        .flatten();
+        let Some(dep_info) = dep_info else { continue };
+        let dep_bytes = match read_chunk_decompressed_bytes(&dep_info.0, &dep_info.1) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("[textures] linked BIN '{}' read failed: {}", lower, e);
+                continue;
+            }
+        };
+        match read_bin_ltk(&dep_bytes) {
+            Ok(t) => linked_trees.push(t),
+            Err(e) => eprintln!("[textures] linked BIN '{}' parse failed: {}", lower, e),
+        }
+    }
+
+    let mut trees: Vec<BinTree> = Vec::with_capacity(1 + linked_trees.len());
+    trees.push(primary_tree);
+    trees.extend(linked_trees);
+
+    let (default_texture, materials, shadow_texture) = extract_textures_from_trees(&trees);
 
     Ok(Some(SkinTextureMap {
         bin_path: bin_match.path,
         bin_path_hash_hex: bin_match.path_hash_hex,
         default_texture,
         materials,
+        shadow_texture,
     }))
+}
+
+/// xxh64 of a lowercased path string — same hashing the WAD's chunk
+/// index uses. Local helper since `xxh64_lower` lives in mesh_commands
+/// and we'd rather not introduce a cycle.
+fn xxh64_path(s: &str) -> u64 {
+    use std::hash::Hasher;
+    let mut h = twox_hash::XxHash64::with_seed(0);
+    h.write(s.as_bytes());
+    h.finish()
 }
 
 // ── Tree walker ─────────────────────────────────────────────────────
 
 /// Walk the parsed BinTree and pull out (default_texture, per-material).
 /// Public so tests can hit it without IPC plumbing.
+///
+/// **Form-switching note**: champion BINs for transforming champs
+/// (Evelynn, Jayce, Elise, Nidalee, Karma, Shyvana, Rumble in some
+/// versions, …) carry **multiple** `SkinCharacterDataProperties` —
+/// one per form. Their `materialOverride` blocks frequently re-use
+/// submesh names ("Body", "Weapon", …) with different textures
+/// per form. Pooling them in one flat list collapses to whichever
+/// form happens to be iterated last, which is how you get the
+/// "wrong texture on the right submesh" symptom.
+///
+/// For now we just take the **first** `SkinCharacterDataProperties`
+/// object we encounter. That maps to the canonical form
+/// (`Evelynn_Skin0` before `Evelynn_Skin0_Form1`, etc.) because
+/// `ltk_meta`'s `IndexMap` preserves the BIN's on-disk insertion
+/// order. Alt forms lose their bindings and fall back to the default
+/// texture (which is usually right enough for a viewer); a real
+/// form-picker is a follow-up.
+#[allow(dead_code)]
 pub fn extract_textures_from_tree(tree: &BinTree) -> (Option<String>, Vec<MaterialTexture>) {
-    let mut default_texture: Option<String> = None;
-    let mut materials: Vec<MaterialTexture> = Vec::new();
+    let (default_texture, materials, _) = extract_textures_from_trees(std::slice::from_ref(tree));
+    (default_texture, materials)
+}
 
+/// Cross-tree variant — `trees[0]` is the primary skin BIN; the rest
+/// are its `linked:` dependencies, parsed by the caller. Material
+/// links can resolve to objects defined in any of these BINs (Evelynn
+/// is the canonical case: her `Material: link` points at a
+/// `StaticMaterialDef` that lives in a sibling multi-skin BIN, not in
+/// her own `skin0.bin`). Returns `(default, materials, shadow_alt)`.
+pub fn extract_textures_from_trees(
+    trees: &[BinTree],
+) -> (Option<String>, Vec<MaterialTexture>, Option<String>) {
+    if trees.is_empty() {
+        eprintln!("[textures] extract_textures_from_trees: empty trees");
+        return (None, Vec::new(), None);
+    }
+    let primary = &trees[0];
+    eprintln!(
+        "[textures] extract_textures_from_trees: {} trees, primary has {} objects",
+        trees.len(),
+        primary.objects.len()
+    );
+    for object in primary.objects.values() {
+        if let Some(smp_props) = skin_mesh_props_of(&object.properties) {
+            let result = extract_textures_from_smp(trees, smp_props);
+            eprintln!(
+                "[textures] result: default={:?} bindings_count={} shadow={:?}",
+                result.0,
+                result.1.len(),
+                result.2
+            );
+            for b in &result.1 {
+                eprintln!("[textures]   binding submesh='{}' texture='{}'", b.material, b.texture_path);
+            }
+            return result;
+        }
+    }
+    eprintln!("[textures] no SkinMeshProperties found in primary tree");
+    (None, Vec::new(), None)
+}
+
+/// Read the `simpleSkin: string` field from the first SCDP's
+/// `skinMeshProperties` block. This is the canonical pointer to the
+/// .skn the engine actually renders — **the only reliable way** to
+/// pick the right SKN when the WAD contains several (Rell's rider vs
+/// horse, Mel's main vs alt rigs, etc.). Returns the BIN-form path
+/// (`ASSETS/...`) lowercased, or `None` if no SCDP / no field.
+pub fn extract_simple_skin(tree: &BinTree) -> Option<String> {
     for object in tree.objects.values() {
-        // Only objects with a `skinMeshProperties` field are interesting.
-        let smp_value = match object.properties.get(&H_SKIN_MESH_PROPERTIES) {
-            Some(p) => &p.value,
+        let smp_props = match skin_mesh_props_of(&object.properties) {
+            Some(p) => p,
             None => continue,
         };
-        let smp_props = match embedded_props(smp_value) {
-            Some(s) => s,
-            None => continue,
-        };
+        if let Some(s) = string_field(smp_props, H_SIMPLE_SKIN) {
+            if !s.is_empty() {
+                return Some(s.to_lowercase());
+            }
+        }
+        // Only inspect the first SCDP — same first-match rule as the
+        // base texture walker.
+        return None;
+    }
+    None
+}
 
-        if default_texture.is_none() {
-            if let Some(s) = string_field(smp_props, H_TEXTURE) {
-                if !s.is_empty() {
-                    default_texture = Some(s.to_lowercase());
+/// Walk the parsed BinTree looking for a chroma whose `id` field
+/// matches `chroma_id`, returning that chroma's texture overrides.
+///
+/// Chromas in League's BIN ecosystem are typically additional
+/// `SkinCharacterDataProperties` objects in the same skin BIN, listed
+/// either as `chromas` or `chromaList` on the parent. Each carries its
+/// own `skinMeshProperties.materialOverride` block (usually small —
+/// just the body/weapon swaps). We return the **chroma's bindings
+/// only**; the caller is expected to merge them onto the base
+/// material list (chroma overrides win).
+///
+/// `default_texture` is the chroma's own default if it set one,
+/// otherwise `None` (caller falls back to the base default).
+pub fn extract_chroma_textures(
+    trees: &[BinTree],
+    chroma_id: u32,
+) -> Option<(Option<String>, Vec<MaterialTexture>)> {
+    if trees.is_empty() {
+        return None;
+    }
+    let primary = &trees[0];
+
+    let mut chroma_links: Vec<u32> = Vec::new();
+    for object in primary.objects.values() {
+        let Some(smp_props) = skin_mesh_props_of(&object.properties) else { continue };
+
+        let scan_sources: [Option<&IndexMap<u32, BinProperty>>; 2] =
+            [Some(&object.properties), Some(smp_props)];
+        for src in scan_sources.iter().flatten() {
+            for key in &[H_CHROMAS, H_CHROMA_LIST] {
+                if let Some(list_prop) = src.get(key) {
+                    if let Some(items) = container_items(&list_prop.value) {
+                        for item in items {
+                            if let PropertyValueEnum::ObjectLink(link) = item {
+                                chroma_links.push(link.0);
+                            }
+                        }
+                    }
                 }
             }
         }
+        if !chroma_links.is_empty() {
+            break;
+        }
+        break;
+    }
 
-        // Per-submesh overrides — `materialOverride` is a `list[embed]`
-        // (Container whose items are EmbeddedValue → StructValue).
-        let overrides = match smp_props.get(&H_MATERIAL_OVERRIDE) {
-            Some(p) => &p.value,
-            None => continue,
-        };
-        let Some(list) = container_items(overrides) else {
+    if chroma_links.is_empty() {
+        return None;
+    }
+
+    for link_hash in chroma_links {
+        // Chroma object can live in any of the linked BINs too.
+        let obj = trees.iter().find_map(|t| t.objects.get(&link_hash));
+        let Some(obj) = obj else { continue };
+        let id_value = u32_field(&obj.properties, H_ID).or_else(|| {
+            object_link_field(&obj.properties, H_CHILD_SKIN)
+                .and_then(|h| trees.iter().find_map(|t| t.objects.get(&h)))
+                .and_then(|target| u32_field(&target.properties, H_ID))
+        });
+        if id_value != Some(chroma_id) {
             continue;
-        };
+        }
 
-        for item in list {
-            let Some(item_props) = embedded_props(item) else { continue };
-            let Some(submesh) = string_field(item_props, H_SUBMESH) else { continue };
-            let material_name = submesh.to_string();
+        let chroma_obj = obj;
+        let smp_props = skin_mesh_props_of(&chroma_obj.properties)
+            .unwrap_or(&chroma_obj.properties);
+        let (default_texture, materials, _shadow) = extract_textures_from_smp(trees, smp_props);
+        return Some((default_texture, materials));
+    }
 
-            // Direct texture override wins.
-            if let Some(t) = string_field(item_props, H_TEXTURE) {
-                if !t.is_empty() {
-                    materials.push(MaterialTexture {
-                        material: material_name,
-                        texture_path: t.to_lowercase(),
-                    });
-                    continue;
-                }
-            }
+    None
+}
 
-            // Otherwise resolve `material: link = <object_hash>` against
-            // a StaticMaterialDef elsewhere in the tree.
-            if let Some(link_hash) = object_link_field(item_props, H_MATERIAL) {
-                if let Some(t) = resolve_material_diffuse(tree, link_hash) {
-                    materials.push(MaterialTexture {
-                        material: material_name,
-                        texture_path: t.to_lowercase(),
-                    });
-                }
+/// Shared per-SCDP walker — extracts the default texture + material
+/// overrides from a single `skinMeshProperties` props map. Used by
+/// both the base-skin extractor and the chroma extractor so the two
+/// paths stay in lock-step on which fields they understand.
+fn extract_textures_from_smp(
+    trees: &[BinTree],
+    smp_props: &IndexMap<u32, BinProperty>,
+) -> (Option<String>, Vec<MaterialTexture>, Option<String>) {
+    let mut default_texture: Option<String> = None;
+    let mut materials: Vec<MaterialTexture> = Vec::new();
+    let mut shadow_texture: Option<String> = None;
+
+    // Priority 1 — top-level `Material: link` on skinMeshProperties.
+    // This is the actually-shipped diffuse for the skin; the plain
+    // `texture: string` field is often a leftover sketch / placeholder
+    // Riot forgot to remove (Aatrox Skin07 references a stale TX_CM
+    // that doesn't match what the game actually renders). The linked
+    // StaticMaterialDef's `Diffuse_Texture` sampler is canonical.
+    //
+    // Looks across `trees` because the linked StaticMaterialDef
+    // frequently lives in a sibling BIN (Evelynn's multi-skin
+    // material BIN, etc.), not in the same skin BIN.
+    if let Some(link_hash) = object_link_field(smp_props, H_MATERIAL) {
+        if let Some((diffuse, shadow)) = resolve_material_diffuse_with_shadow(trees, link_hash) {
+            default_texture = Some(diffuse.to_lowercase());
+            shadow_texture = shadow.map(|s| s.to_lowercase());
+        }
+    }
+
+    if default_texture.is_none() {
+        if let Some(s) = string_field(smp_props, H_TEXTURE) {
+            if !s.is_empty() {
+                default_texture = Some(s.to_lowercase());
             }
         }
     }
 
-    (default_texture, materials)
+    if let Some(overrides) = smp_props.get(&H_MATERIAL_OVERRIDE) {
+        if let Some(list) = container_items(&overrides.value) {
+            eprintln!("[textures] materialOverride has {} entries", list.len());
+            for (i, item) in list.iter().enumerate() {
+                let Some(item_props) = embedded_props(item) else {
+                    eprintln!("[textures]   override[{}] not an embedded/struct", i);
+                    continue;
+                };
+                // Diagnose what fields the entry actually carries so
+                // we can tell whether the lookup-by-hash is matching.
+                let submesh_opt = string_field(item_props, H_SUBMESH);
+                let texture_opt = string_field(item_props, H_TEXTURE);
+                let material_opt = object_link_field(item_props, H_MATERIAL);
+                eprintln!(
+                    "[textures]   override[{}] props={} submesh={:?} texture={:?} material_link={:?}",
+                    i,
+                    item_props.len(),
+                    submesh_opt,
+                    texture_opt,
+                    material_opt
+                );
+                let Some(submesh) = submesh_opt else {
+                    eprintln!("[textures]   override[{}] skipped — no submesh field", i);
+                    continue;
+                };
+                let material_name = submesh.to_string();
+
+                if let Some(t) = texture_opt {
+                    if !t.is_empty() {
+                        materials.push(MaterialTexture {
+                            material: material_name,
+                            texture_path: t.to_lowercase(),
+                        });
+                        continue;
+                    }
+                }
+
+                if let Some(link_hash) = material_opt {
+                    if let Some(t) = resolve_material_diffuse(trees, link_hash) {
+                        materials.push(MaterialTexture {
+                            material: material_name,
+                            texture_path: t.to_lowercase(),
+                        });
+                    } else {
+                        eprintln!(
+                            "[textures]   override[{}] material link 0x{:08x} did not resolve in any tree",
+                            i, link_hash
+                        );
+                    }
+                }
+            }
+        } else {
+            eprintln!("[textures] materialOverride present but not a container");
+        }
+    } else {
+        eprintln!("[textures] no materialOverride field on skinMeshProperties");
+    }
+
+    (default_texture, materials, shadow_texture)
 }
 
-/// Look up a StaticMaterialDef object by its FNV1a path hash and pull a
-/// diffuse texture path out of its `samplerValues` list. Priority
-/// matches what the regex version did:
-///   1. `Main_Texture` sampler with a `/skin{N}/` path (project-specific)
-///   2. `Diffuse_Texture` sampler with a `/skin{N}/` path
-///   3. Any sampler with a `/skin{N}/` path
-///   4. First `Main_Texture` sampler regardless of path
-///   5. First `Diffuse_Texture` sampler regardless of path
-fn resolve_material_diffuse(tree: &BinTree, mat_path_hash: u32) -> Option<String> {
-    let mat_obj: &BinTreeObject = tree.objects.get(&mat_path_hash)?;
+/// Pull the `skinMeshProperties` embedded/struct props out of an
+/// object's properties map, if any. Centralises the field-name +
+/// embedded-vs-struct unwrap so callers don't duplicate the logic.
+fn skin_mesh_props_of(
+    props: &IndexMap<u32, BinProperty>,
+) -> Option<&IndexMap<u32, BinProperty>> {
+    embedded_props(&props.get(&H_SKIN_MESH_PROPERTIES)?.value)
+}
+
+/// Look up a StaticMaterialDef object by its FNV1a path hash across
+/// the primary BIN + every linked dependency BIN, and pull the
+/// diffuse-style texture path out of its `samplerValues` list.
+///
+/// Priority cascade (`base/` treated as project-specific too —
+/// it's the canonical skin0 folder for many champs like Evelynn):
+///   1. `*main_texture` sampler with a `/skin{N}/` or `/base/` path
+///   2. `*diffuse*` sampler with a `/skin{N}/` or `/base/` path
+///   3. Any sampler with a `/skin{N}/` or `/base/` path
+///   4. First `*main_texture` sampler regardless of path
+///   5. First `*diffuse*` sampler regardless of path
+fn resolve_material_diffuse(trees: &[BinTree], mat_path_hash: u32) -> Option<String> {
+    resolve_material_diffuse_with_shadow(trees, mat_path_hash).map(|(d, _)| d)
+}
+
+/// Same as [`resolve_material_diffuse`] but also returns the shadow /
+/// alt-form texture if the material declares one. Used by Evelynn-style
+/// champs where the same StaticMaterialDef ships two diffuse samplers
+/// (`DiffuseTexture` + `ShadowTexture`) and the engine swaps between
+/// them based on a runtime form switch.
+fn resolve_material_diffuse_with_shadow(
+    trees: &[BinTree],
+    mat_path_hash: u32,
+) -> Option<(String, Option<String>)> {
+    // Search every tree (primary first) for the StaticMaterialDef.
+    let mat_obj: &BinTreeObject = trees
+        .iter()
+        .find_map(|t| t.objects.get(&mat_path_hash))?;
     let samplers = container_items(&mat_obj.properties.get(&H_SAMPLER_VALUES)?.value)?;
 
-    // Collect each sampler's (textureName, texturePath) once so we can
-    // run the priority cascade without redundant tree walks.
     let mut samples: Vec<(String, String)> = Vec::with_capacity(samplers.len());
     for item in samplers {
         let Some(item_props) = embedded_props(item) else { continue };
@@ -256,7 +684,13 @@ fn resolve_material_diffuse(tree: &BinTree, mat_path_hash: u32) -> Option<String
 
     let is_project_specific = |p: &str| {
         let lower = p.to_lowercase();
-        // Same `/skin{digit+}/` heuristic the text parser used.
+        // Either `/skin{digit+}/` or `/base/` counts — `base/` is the
+        // canonical skin0 folder so excluding it makes the priority
+        // cascade fall all the way to the unfiltered pass for champs
+        // like Evelynn whose materials only ever reference `/base/…`.
+        if lower.contains("/base/") {
+            return true;
+        }
         let bytes = lower.as_bytes();
         let mut i = 0;
         while i + 5 < bytes.len() {
@@ -276,34 +710,45 @@ fn resolve_material_diffuse(tree: &BinTree, mat_path_hash: u32) -> Option<String
         false
     };
 
-    // Priorities 1–3 require a project-specific path.
-    for (name, path) in &samples {
-        if name.contains("main_texture") && is_project_specific(path) {
-            return Some(path.clone());
+    let pick_diffuse = || -> Option<String> {
+        for (name, path) in &samples {
+            if name.contains("main_texture") && is_project_specific(path) {
+                return Some(path.clone());
+            }
         }
-    }
-    for (name, path) in &samples {
-        if name.contains("diffuse") && is_project_specific(path) {
-            return Some(path.clone());
+        for (name, path) in &samples {
+            if name.contains("diffuse") && is_project_specific(path) {
+                return Some(path.clone());
+            }
         }
-    }
-    for (_name, path) in &samples {
-        if is_project_specific(path) {
-            return Some(path.clone());
+        for (_name, path) in &samples {
+            if is_project_specific(path) {
+                return Some(path.clone());
+            }
         }
-    }
-    // 4 + 5: fallbacks without the project-specific filter.
-    for (name, path) in &samples {
-        if name.contains("main_texture") {
-            return Some(path.clone());
+        for (name, path) in &samples {
+            if name.contains("main_texture") {
+                return Some(path.clone());
+            }
         }
-    }
-    for (name, path) in &samples {
-        if name.contains("diffuse") {
-            return Some(path.clone());
+        for (name, path) in &samples {
+            if name.contains("diffuse") {
+                return Some(path.clone());
+            }
         }
-    }
-    None
+        None
+    };
+
+    let diffuse = pick_diffuse()?;
+
+    // Shadow alt — anything with `shadow` in the texture name. Skip
+    // the picked diffuse so we don't return the same path twice.
+    let shadow = samples
+        .iter()
+        .find(|(name, path)| name.contains("shadow") && path != &diffuse)
+        .map(|(_, p)| p.clone());
+
+    Some((diffuse, shadow))
 }
 
 // ── Static-mesh (SCB / SCO) texture lookup ─────────────────────────
@@ -464,6 +909,22 @@ fn string_field(props: &IndexMap<u32, BinProperty>, name_hash: u32) -> Option<&s
 fn object_link_field(props: &IndexMap<u32, BinProperty>, name_hash: u32) -> Option<u32> {
     match &props.get(&name_hash)?.value {
         PropertyValueEnum::ObjectLink(link) => Some(link.0),
+        _ => None,
+    }
+}
+
+/// Pull an unsigned-int field as `u32`. Tolerates the common widths
+/// (`u8`/`u16`/`u32`) since chroma `id` shows up as different types
+/// across versions. Wider types (`u64`) truncate; if anyone exceeds
+/// `u32::MAX` we have bigger problems.
+fn u32_field(props: &IndexMap<u32, BinProperty>, name_hash: u32) -> Option<u32> {
+    match &props.get(&name_hash)?.value {
+        PropertyValueEnum::U8(v) => Some(v.0 as u32),
+        PropertyValueEnum::U16(v) => Some(v.0 as u32),
+        PropertyValueEnum::U32(v) => Some(v.0),
+        PropertyValueEnum::I8(v) => Some(v.0 as u32),
+        PropertyValueEnum::I16(v) => Some(v.0 as u32),
+        PropertyValueEnum::I32(v) => Some(v.0 as u32),
         _ => None,
     }
 }

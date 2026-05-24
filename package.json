@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@babylonjs/core": "^9.5.2",
+    "@babylonjs/loaders": "^9.6.2",
     "@babylonjs/materials": "^9.5.2",
     "@monaco-editor/react": "^4.7.0",
     "@tauri-apps/api": "^2",

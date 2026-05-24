@@ -196,7 +196,19 @@ export async function openAnyEditorFile(): Promise<{ path: string; content: stri
   try {
     const filePath = await open({
       filters: [
+        // Default filter — everything Jade can open in the editor, so
+        // the picker isn't locked to .bin out of the gate.
+        {
+          name: 'Supported files',
+          extensions: [
+            'bin', 'py', 'troybin', 'inibin',
+            'txt', 'md', 'json', 'log', 'csv', 'ini', 'cfg',
+            'js', 'jsx', 'ts', 'tsx', 'c', 'h', 'cpp', 'hpp',
+            'rs', 'go', 'lua', 'xml', 'yaml', 'yml', 'toml', 'html', 'css',
+          ],
+        },
         { name: 'Binary',   extensions: ['bin'] },
+        { name: 'Troybin',  extensions: ['troybin', 'inibin'] },
         { name: 'Text',     extensions: ['txt'] },
         { name: 'Markdown', extensions: ['md'] },
         { name: 'JSON',     extensions: ['json'] },
@@ -207,6 +219,13 @@ export async function openAnyEditorFile(): Promise<{ path: string; content: stri
     if (!filePath) return null;
 
     const path = filePath as string;
+    // Troybin sources can't be read into the editor as text — return
+    // an empty content string and let the caller route to the dedicated
+    // troybin tab via path extension.
+    const lower = path.toLowerCase();
+    if (lower.endsWith('.troybin') || lower.endsWith('.inibin')) {
+      return { path, content: '' };
+    }
     if (isBinLikePath(path)) {
       return { path, content: await readBinDirect(path) };
     }

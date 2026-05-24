@@ -739,7 +739,7 @@ export async function loadSavedTheme(
         if (monaco) {
             let activeSyntaxTheme = useCustomSyntax === 'true' ? 'CustomSyntax' : syntaxTheme;
             if (activeSyntaxTheme === 'Default') {
-                activeSyntaxTheme = (activeThemeId === 'Custom') ? 'Dark Emptiness' : activeThemeId;
+                activeSyntaxTheme = (activeThemeId === 'Custom') ? 'Default' : activeThemeId;
             }
 
             applyMonacoTheme(monaco, activeThemeId, activeSyntaxTheme, customSyntaxOpts);

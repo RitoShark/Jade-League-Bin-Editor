@@ -17,6 +17,7 @@
 pub mod anm;
 pub mod anm_compressed;
 pub mod error;
+pub mod fbx;
 pub mod scb;
 pub mod sco;
 pub mod skin_animations;

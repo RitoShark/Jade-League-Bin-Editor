@@ -54,6 +54,7 @@ export default function WordShell() {
                     <WelcomeScreenWithExit
                         visible={welcomeVisible && !s.fileLoading}
                         onOpenFile={s.onOpen}
+                        onNewFile={s.onNew}
                         onContinueWithoutFile={() => s.setWelcomeOverride('hide')}
                         openFileDisabled={s.openFileDisabled}
                         recentFiles={s.recentFiles}
@@ -61,6 +62,11 @@ export default function WordShell() {
                         onMaterialLibrary={s.onMaterialLibrary}
                         onThemes={s.onThemes}
                         onSettings={s.onSettings}
+                        onAbout={s.onAbout}
+                        onNewStudioScene={s.onNewStudioScene}
+                        onOpenFolder={s.onOpenFolder}
+                        onOpenSkinBinAsText={s.onOpenSkinBinAsText}
+                        onSendMeshToStudio={s.onSendMeshToStudio}
                         appIcon={s.appIcon}
                         onMinimize={s.onMinimize}
                         onMaximize={s.onMaximize}

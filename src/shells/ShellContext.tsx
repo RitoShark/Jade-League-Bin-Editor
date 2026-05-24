@@ -2,6 +2,7 @@ import { createContext, useContext, type ReactNode } from 'react';
 import type { Monaco } from '@monaco-editor/react';
 import type * as MonacoType from 'monaco-editor';
 import type { EditorTab } from '../components/TabBar';
+import type { StudioScene } from '../lib/babylon/studioScene';
 
 export type PerfMode = 'on' | 'auto' | 'off';
 export type PerfKey =
@@ -9,6 +10,14 @@ export type PerfKey =
     | 'lineHighlight' | 'folding' | 'stopRenderingLine';
 export type QuartzMode = 'paint' | 'port' | 'bineditor' | 'vfxhub';
 export type ShellVariant = 'vscode' | 'word' | 'visualstudio';
+
+/** Root currently displayed in the File Explorer pane — either a
+ *  folder on disk or a mounted WAD. WAD roots carry the mount id so
+ *  the pane can read entries via `wad_list_entries` and the close
+ *  flow can `wad_close` deterministically. */
+export type FileExplorerRoot =
+    | { kind: 'folder'; path: string }
+    | { kind: 'wad'; mountId: number; wadPath: string; label: string };
 
 export interface TexPopupData {
     top: number;
@@ -80,10 +89,15 @@ export interface ShellContextValue {
      *  panel variants used by the VS shell. */
     textureInsertOpen: boolean;
     materialInsertOpen: boolean;
+    /** Bin Navigation panel — jump shortcuts to animationGraphData /
+     *  ResourceResolver / materialOverride. Floating popup in the
+     *  classic shell, dockable tool window in the VS shell. */
+    binNavOpen: boolean;
     setGeneralEditPanelOpen: (open: boolean) => void;
     setParticlePanelOpen: (open: boolean) => void;
     setTextureInsertOpen: (open: boolean) => void;
     setMaterialInsertOpen: (open: boolean) => void;
+    setBinNavOpen: (open: boolean) => void;
 
     // -- Recent files
     recentFiles: string[];
@@ -103,6 +117,11 @@ export interface ShellContextValue {
     onOpen: () => void;
     onSave: () => void;
     onSaveAs: () => void;
+    /** Save every editor tab with a file path and unsaved changes in
+     *  one shot. Untitled / studio tabs are skipped (they need
+     *  per-tab Save-As / save-scene dialogs). Status bar reports the
+     *  count + any per-file failures. */
+    onSaveAll: () => void;
     onOpenLog: () => void;
 
     // -- Edit operations
@@ -114,6 +133,15 @@ export interface ShellContextValue {
     onFind: () => void;
     onReplace: () => void;
     onCompareFiles: () => void;
+    onScanBinAssets: () => void;
+    /** True when the active editor tab is a scanned-assets report
+     *  (frontmatter `jade-asset-list: true`). Shells use this to
+     *  let the texture-insert button open the visual gallery on
+     *  these reports instead of being disabled like for plain .md. */
+    isAssetListTab: () => boolean;
+    /** Tab ID of an open asset-gallery dialog; null when closed. */
+    assetGalleryTabId: string | null;
+    setAssetGalleryTabId: (tabId: string | null) => void;
     onSelectAll: () => void;
 
     // -- Tools
@@ -124,6 +152,40 @@ export interface ShellContextValue {
     /** Toggles for the dockable material-override insert tools. */
     onTextureInsert: () => void;
     onMaterialInsert: () => void;
+    /** Toggles the Bin Navigation panel. */
+    onBinNav: () => void;
+
+    // -- File Explorer (dockable folder browser — studio shell only)
+    fileExplorerOpen: boolean;
+    setFileExplorerOpen: (open: boolean) => void;
+    /** Current root displayed in the explorer pane. Either a folder
+     *  on disk or a mounted WAD, or null when none has been picked.
+     *  Folder roots persist via localStorage; WAD roots don't (mounts
+     *  are session-bound). */
+    fileExplorerRoot: FileExplorerRoot | null;
+    setFileExplorerRoot: (root: FileExplorerRoot | null) => void;
+    /** Pops the OS folder-picker, sets the chosen folder as the
+     *  explorer root, and opens the pane. */
+    onOpenFolder: () => void;
+    /** Pops the OS file-picker constrained to .wad / .wad.client,
+     *  mounts it, sets the WAD as the explorer root, and opens
+     *  the pane. */
+    onOpenWadInExplorer: () => void;
+    /** Open the "Fetch animations from game" picker for the SKN at
+     *  `sknDiskPath`. App-level handler runs auto-detect first; when
+     *  the result is conclusive it can run the fetch directly without
+     *  ever opening the dialog. Resolved Promise carries the count of
+     *  files dropped (0 when the user cancelled). */
+    openFetchAnimationsDialog: (sknDiskPath: string) => Promise<number>;
+
+    /** Reveal an on-disk file in the File Explorer pane. If the
+     *  file is already inside the current folder root, just expands
+     *  ancestors + selects + scrolls. Otherwise switches the root
+     *  to the file's parent folder and selects the file. Opens the
+     *  pane if it was closed. No-op when the path is null/inside
+     *  a WAD mount (we can't reveal hash-based WAD entries that
+     *  way). */
+    revealInExplorer: (filePath: string) => void;
     onThemes: () => void;
     onSettings: () => void;
     onPreferences: () => void;
@@ -192,6 +254,62 @@ export interface ShellContextValue {
      *  remounts. */
     setupRightEditor: (editor: MonacoType.editor.IStandaloneCodeEditor) => () => void;
 
+    // -- Photo Studio
+    //    Each studio tab mounts a `StudioTab` component, which builds a
+    //    `StudioScene` and registers it here keyed by tab id. The
+    //    studio's dock panels (anim picker, background switcher, photo
+    //    capture) read the active tab's scene off this map and mutate
+    //    it directly — no prop drilling through the shell.
+    onNewStudioScene: () => void;
+    /** Viewer → editor handoff. The Viewer's "Open in BIN editor"
+     *  button calls this with the already-converted BIN text + the
+     *  display name. App.tsx implements it by creating a fresh tab. */
+    onOpenSkinBinAsText: (text: string, displayName: string) => void;
+    /** Viewer → Photo Studio handoff. App.tsx extracts the mesh to
+     *  a temp dir, opens a new studio scene, and loads it. */
+    onSendMeshToStudio: (
+        mountId: number,
+        sknChunkHashHex: string,
+        champion: string,
+        skinNum: number,
+        label: string,
+        shadowForm: boolean,
+        chromaSkinNum: number | null,
+        textureBindings: Array<{ submeshName: string; chunkHashHex: string | null }> | null,
+    ) => void;
+    /** Open a `.studio.json` scene file into a new studio tab. */
+    onStudioOpen: () => void;
+    /** StudioTab calls this on every scene change so the tab's
+     *  `isModified` flag mirrors the scene's dirty state. */
+    notifyStudioDirty: (tabId: string, dirty: boolean) => void;
+    registerStudioScene: (tabId: string, scene: StudioScene) => void;
+    unregisterStudioScene: (tabId: string) => void;
+    /** Resolves the scene handle for `tabId`, or `null` if the tab
+     *  isn't a studio tab or hasn't mounted its canvas yet. */
+    getStudioScene: (tabId: string) => StudioScene | null;
+    /** Per-panel open/closed state. Defaults to true so a fresh studio
+     *  tab shows everything; user can dismiss with the panel's X. */
+    studioAnimOpen: boolean;
+    studioBgOpen: boolean;
+    studioActionsOpen: boolean;
+    studioMeshOpen: boolean;
+    studioObjectsOpen: boolean;
+    studioSpotlightOpen: boolean;
+    setStudioAnimOpen: (open: boolean) => void;
+    setStudioBgOpen: (open: boolean) => void;
+    setStudioActionsOpen: (open: boolean) => void;
+    setStudioMeshOpen: (open: boolean) => void;
+    setStudioObjectsOpen: (open: boolean) => void;
+    setStudioSpotlightOpen: (open: boolean) => void;
+    /** Photo dimensions — owned here so the StudioTab can overlay a
+     *  framing box on the viewport showing what the capture will
+     *  include given the current W/H. The actions panel writes; the
+     *  tab reads. */
+    studioPhotoWidth: number;
+    studioPhotoHeight: number;
+    setStudioPhotoWidth: (n: number) => void;
+    setStudioPhotoHeight: (n: number) => void;
+
     // -- Edit panel callbacks
     handleGeneralEditContentChange: (newContent: string) => void;
     handleScrollToLine: (line: number) => void;
@@ -202,6 +320,12 @@ export interface ShellContextValue {
 
     // -- Markdown preview
     mdPreviewContent: string;
+
+    // -- Compare tab
+    swapCompareTabSides: (tabId: string) => void;
+    comparePicker: { leftId: string; rightId: string } | null;
+    setComparePicker: (next: { leftId: string; rightId: string } | null) => void;
+    openCompareTab: (leftId: string, rightId: string) => void;
 
     // -- Quartz diff
     activeDiffRevisionIndex: number;
@@ -230,6 +354,8 @@ export interface ShellContextValue {
     hasEmitters: () => boolean;
 
     // -- Dialogs
+    showGuideOverlay: boolean;
+    setShowGuideOverlay: (open: boolean) => void;
     showAboutDialog: boolean;
     setShowAboutDialog: (open: boolean) => void;
     showThemesDialog: boolean;

@@ -2,6 +2,8 @@
 pub mod ltk_bridge;
 pub mod converter;
 pub mod jade;
+pub mod repath;
+pub mod asset_scan;
 
 // Re-export ltk-based functions from bridge
 #[allow(unused_imports)]

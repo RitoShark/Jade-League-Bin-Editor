@@ -84,7 +84,7 @@ const fn fnv1a_lower(s: &str) -> u32 {
 
 const H_SKIN_ANIMATION_PROPERTIES: u32 = fnv1a_lower("SkinAnimationProperties");
 const H_ANIMATION_GRAPH_DATA: u32 = fnv1a_lower("AnimationGraphData");
-const H_CLIP_DATA_MAP: u32 = fnv1a_lower("mClipDataMap");
+pub(crate) const H_CLIP_DATA_MAP: u32 = fnv1a_lower("mClipDataMap");
 const H_ANIMATION_RESOURCE_DATA: u32 = fnv1a_lower("mAnimationResourceData");
 const H_ANIMATION_FILE_PATH: u32 = fnv1a_lower("mAnimationFilePath");
 const C_ATOMIC_CLIP_DATA: u32 = fnv1a_lower("AtomicClipData");
@@ -349,7 +349,7 @@ fn scan_chunks_for_anims(
 /// Pulled out so the WAD and disk paths share the same BIN walking
 /// logic + dedup/sort post-processing, differing only in how each
 /// ANM resolves to a fetchable address.
-fn collect_clips<F>(
+pub(crate) fn collect_clips<F>(
     map_entries: &indexmap::IndexMap<
         ltk_meta::value::PropertyValueUnsafeEq,
         PropertyValueEnum,
@@ -412,15 +412,19 @@ where
 pub fn read_skn_animations_disk(skn_disk_path: &str) -> Result<Option<AnimationListing>, String> {
     use super::skin_bin::find_skin_bin_disk;
 
-    let layout = match disk_layout_for_skn(skn_disk_path) {
-        Some(l) => l,
-        None => return Ok(None),
-    };
+    // For bare SKNs (no `assets/` ancestor — e.g. the user dropped
+    // `hwei_base.skn` into Downloads), we skip the BIN-driven walk
+    // entirely and rely on the sibling-folder scan below. The
+    // "Fetch animations from game" button drops ANMs into the same
+    // place the scan reads from, so this is the path that makes it
+    // work outside a mod tree.
+    let layout_opt = disk_layout_for_skn(skn_disk_path);
 
     // BIN-driven path. Each early-return falls through to the
     // animations-folder fallback below so the user still gets
     // *something* playable instead of an empty picker.
     let (bin_clips, bin_path_normalized): (Vec<AnimationClip>, Option<String>) = (|| {
+        let layout = layout_opt.as_ref()?;
         let skin_bin_path = find_skin_bin_disk(skn_disk_path)?;
         let skin_bytes = std::fs::read(&skin_bin_path).ok()?;
         let skin_tree = read_bin_ltk(&skin_bytes).ok()?;
@@ -430,7 +434,7 @@ pub fn read_skn_animations_disk(skn_disk_path: &str) -> Result<Option<AnimationL
         // Try both data/ variants so asymmetric re-paths (asset side
         // carrying a subfolder while data/ stays canonical, or vice
         // versa) still resolve. First existing file wins.
-        let anim_bin_path = data_path_variants(&anim_bin_rel, &layout)
+        let anim_bin_path = data_path_variants(&anim_bin_rel, layout)
             .into_iter()
             .find(|p| std::path::Path::new(p).is_file())?;
         let anim_bytes = std::fs::read(&anim_bin_path).ok()?;
@@ -451,7 +455,7 @@ pub fn read_skn_animations_disk(skn_disk_path: &str) -> Result<Option<AnimationL
             // case-sensitive mount we'd add casing probes here.
             let lower = anm_path.to_lowercase();
             let rel = lower.strip_prefix("assets/").unwrap_or(&lower);
-            for candidate in assets_path_variants(rel, &layout) {
+            for candidate in assets_path_variants(rel, layout) {
                 if std::path::Path::new(&candidate).is_file() {
                     return (None, Some(candidate));
                 }
@@ -561,7 +565,7 @@ fn scan_animations_folder_disk(skn_disk_path: &str) -> Vec<AnimationClip> {
 /// Read one directory and emit an [`AnimationClip`] for every `.anm`
 /// file inside (non-recursive). Missing or unreadable directories
 /// produce an empty list — the caller falls through.
-fn scan_anm_dir(dir: &str) -> Vec<AnimationClip> {
+pub fn scan_anm_dir(dir: &str) -> Vec<AnimationClip> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return Vec::new(),
@@ -603,7 +607,7 @@ fn scan_anm_dir(dir: &str) -> Vec<AnimationClip> {
 /// anywhere in the skin BIN's top-level objects. Returns the link's
 /// u32 hash, which is the `path_hash` of the corresponding entry in
 /// the animation BIN.
-fn find_animation_graph_link(tree: &BinTree) -> Option<u32> {
+pub(crate) fn find_animation_graph_link(tree: &BinTree) -> Option<u32> {
     for obj in tree.objects.values() {
         let sap_value = match obj.properties.get(&H_SKIN_ANIMATION_PROPERTIES) {
             Some(p) => &p.value,
@@ -627,7 +631,7 @@ fn find_animation_graph_link(tree: &BinTree) -> Option<u32> {
 ///   2. If the hash isn't in the table (custom modder content), scan the
 ///      skin BIN's `dependencies` list for a path that ends in
 ///      `/animations/<...>.bin` and use that.
-fn resolve_animation_bin_path(skin_tree: &BinTree, link_hash: u32) -> Option<String> {
+pub(crate) fn resolve_animation_bin_path(skin_tree: &BinTree, link_hash: u32) -> Option<String> {
     if let Some(entry_path) = resolve_clip_name(link_hash) {
         return Some(format!("data/{}.bin", entry_path.to_lowercase()));
     }

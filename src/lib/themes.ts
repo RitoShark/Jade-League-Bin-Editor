@@ -83,7 +83,7 @@ export interface FontLibraryEntry {
 export const THEMES: ThemeColors[] = [
     {
         id: 'Default',
-        displayName: 'Dark Emptiness',
+        displayName: 'Cold Construct',
         windowBg: '#1E1E1E',
         editorBg: '#1E1E1E',
         titleBar: '#252526',
@@ -94,7 +94,7 @@ export const THEMES: ThemeColors[] = [
     },
     {
         id: 'DarkBlue',
-        displayName: 'Blue Guilt',
+        displayName: 'Calm Sea',
         windowBg: '#0F1928',
         editorBg: '#141E2D',
         titleBar: '#19232E',
@@ -105,7 +105,7 @@ export const THEMES: ThemeColors[] = [
     },
     {
         id: 'DarkRed',
-        displayName: 'Red Regret',
+        displayName: 'Crimson Forest',
         windowBg: '#280F14',
         editorBg: '#2D1419',
         titleBar: '#32191E',
@@ -116,7 +116,7 @@ export const THEMES: ThemeColors[] = [
     },
     {
         id: 'LightPink',
-        displayName: 'Pink Remembrance',
+        displayName: 'Sakura Garden',
         windowBg: '#C896B4',
         editorBg: '#D2A5BE',
         titleBar: '#B482A0',
@@ -128,7 +128,7 @@ export const THEMES: ThemeColors[] = [
     },
     {
         id: 'PastelBlue',
-        displayName: 'Primo',
+        displayName: 'Frost Lens',
         windowBg: '#E6F5FF',
         editorBg: '#D2F0FF',
         titleBar: '#FFF0FA',
@@ -139,7 +139,7 @@ export const THEMES: ThemeColors[] = [
     },
     {
         id: 'ForestGreen',
-        displayName: 'Green Nostalgia',
+        displayName: 'Evergreen Hills',
         windowBg: '#142319',
         editorBg: '#192D1E',
         titleBar: '#1E3223',
@@ -161,7 +161,7 @@ export const THEMES: ThemeColors[] = [
     },
     {
         id: 'Void',
-        displayName: 'Purple Void',
+        displayName: 'Deep Space',
         windowBg: '#0A0514',
         editorBg: '#0F0A1E',
         titleBar: '#140F28',
@@ -172,7 +172,7 @@ export const THEMES: ThemeColors[] = [
     },
     {
         id: 'VioletSorrow',
-        displayName: 'Violet Sorrow',
+        displayName: 'Orchid Origami',
         windowBg: '#120A23',
         editorBg: '#160C2A',
         titleBar: '#1C1234',
@@ -183,7 +183,7 @@ export const THEMES: ThemeColors[] = [
     },
     {
         id: 'OrangeBurnout',
-        displayName: 'Orange Burnout',
+        displayName: 'Autumn Ember',
         windowBg: '#230F05',
         editorBg: '#2A1408',
         titleBar: '#32190A',
@@ -194,7 +194,7 @@ export const THEMES: ThemeColors[] = [
     },
     {
         id: 'PurpleGrief',
-        displayName: 'Purple Grief',
+        displayName: 'Stormy Sea',
         windowBg: '#190F1E',
         editorBg: '#1E1423',
         titleBar: '#231928',

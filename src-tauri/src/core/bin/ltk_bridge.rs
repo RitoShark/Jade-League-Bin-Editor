@@ -7,7 +7,7 @@ use std::io::Cursor;
 use std::sync::OnceLock;
 use parking_lot::RwLock;
 use ltk_meta::{BinTree, BinTreeObject};
-use crate::core::hash::get_frogtools_hash_dir;
+use crate::core::hash::{get_frogtools_hash_dir, get_frogtools_text_hash_dir};
 
 /// Maximum allowed BIN file size (50MB - no legitimate BIN should be larger)
 pub const MAX_BIN_SIZE: usize = 50 * 1024 * 1024;
@@ -183,7 +183,8 @@ pub fn tree_to_text_with_hashes<H: ltk_ritobin::HashProvider>(
 pub fn load_bin_hashes() -> HashMapProvider {
     let mut hashes = HashMapProvider::new();
 
-    // Get the shared FrogTools hash directory.
+    // Shared FrogTools hash directory — `.bin` lookups (the
+    // precomputed binary index Quartz writes) live here.
     let hash_dir = match get_frogtools_hash_dir() {
         Ok(p) => p,
         Err(e) => {
@@ -191,11 +192,16 @@ pub fn load_bin_hashes() -> HashMapProvider {
             return hashes;
         }
     };
-
     if !hash_dir.exists() {
         eprintln!("[ltk_bridge] Hash directory does not exist: {}", hash_dir.display());
         return hashes;
     }
+    // Text-hashes subfolder — `.txt` lookups go here so we don't
+    // collide with Quartz's same-named files at the root.
+    let text_dir = match get_frogtools_text_hash_dir() {
+        Ok(p) => p,
+        Err(_) => hash_dir.clone(),
+    };
 
     // Define hash files with their category mappings
     let hash_files = [
@@ -210,7 +216,7 @@ pub fn load_bin_hashes() -> HashMapProvider {
 
     for (base_name, category) in &hash_files {
         let bin_path = hash_dir.join(format!("{}.bin", base_name));
-        let txt_path = hash_dir.join(format!("{}.txt", base_name));
+        let txt_path = text_dir.join(format!("{}.txt", base_name));
 
         // Prefer binary format if available
         if bin_path.exists() {

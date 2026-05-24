@@ -5,6 +5,8 @@ import './SettingsDialog.css';
  *  Extraction settings have somewhere to grow. Only one section today —
  *  "General" — but the layout is built to slot more in (Performance,
  *  Output naming, etc.) without restructuring. */
+export type ExtractMode = 'structure' | 'flat';
+
 interface ExtractionSettingsDialogProps {
     isOpen: boolean;
     onClose: () => void;
@@ -12,6 +14,19 @@ interface ExtractionSettingsDialogProps {
     onUseRenamePatternChange: (next: boolean) => void;
     autoCheckOnClick: boolean;
     onAutoCheckOnClickChange: (next: boolean) => void;
+    extractMode: ExtractMode;
+    onExtractModeChange: (next: ExtractMode) => void;
+    makeWadFolder: boolean;
+    onMakeWadFolderChange: (next: boolean) => void;
+    useDefaultLocation: boolean;
+    onUseDefaultLocationChange: (next: boolean) => void;
+    defaultLocation: string;
+    onPickDefaultLocation: () => void;
+    /** Folder name inserted directly under `assets/` and `data/`
+     *  when the Viewer's (or Extractor's) "repath" checkbox is on.
+     *  Empty string disables repathing even with the checkbox set. */
+    repathPrefix: string;
+    onRepathPrefixChange: (next: string) => void;
 }
 
 type NavSection = 'general';
@@ -46,6 +61,16 @@ const ExtractionSettingsDialog: React.FC<ExtractionSettingsDialogProps> = ({
     onUseRenamePatternChange,
     autoCheckOnClick,
     onAutoCheckOnClickChange,
+    extractMode,
+    onExtractModeChange,
+    makeWadFolder,
+    onMakeWadFolderChange,
+    useDefaultLocation,
+    onUseDefaultLocationChange,
+    defaultLocation,
+    onPickDefaultLocation,
+    repathPrefix,
+    onRepathPrefixChange,
 }) => {
     const [activeSection, setActiveSection] = useState<NavSection>('general');
 
@@ -57,6 +82,84 @@ const ExtractionSettingsDialog: React.FC<ExtractionSettingsDialogProps> = ({
             <p className="settings-section-subtitle">
                 How Jade writes extracted files to disk.
             </p>
+
+            <h3 className="settings-section-title" style={{ fontSize: 16 }}>Output layout</h3>
+            <p className="settings-section-subtitle">
+                Whether extracted files keep the WAD's folder tree or land directly in the target.
+            </p>
+
+            <RadioRow
+                label="Preserve structure"
+                description="Recreate the WAD's full directory tree on disk — the default Quartz-style layout."
+                checked={extractMode === 'structure'}
+                groupName="extract-mode"
+                onSelect={() => onExtractModeChange('structure')}
+            />
+            <RadioRow
+                label="Per file (flat)"
+                description={
+                    <>
+                        Drop every extracted file straight into the target folder with no
+                        sub-directories. Best when picking just one or two files. Files with
+                        the same name overwrite each other.
+                    </>
+                }
+                checked={extractMode === 'flat'}
+                groupName="extract-mode"
+                onSelect={() => onExtractModeChange('flat')}
+            />
+
+            <ToggleRow
+                label="Create WAD-name folder"
+                description={
+                    <>
+                        Nest the structure under a folder named after the WAD — e.g.
+                        <code>aatrox/assets/…</code>. Disable to extract the WAD's top-level
+                        folders straight into the target. Only applies when preserving structure.
+                    </>
+                }
+                checked={makeWadFolder}
+                disabled={extractMode !== 'structure'}
+                onChange={onMakeWadFolderChange}
+            />
+
+            <div className="settings-row">
+                <div className="settings-row-header">
+                    <span className="settings-row-title">Default extraction location</span>
+                    <label className="settings-toggle">
+                        <input
+                            type="checkbox"
+                            checked={useDefaultLocation}
+                            onChange={e => onUseDefaultLocationChange(e.target.checked)}
+                        />
+                        <span className="settings-toggle-track" />
+                    </label>
+                </div>
+                <p className="settings-row-desc">
+                    Skip the "pick a folder" dialog and extract straight to a fixed location.
+                    Defaults to <code>Documents/Jade Exports</code>.
+                </p>
+                {useDefaultLocation && (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                        <input
+                            className="settings-select"
+                            type="text"
+                            readOnly
+                            value={defaultLocation}
+                            placeholder="No location set"
+                            title={defaultLocation}
+                            style={{ flex: 1, minWidth: 0 }}
+                        />
+                        <button
+                            type="button"
+                            className="action-button gray"
+                            onClick={onPickDefaultLocation}
+                        >
+                            Change…
+                        </button>
+                    </div>
+                )}
+            </div>
 
             <ToggleRow
                 label="Fast overwrite"
@@ -85,6 +188,29 @@ const ExtractionSettingsDialog: React.FC<ExtractionSettingsDialogProps> = ({
                 checked={autoCheckOnClick}
                 onChange={onAutoCheckOnClickChange}
             />
+
+            <div className="settings-row">
+                <div className="settings-row-header">
+                    <span className="settings-row-title">Repath prefix</span>
+                </div>
+                <p className="settings-row-desc">
+                    When the "Re-path" checkbox is on, this folder name gets inserted directly
+                    under <code>assets/</code> and <code>data/</code> in the extracted tree — e.g.
+                    <code>assets/{repathPrefix || 'jade'}/characters/…</code>. BIN strings are
+                    rewritten in lockstep so the resulting mod stays consistent.
+                </p>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                    <input
+                        className="settings-select"
+                        type="text"
+                        value={repathPrefix}
+                        onChange={e => onRepathPrefixChange(e.target.value)}
+                        placeholder="jade"
+                        spellCheck={false}
+                        style={{ flex: 1, minWidth: 0 }}
+                    />
+                </div>
+            </div>
         </>
     );
 
@@ -155,6 +281,36 @@ function ToggleRow({
                         checked={checked}
                         disabled={disabled}
                         onChange={e => onChange(e.target.checked)}
+                    />
+                    <span className="settings-toggle-track" />
+                </label>
+            </div>
+            {description && <p className="settings-row-desc">{description}</p>}
+        </div>
+    );
+}
+
+/** Radio-style row — same chrome as ToggleRow but participates in a
+ *  named radio group so the options are mutually exclusive. */
+function RadioRow({
+    label, description, checked, groupName, onSelect,
+}: {
+    label: string;
+    description?: React.ReactNode;
+    checked: boolean;
+    groupName: string;
+    onSelect: () => void;
+}) {
+    return (
+        <div className="settings-row">
+            <div className="settings-row-header">
+                <span className="settings-row-title">{label}</span>
+                <label className="settings-toggle">
+                    <input
+                        type="radio"
+                        name={groupName}
+                        checked={checked}
+                        onChange={onSelect}
                     />
                     <span className="settings-toggle-track" />
                 </label>

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
-use crate::core::hash::get_frogtools_hash_dir;
+use crate::core::hash::get_frogtools_text_hash_dir;
 use crate::core::bin::{get_cached_bin_hashes, are_hashes_loaded, estimate_ltk_hash_memory, reload_cached_bin_hashes};
 use crate::core::bin::jade::hash_manager as jade_hashes;
 
@@ -119,8 +119,14 @@ fn emit_hash_progress(
 }
 
 fn get_hash_dir() -> Result<PathBuf, String> {
+    // Jade-isolated text-hash directory (`<frogtools-root>/text/`).
+    // Lives one level deeper than the shared FrogTools hashes folder
+    // so our `hashes.*.txt` downloads don't clobber the same-named
+    // files Quartz writes into the root. See
+    // `core/hash/mod.rs::get_frogtools_text_hash_dir` for the
+    // one-time migration that moves any pre-split downloads over.
     // Shared Quartz/Jade hash directory
-    get_frogtools_hash_dir().map_err(|e| e.to_string())
+    get_frogtools_text_hash_dir().map_err(|e| e.to_string())
 }
 
 fn read_hashes_meta(hash_dir: &PathBuf) -> HashMetaFile {

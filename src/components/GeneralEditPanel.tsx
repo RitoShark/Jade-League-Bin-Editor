@@ -64,9 +64,15 @@ export default function GeneralEditPanel({
   const [dialogSuggestions, setDialogSuggestions] = useState<{ material: string; texture: string }[]>([]);
   const [dialogTextures, setDialogTextures] = useState<string[]>([]);
 
+  // rigPoseModifierData state — this block sometimes ships in champion
+  // bins and can cause in-game issues, so we offer a one-click strip.
+  const [rigPoseModifierExists, setRigPoseModifierExists] = useState(false);
+  const [rigPoseModifierStatus, setRigPoseModifierStatus] = useState('');
+
   // Section collapse state
   const [skinScaleCollapsed, setSkinScaleCollapsed] = useState(false);
   const [materialOverrideCollapsed, setMaterialOverrideCollapsed] = useState(false);
+  const [rigPoseModifierCollapsed, setRigPoseModifierCollapsed] = useState(false);
   
   const isUpdatingFromPercentage = useRef(false);
 
@@ -186,6 +192,20 @@ export default function GeneralEditPanel({
     const hasMaterialOverride = editorContent.includes('materialOverride:');
     setMaterialOverrideExists(hasMaterialOverride);
     setMaterialOverrideStatus(hasMaterialOverride ? 'materialOverride detected' : 'materialOverride not found');
+  }, [editorContent]);
+
+  // Check if a rigPoseModifierData block is present
+  const checkRigPoseModifier = useCallback(() => {
+    if (!editorContent) {
+      setRigPoseModifierStatus('No file loaded');
+      setRigPoseModifierExists(false);
+      return;
+    }
+    const has = /rigposemodifierdata/i.test(editorContent);
+    setRigPoseModifierExists(has);
+    setRigPoseModifierStatus(
+      has ? 'rigPoseModifierData detected' : 'rigPoseModifierData not found'
+    );
   }, [editorContent]);
 
   // Extract texture path for default value
@@ -417,6 +437,7 @@ export default function GeneralEditPanel({
     parseTimeoutRef.current = setTimeout(() => {
       loadSkinScaleValue();
       checkMaterialOverride();
+      checkRigPoseModifier();
       setDefaultTexturePath(extractTexturePath());
       lastParsedContentRef.current = contentKey;
     }, 300);
@@ -427,7 +448,7 @@ export default function GeneralEditPanel({
         parseTimeoutRef.current = null;
       }
     };
-  }, [isOpen, editorContent, loadSkinScaleValue, checkMaterialOverride, extractTexturePath]);
+  }, [isOpen, editorContent, loadSkinScaleValue, checkMaterialOverride, checkRigPoseModifier, extractTexturePath]);
 
   // Handle percentage change
   const handlePercentageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -613,6 +634,79 @@ export default function GeneralEditPanel({
       setMaterialOverrideExists(true);
     } else {
       setMaterialOverrideStatus('skinMeshProperties not found');
+    }
+  };
+
+  // Remove every rigPoseModifierData block from the file. Detection
+  // mirrors skinScale/materialOverride: scan for the key name (case-
+  // insensitive), then strip the key line through the matching closing
+  // brace via brace-depth tracking — so the whole `rigPoseModifierData
+  // { ... }` block goes in one click, however deeply nested its body.
+  const removeRigPoseModifierData = () => {
+    if (!editorContent) {
+      setRigPoseModifierStatus('No file loaded');
+      return;
+    }
+
+    const lines = editorContent.split('\n');
+    const out: string[] = [];
+    let removedBlocks = 0;
+    let i = 0;
+
+    while (i < lines.length) {
+      if (!lines[i].toLowerCase().includes('rigposemodifierdata')) {
+        out.push(lines[i]);
+        i++;
+        continue;
+      }
+
+      // Found the key line. Locate the first '{' at or after it — the
+      // brace usually sits on the key line itself, but tolerate it
+      // landing on a following line.
+      let openLine = i;
+      while (openLine < lines.length && !lines[openLine].includes('{')) {
+        openLine++;
+      }
+      if (openLine >= lines.length) {
+        // No opening brace anywhere after the key — defensively leave
+        // the line untouched rather than eating the rest of the file.
+        out.push(lines[i]);
+        i++;
+        continue;
+      }
+
+      // Track brace depth from the opening line to its matching close.
+      let depth = 0;
+      let endLine = -1;
+      for (let k = openLine; k < lines.length && endLine === -1; k++) {
+        for (const c of lines[k]) {
+          if (c === '{') depth++;
+          else if (c === '}') {
+            depth--;
+            if (depth === 0) { endLine = k; break; }
+          }
+        }
+      }
+      if (endLine === -1) {
+        // Unbalanced braces — bail on this block, keep the line as-is.
+        out.push(lines[i]);
+        i++;
+        continue;
+      }
+
+      // Drop lines i..endLine inclusive (key line through closing brace).
+      i = endLine + 1;
+      removedBlocks++;
+    }
+
+    if (removedBlocks > 0) {
+      onContentChange(out.join('\n'));
+      setRigPoseModifierStatus(
+        `Removed rigPoseModifierData (${removedBlocks} block${removedBlocks === 1 ? '' : 's'})`
+      );
+      setRigPoseModifierExists(false);
+    } else {
+      setRigPoseModifierStatus('rigPoseModifierData not found');
     }
   };
 
@@ -1116,7 +1210,11 @@ export default function GeneralEditPanel({
             </button>
           </div>
           <div className="gep-divider" />
-          
+
+          {/* Sections wrapper — stacks vertically in the floating popup,
+              but flows the sections side-by-side (flex-wrap) when docked
+              so wide dock panes use their horizontal space. */}
+          <div className="gep-sections">
           {/* SkinScale Section */}
           <div className="gep-section">
             <div 
@@ -1235,6 +1333,39 @@ export default function GeneralEditPanel({
                 )}
               </div>
             )}
+          </div>
+
+          <div className="gep-divider" />
+
+          {/* Remove rigPoseModifierData Section */}
+          <div className="gep-section">
+            <div
+              className="gep-section-header"
+              onClick={() => setRigPoseModifierCollapsed(!rigPoseModifierCollapsed)}
+            >
+              <span className={`gep-collapse-icon ${rigPoseModifierCollapsed ? 'collapsed' : ''}`} />
+              <span className="gep-section-title">Rig Pose Modifier</span>
+            </div>
+
+            {!rigPoseModifierCollapsed && (
+              <div className="gep-section-content">
+                <div className="gep-row">
+                  <button
+                    className="gep-btn gep-btn-full"
+                    onClick={removeRigPoseModifierData}
+                    disabled={!rigPoseModifierExists}
+                    title="Remove the rigPoseModifierData block from this file"
+                  >
+                    <span className="gep-icon-remove" />
+                    <span>Remove rigPoseModifierData</span>
+                  </button>
+                </div>
+                {rigPoseModifierStatus && (
+                  <div className="gep-status">{rigPoseModifierStatus}</div>
+                )}
+              </div>
+            )}
+          </div>
           </div>
         </div>
       </div>

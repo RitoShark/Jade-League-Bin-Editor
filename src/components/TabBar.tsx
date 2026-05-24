@@ -14,8 +14,8 @@ export interface EditorTab {
      *  tab bar shows every tab regardless of this field). Drag-and-
      *  drop between the two tab bars flips this field. */
     pane?: 'left' | 'right';
-    /** 'editor' (default), 'texture-preview', 'quartz-diff', or 'markdown-preview' */
-    tabType?: 'editor' | 'texture-preview' | 'quartz-diff' | 'markdown-preview';
+    /** 'editor' (default), 'texture-preview', 'quartz-diff', 'compare', 'markdown-preview', or 'studio' */
+    tabType?: 'editor' | 'texture-preview' | 'quartz-diff' | 'compare' | 'markdown-preview' | 'studio';
     /** For markdown-preview tabs: id of the source editor tab whose content we render. */
     sourceTabId?: string;
     /** For texture-preview tabs: decoded PNG data URL */
@@ -41,6 +41,10 @@ export interface EditorTab {
     diffModifiedContent?: string;
     /** For quartz-diff tabs: entry review status */
     diffStatus?: 'pending' | 'accepted' | 'rejected';
+    /** For compare tabs: source tab id rendered on the left of the diff. */
+    compareLeftTabId?: string;
+    /** For compare tabs: source tab id rendered on the right of the diff. */
+    compareRightTabId?: string;
 }
 
 interface TabBarProps {
@@ -70,6 +74,10 @@ interface TabBarProps {
      *  the OTHER tab bar onto this one. The TabBar handles the drag/
      *  drop events; this just delivers the result. */
     onDropTabIntoPane?: (tabId: string, pane: 'left' | 'right') => void;
+    /** Right-click → "Reveal in Explorer" handler. Only shown for
+     *  tabs that have an on-disk file path. When omitted the
+     *  context menu falls back to the plain stub. */
+    onRevealInExplorer?: (filePath: string) => void;
 }
 
 export default function TabBar({
@@ -85,7 +93,18 @@ export default function TabBar({
     splitDisabled,
     paneFilter,
     onDropTabIntoPane,
+    onRevealInExplorer,
 }: TabBarProps) {
+    const [tabCtx, setTabCtx] = React.useState<{ x: number; y: number; tab: EditorTab } | null>(null);
+    React.useEffect(() => {
+        if (!tabCtx) return;
+        const onDown = (ev: MouseEvent) => {
+            const t = ev.target as HTMLElement;
+            if (!t.closest('.tab-ctx-menu')) setTabCtx(null);
+        };
+        window.addEventListener('mousedown', onDown);
+        return () => window.removeEventListener('mousedown', onDown);
+    }, [tabCtx]);
     // Apply the pane filter — tabs with no `pane` field count as
     // left, mirroring how the App side treats them. Without this
     // filter (single-pane mode) every tab is shown regardless.
@@ -113,9 +132,13 @@ export default function TabBar({
         }
     };
 
-    const handleContextMenu = (e: React.MouseEvent, _tab: EditorTab) => {
+    const handleContextMenu = (e: React.MouseEvent, tab: EditorTab) => {
         e.preventDefault();
-        // Could add context menu here in the future
+        // Only show the menu when at least one action would be
+        // available — currently that's "Reveal in Explorer" gated
+        // on the tab having a filePath.
+        if (!tab.filePath || !onRevealInExplorer) return;
+        setTabCtx({ x: e.clientX, y: e.clientY, tab });
     };
 
     const handleCloseClick = (e: React.MouseEvent, tabId: string) => {
@@ -341,6 +364,17 @@ export default function TabBar({
                     )}
                 </div>
             )}
+            {tabCtx && tabCtx.tab.filePath && onRevealInExplorer && (
+                <div
+                    className="tab-ctx-menu"
+                    style={{ position: 'fixed', left: tabCtx.x, top: tabCtx.y }}
+                >
+                    <button onClick={() => {
+                        onRevealInExplorer(tabCtx.tab.filePath!);
+                        setTabCtx(null);
+                    }}>Reveal in Explorer</button>
+                </div>
+            )}
         </div>
     );
 }
@@ -401,6 +435,23 @@ interface QuartzDiffTabParams {
     status?: 'pending' | 'accepted' | 'rejected';
 }
 
+// Create a Photo Studio tab. No file backing — the scene state lives in
+// memory until the user explicitly saves it via Save As (.studio.json).
+let studioCounter = 0;
+export function createStudioTab(): EditorTab {
+    studioCounter += 1;
+    const n = studioCounter;
+    return {
+        id: generateTabId(),
+        filePath: null,
+        fileName: n === 1 ? 'Studio' : `Studio ${n}`,
+        content: '',
+        isModified: false,
+        isPinned: false,
+        tabType: 'studio',
+    };
+}
+
 // Create a markdown-preview tab tied to an existing markdown editor tab.
 export function createMarkdownPreviewTab(sourceTabId: string, sourceFileName: string): EditorTab {
     return {
@@ -412,6 +463,28 @@ export function createMarkdownPreviewTab(sourceTabId: string, sourceFileName: st
         isPinned: false,
         tabType: 'markdown-preview',
         sourceTabId,
+    };
+}
+
+// Build a generic "Compare Files" diff tab tied to two existing editor
+// tabs. Content is read live from the source tabs at render time so
+// saves/edits flow into the diff without needing to re-open it.
+export function createCompareTab(
+    leftTabId: string,
+    leftName: string,
+    rightTabId: string,
+    rightName: string,
+): EditorTab {
+    return {
+        id: generateTabId(),
+        filePath: null,
+        fileName: `Compare: ${leftName} ⇄ ${rightName}`,
+        content: '',
+        isModified: false,
+        isPinned: false,
+        tabType: 'compare',
+        compareLeftTabId: leftTabId,
+        compareRightTabId: rightTabId,
     };
 }
 

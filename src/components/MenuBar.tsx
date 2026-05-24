@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Map as MapIcon } from 'lucide-react';
 import './MenuBar.css';
 import { SearchIcon, ReplaceIcon, EditIcon, SparklesIcon, ChevronRightIcon } from './Icons';
 
@@ -7,14 +8,24 @@ interface MenuBarProps {
     replaceActive?: boolean;
     generalEditActive?: boolean;
     particlePanelActive?: boolean;
+    binNavActive?: boolean;
     /** When true, the Particle Editing button is greyed out and ignores
      *  clicks. Used to disable the feature for non-bin/.py tabs (markdown,
      *  json, etc.) where it would have nothing to operate on. */
     particleDisabled?: boolean;
     onNewFile: () => void;
+    onNewStudioScene?: () => void;
+    onOpenStudioScene?: () => void;
     onOpenFile: () => void;
+    /** Open a folder root in the File Explorer pane. Optional — when
+     *  omitted (legacy callers) the menu item is hidden. */
+    onOpenFolder?: () => void;
+    /** Pick a `.wad` / `.wad.client` to mount as the explorer root. */
+    onOpenWadInExplorer?: () => void;
     onSaveFile: () => void;
     onSaveFileAs: () => void;
+    /** Save every editor tab with unsaved changes in one shot. */
+    onSaveAll: () => void;
     onOpenLog: () => void;
     onExit: () => void;
     onUndo: () => void;
@@ -25,9 +36,13 @@ interface MenuBarProps {
     onFind: () => void;
     onReplace: () => void;
     onCompareFiles: () => void;
+    onScanBinAssets: () => void;
+    /** True when the active tab isn't a BIN — disables Scan BIN Assets. */
+    scanBinAssetsDisabled?: boolean;
     onSelectAll: () => void;
     onGeneralEdit: () => void;
     onParticlePanel: () => void;
+    onBinNav: () => void;
     onThemes: () => void;
     onSettings: () => void;
     onAbout: () => void;
@@ -43,11 +58,17 @@ export default function MenuBar({
     replaceActive = false,
     generalEditActive = false,
     particlePanelActive = false,
+    binNavActive = false,
     particleDisabled = false,
     onNewFile,
+    onNewStudioScene,
+    onOpenStudioScene,
     onOpenFile,
+    onOpenFolder,
+    onOpenWadInExplorer,
     onSaveFile,
     onSaveFileAs,
+    onSaveAll,
     onOpenLog,
     onExit,
     onUndo,
@@ -58,9 +79,12 @@ export default function MenuBar({
     onFind,
     onReplace,
     onCompareFiles,
+    onScanBinAssets,
+    scanBinAssetsDisabled = false,
     onSelectAll,
     onGeneralEdit,
     onParticlePanel,
+    onBinNav,
     onThemes,
     onSettings,
     onAbout,
@@ -101,9 +125,29 @@ export default function MenuBar({
                             <span>New</span>
                             <span className="shortcut">Ctrl+N</span>
                         </button>
+                        {onNewStudioScene && (
+                            <button className="menu-option" onClick={() => handleMenuClick(onNewStudioScene)}>
+                                <span>New Studio Scene</span>
+                            </button>
+                        )}
+                        {onOpenStudioScene && (
+                            <button className="menu-option" onClick={() => handleMenuClick(onOpenStudioScene)}>
+                                <span>Open Studio Scene...</span>
+                            </button>
+                        )}
                         <button className="menu-option" onClick={() => handleMenuClick(onOpenFile)} disabled={openFileDisabled}>
                             <span>Open...</span>
                         </button>
+                        {onOpenFolder && (
+                            <button className="menu-option" onClick={() => handleMenuClick(onOpenFolder)}>
+                                <span>Open Folder...</span>
+                            </button>
+                        )}
+                        {onOpenWadInExplorer && (
+                            <button className="menu-option" onClick={() => handleMenuClick(onOpenWadInExplorer)}>
+                                <span>Open WAD in Explorer...</span>
+                            </button>
+                        )}
 
                         <div className="menu-item-with-submenu">
                             <button className="menu-option">
@@ -138,6 +182,10 @@ export default function MenuBar({
                         <button className="menu-option" onClick={() => handleMenuClick(onSaveFileAs)}>
                             <span>Save As...</span>
                             <span className="shortcut">Ctrl+Shift+S</span>
+                        </button>
+                        <button className="menu-option" onClick={() => handleMenuClick(onSaveAll)}>
+                            <span>Save All</span>
+                            <span className="shortcut">Ctrl+Alt+S</span>
                         </button>
                         <div className="menu-separator" />
                         <button className="menu-option" onClick={() => handleMenuClick(onOpenLog)}>
@@ -200,6 +248,14 @@ export default function MenuBar({
                             <span>Compare Files...</span>
                             <span className="shortcut">Ctrl+D</span>
                         </button>
+                        <button
+                            className="menu-option"
+                            onClick={() => handleMenuClick(onScanBinAssets)}
+                            disabled={scanBinAssetsDisabled}
+                            title={scanBinAssetsDisabled ? 'Open a BIN file to scan its assets' : 'Walk this BIN and its linked BINs, list every referenced asset'}
+                        >
+                            <span>Scan BIN Assets...</span>
+                        </button>
                         <div className="menu-separator" />
                         <button className="menu-option" onClick={() => handleMenuClick(onSelectAll)}>
                             <span>Select All</span>
@@ -231,6 +287,14 @@ export default function MenuBar({
                         >
                             <span>Particle Editing...</span>
                             <span className="shortcut">Ctrl+P</span>
+                        </button>
+                        <button
+                            className="menu-option"
+                            onClick={() => handleMenuClick(onBinNav)}
+                            disabled={particleDisabled}
+                            title={particleDisabled ? 'Bin Navigation only works on .bin or .py files' : undefined}
+                        >
+                            <span>Bin Navigation...</span>
                         </button>
                         <div className="menu-separator" />
                         <button className="menu-option" onClick={() => handleMenuClick(onMaterialLibrary)}>
@@ -283,6 +347,14 @@ export default function MenuBar({
                 disabled={particleDisabled}
             >
                 <SparklesIcon size={16} />
+            </button>
+            <button
+                className={`menu-icon-btn ${binNavActive ? 'active' : ''}`}
+                title={particleDisabled ? 'Bin Navigation only works on .bin or .py files' : 'Bin Navigation'}
+                onClick={onBinNav}
+                disabled={particleDisabled}
+            >
+                <MapIcon size={16} />
             </button>
         </div>
     );

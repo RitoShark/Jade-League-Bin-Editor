@@ -20,12 +20,19 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "**"
+        ]
+      }
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "budlibu500",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -39,6 +46,20 @@
         "installMode": "currentUser",
         "installerHooks": "nsis/hooks.nsi"
       }
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": ["bin"],
+        "name": "Jade League Bin File",
+        "description": "League of Legends BIN data file",
+        "role": "Editor"
+      },
+      {
+        "ext": ["troybin", "inibin"],
+        "name": "Jade Troybin Source",
+        "description": "Legacy League VFX source file",
+        "role": "Editor"
+      }
+    ]
   }
 }

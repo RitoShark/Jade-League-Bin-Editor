@@ -43,7 +43,22 @@ pub struct DecodedTexture {
 }
 
 /// Sniff the magic bytes and dispatch to the right header parser.
-/// `DDS ` (LE 0x20534444) → DDS, anything else → TEX.
+///
+/// Order of detection:
+/// 1. `DDS ` magic → DDS (compressed BCn texture)
+/// 2. Common raster magics (PNG, JPEG, etc.) → image crate
+/// 3. Fall through to TEX (Riot's bespoke format) — must be last
+///    because TEX has no fixed magic and our parser does its own
+///    structural validation.
+///
+/// The image-crate branch covers FBX / PBR-pack textures the studio
+/// imports alongside SKN models. Routing them through Rust gives the
+/// JS-side pipeline ONE upload path (`RawTexture.CreateRGBATexture`
+/// with `invertY = true`), which matches `meshBuilder.ts`'s
+/// SKN-UV V-flip and the studio's procedural / DDS / TEX textures.
+/// Mixing in the webview's native `new Texture(url, …)` loader for
+/// PNGs flipped the V at a different stage and produced
+/// misregistered sampling on League mod SKNs with PNG diffuse maps.
 pub fn decode_auto(bytes: &[u8]) -> Result<DecodedTexture> {
     if bytes.len() < 4 {
         return Err(MeshError::Malformed(format!(
@@ -52,10 +67,58 @@ pub fn decode_auto(bytes: &[u8]) -> Result<DecodedTexture> {
         )));
     }
     if &bytes[..4] == b"DDS " {
-        decode_dds(bytes)
-    } else {
-        decode_tex(bytes)
+        return decode_dds(bytes);
     }
+    if looks_like_raster(bytes) {
+        return decode_raster(bytes);
+    }
+    decode_tex(bytes)
+}
+
+/// Magic-byte sniff for the formats the `image` crate is feature-
+/// gated to read in our Cargo.toml. Cheap to check; avoids invoking
+/// `image::load_from_memory` on TEX files (which would error since
+/// TEX has no known image-crate header).
+fn looks_like_raster(b: &[u8]) -> bool {
+    if b.len() >= 8 && &b[..8] == b"\x89PNG\r\n\x1a\n" { return true; }            // PNG
+    if b.len() >= 3 && b[..3] == [0xFF, 0xD8, 0xFF] { return true; }                // JPEG
+    if b.len() >= 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WEBP" { return true; } // WEBP
+    if b.len() >= 2 && b[0] == 0x42 && b[1] == 0x4D { return true; }                // BMP
+    // TGA has no magic — sniff by the rare-but-valid header layout
+    // (image type byte in [0,1,2,3,9,10,11], bit-depth in {8,16,24,32}).
+    // ColorMap-type byte is 0 or 1. This pattern reliably rejects DDS
+    // (which we caught above) and TEX (its first byte is 'T' = 0x54
+    // which doesn't match a valid TGA color-map type).
+    if b.len() >= 18 {
+        let cmap = b[1];
+        let img_type = b[2];
+        let depth = b[16];
+        if cmap <= 1
+            && matches!(img_type, 0 | 1 | 2 | 3 | 9 | 10 | 11)
+            && matches!(depth, 8 | 16 | 24 | 32)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn decode_raster(bytes: &[u8]) -> Result<DecodedTexture> {
+    let dynamic = image::load_from_memory(bytes)
+        .map_err(|e| MeshError::Malformed(format!("raster decode: {e}")))?;
+    let rgba = dynamic.to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    let pixels = rgba.into_raw();
+    // Scan for any sub-255 alpha so the JS side picks the right
+    // material transparency mode — same shape DDS/TEX uses.
+    let has_alpha = pixels.chunks_exact(4).any(|p| p[3] < 255);
+    Ok(DecodedTexture {
+        width: w,
+        height: h,
+        format: "RASTER (image crate)".to_string(),
+        rgba: pixels,
+        has_alpha,
+    })
 }
 
 // ── Riot TEX ────────────────────────────────────────────────────────
@@ -65,6 +128,16 @@ pub fn decode_auto(bytes: &[u8]) -> Result<DecodedTexture> {
 mod tex_format {
     pub const DXT1: u8 = 10;
     pub const DXT5: u8 = 12;
+    /// BC7 sRGB — UI atlases + modern champion atlases. Added by
+    /// Riot in patch 16.10. Decoded via `texture2ddecoder` since
+    /// `texpresso` doesn't ship a BC7 implementation.
+    pub const BC7: u8 = 13;
+    /// BC5 (signed normal maps). Added by Riot in patch 16.10 —
+    /// used for water surfaces in Map11 and increasingly for
+    /// champion normal maps. We treat SNORM/UNORM identically for
+    /// preview purposes; the slight color shift is invisible at
+    /// thumbnail size.
+    pub const BC5: u8 = 14;
     pub const BGRA8: u8 = 20;
     // ETC1=1, ETC2_EAC=2, ETC2=3 — explicitly unsupported here.
 }
@@ -121,6 +194,25 @@ pub fn decode_tex(bytes: &[u8]) -> Result<DecodedTexture> {
             16,
             has_mipmaps,
             "DXT5",
+        ),
+        // BC5 + BC7 mirror DXT1/DXT5's mip layout (smallest first,
+        // largest last) but the block decode goes through
+        // `texture2ddecoder` since `texpresso` doesn't cover them.
+        tex_format::BC5 => decode_t2d_bc_with_optional_mipmaps(
+            pixel_data,
+            width,
+            height,
+            T2dBc::Bc5,
+            has_mipmaps,
+            "BC5",
+        ),
+        tex_format::BC7 => decode_t2d_bc_with_optional_mipmaps(
+            pixel_data,
+            width,
+            height,
+            T2dBc::Bc7,
+            has_mipmaps,
+            "BC7",
         ),
         tex_format::BGRA8 => {
             // Uncompressed; one byte per channel. With mipmaps the
@@ -289,6 +381,151 @@ fn decode_bc(
 /// mip0` (smallest first, largest last), so we have to skip past
 /// every smaller mip to land on mip0. DDS stores mip0 first so its
 /// path doesn't need this.
+/// BC formats handled via `texture2ddecoder` (BC5 + BC7). Block size
+/// is 16 bytes for both — same as DXT5/BC3 — so the mipmap tail
+/// arithmetic in `decode_t2d_bc_with_optional_mipmaps` matches.
+#[derive(Copy, Clone)]
+enum T2dBc { Bc5, Bc7 }
+
+impl T2dBc {
+    fn bytes_per_block(self) -> usize { 16 }
+}
+
+/// Decode a single BC5/BC7 mip via `texture2ddecoder` into our standard
+/// `Vec<u8>` RGBA8 buffer.
+///
+/// Channel layout caveats — the underlying crate's output is two
+/// different shapes depending on format:
+///
+/// **BC7** writes proper RGBA into each u32 (`r | g<<8 | b<<16 | a<<24`),
+/// so a `to_le_bytes()` flatten gives our standard `[R, G, B, A]`.
+///
+/// **BC5** stores only two channels (red+green, the X+Y of a normal
+/// vector). `texture2ddecoder` writes the first stored channel into
+/// the u32's `B` slot (channel 2) and the second into `G` (channel 1),
+/// leaving R=0 and A=0. We:
+///   1. Remap the two stored bytes from B/G into R/G slots so the
+///      preview shows the normal-map orientation paint.net / Photoshop
+///      / Substance show by default.
+///   2. Apply SNORM→UNORM display remap (`byte ^ 0x80`) because Riot
+///      ships TEX format 14 as `BC5_SNORM`: raw `0x00` means axis-zero
+///      and should render as mid-gray, not black.
+///   3. Reconstruct B from the unit-length normal: `z = √(1 − x² − y²)`,
+///      with x/y derived from the SNORM-remapped bytes. For tangent-
+///      space normals this gives the canonical blue-dominant look.
+///   4. Force alpha to 255 — BC5 has no alpha channel and leaving it
+///      at 0 (the crate's default) makes the preview transparent.
+fn decode_t2d_bc_mip(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    fmt: T2dBc,
+    fmt_name: &str,
+) -> Result<Vec<u8>> {
+    let mip_size = bc_mip_size_at_level(width, height, 0, fmt.bytes_per_block());
+    if data.len() < mip_size {
+        return Err(MeshError::Malformed(format!(
+            "{} mip truncated: have {}, need {}",
+            fmt_name, data.len(), mip_size
+        )));
+    }
+    let pixel_count = (width as usize) * (height as usize);
+    let mut pixels: Vec<u32> = vec![0; pixel_count];
+    let res = match fmt {
+        T2dBc::Bc5 => texture2ddecoder::decode_bc5(
+            &data[..mip_size], width as usize, height as usize, &mut pixels,
+        ),
+        T2dBc::Bc7 => texture2ddecoder::decode_bc7(
+            &data[..mip_size], width as usize, height as usize, &mut pixels,
+        ),
+    };
+    res.map_err(|e| MeshError::Malformed(format!("{fmt_name} decode: {e}")))?;
+    let mut rgba: Vec<u8> = Vec::with_capacity(pixel_count * 4);
+    match fmt {
+        T2dBc::Bc7 => {
+            // texture2ddecoder packs pixels via
+            // `color(r,g,b,a) = u32::from_le_bytes([b,g,r,a])`, so
+            // `to_le_bytes()` returns memory order [B, G, R, A].
+            // Pushing that straight into the RGBA buffer swapped R↔B
+            // and tinted everything wrong (reds rendered as blues).
+            // Re-pack into true R,G,B,A here.
+            for px in &pixels {
+                let b = (*px & 0xff) as u8;
+                let g = ((*px >> 8) & 0xff) as u8;
+                let r = ((*px >> 16) & 0xff) as u8;
+                let a = ((*px >> 24) & 0xff) as u8;
+                rgba.extend_from_slice(&[r, g, b, a]);
+            }
+        }
+        T2dBc::Bc5 => {
+            // Empirically Riot's TEX format 14 is BC5 *UNORM* (despite
+            // the GitHub issue tagging it as SNORM): raw bytes are
+            // already centered at 128 for axis-zero and read straight
+            // through to display, no XOR remap needed. The earlier
+            // SNORM remap inverted the data and produced harsh
+            // extremes that didn't match paint.net's "looks like a
+            // normal map" output.
+            for px in &pixels {
+                let stored_y = ((*px >> 8) & 0xff) as u8;   // crate's G slot
+                let stored_x = ((*px >> 16) & 0xff) as u8;  // crate's B slot
+                let r = stored_x;
+                let g = stored_y;
+                // Reconstruct Z from the unit-length tangent normal:
+                //   x = 2r − 1, y = 2g − 1 (in [-1, 1])
+                //   z = √(1 − x² − y²) ∈ [0, 1]
+                // Display Z uses the SAME centered remap that paint.net /
+                // Photoshop / Substance use for normal-map preview —
+                // `(z + 1) * 127.5` — so the byte sits in [127, 255]
+                // and matches how the rest of the world renders these.
+                // Flat normals (z = 1) ⇒ pure blue 255, slopes ⇒ down
+                // toward 127. Using `z * 255` (which drops to 0 on
+                // steep slopes) made the image visibly darker than
+                // paint.net's display of the same file.
+                let xf = (r as f32 - 127.5) / 127.5;
+                let yf = (g as f32 - 127.5) / 127.5;
+                let zf = (1.0 - xf * xf - yf * yf).max(0.0).sqrt();
+                let b = ((zf + 1.0) * 127.5).clamp(0.0, 255.0) as u8;
+                rgba.extend_from_slice(&[r, g, b, 255]);
+            }
+        }
+    }
+    Ok(rgba)
+}
+
+fn decode_t2d_bc_with_optional_mipmaps(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    fmt: T2dBc,
+    has_mipmaps: bool,
+    fmt_name: &str,
+) -> Result<DecodedTexture> {
+    let bytes_per_block = fmt.bytes_per_block();
+    let mip0_offset = if has_mipmaps {
+        let total: usize = (0..mipmap_count(width, height))
+            .map(|i| bc_mip_size_at_level(width, height, i, bytes_per_block))
+            .sum();
+        if data.len() < total {
+            return Err(MeshError::Malformed(format!(
+                "{fmt_name} mipmap chain truncated: have {}, need {}",
+                data.len(), total
+            )));
+        }
+        total - bc_mip_size_at_level(width, height, 0, bytes_per_block)
+    } else {
+        0
+    };
+    let rgba = decode_t2d_bc_mip(&data[mip0_offset..], width, height, fmt, fmt_name)?;
+    let has_alpha = scan_has_alpha(&rgba);
+    Ok(DecodedTexture {
+        width,
+        height,
+        format: fmt_name.into(),
+        rgba,
+        has_alpha,
+    })
+}
+
 fn decode_bc_with_optional_mipmaps(
     data: &[u8],
     width: u32,

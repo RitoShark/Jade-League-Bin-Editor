@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 use std::env;
 use tauri::Manager;
+use twox_hash::XxHash64;
 
 const ICON_PREF_KEY: &str = "custom_icon_path";
 const BUILTIN_ICON_KEY: &str = "builtin_icon";
@@ -1626,45 +1628,85 @@ pub async fn set_preference(_app: tauri::AppHandle, key: String, value: String) 
 }
 
 const RECENT_FILES_KEY: &str = "recent_files";
-const MAX_RECENT_FILES: usize = 10;
+const RECENT_FILES_LIMIT_KEY: &str = "RecentFilesLimit";
+const DEFAULT_RECENT_FILES_LIMIT: usize = 10;
+const MIN_RECENT_FILES_LIMIT: usize = 1;
+const MAX_RECENT_FILES_LIMIT: usize = 100;
+
+/// Read the user-configured cap for recent files. Falls back to the
+/// default (10) if the preference is unset / malformed, and clamps
+/// into a sane range so a typo can't disable history or blow up the
+/// menu.
+fn recent_files_limit() -> usize {
+    let Ok(config_dir) = get_config_dir() else {
+        return DEFAULT_RECENT_FILES_LIMIT;
+    };
+    let pref_file = config_dir.join("preferences.json");
+    if !pref_file.exists() {
+        return DEFAULT_RECENT_FILES_LIMIT;
+    }
+    let Ok(content) = fs::read_to_string(&pref_file) else {
+        return DEFAULT_RECENT_FILES_LIMIT;
+    };
+    let Ok(prefs) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return DEFAULT_RECENT_FILES_LIMIT;
+    };
+    let raw = prefs
+        .get(RECENT_FILES_LIMIT_KEY)
+        .and_then(|v| v.as_str().and_then(|s| s.parse::<usize>().ok()).or_else(|| v.as_u64().map(|u| u as usize)))
+        .unwrap_or(DEFAULT_RECENT_FILES_LIMIT);
+    raw.clamp(MIN_RECENT_FILES_LIMIT, MAX_RECENT_FILES_LIMIT)
+}
+
+/// Raw on-disk list, untruncated. Internal helper so `add_recent_file`
+/// can mutate the full stored history rather than the display-clamped
+/// view that `get_recent_files` returns.
+fn read_recent_files_raw() -> Vec<String> {
+    let Ok(config_dir) = get_config_dir() else { return Vec::new() };
+    let pref_file = config_dir.join("preferences.json");
+    if !pref_file.exists() {
+        return Vec::new();
+    }
+    let Ok(content) = fs::read_to_string(&pref_file) else { return Vec::new() };
+    let prefs: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Warning: Failed to parse preferences.json when reading recent files: {}", e);
+            return Vec::new();
+        }
+    };
+    prefs.get(RECENT_FILES_KEY)
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default()
+}
 
 #[tauri::command]
 pub async fn get_recent_files(_app: tauri::AppHandle) -> Result<Vec<String>, String> {
-    let config_dir = get_config_dir()?;
-    let pref_file = config_dir.join("preferences.json");
-    
-    if !pref_file.exists() {
-        return Ok(Vec::new());
-    }
-    
-    let content = fs::read_to_string(&pref_file)
-        .map_err(|e| format!("Failed to read preferences: {}", e))?;
-    
-    let prefs: serde_json::Value = match serde_json::from_str(&content) {
-        Ok(parsed) => parsed,
-        Err(e) => {
-            eprintln!("Warning: Failed to parse preferences.json when getting recent files: {}. Returning empty list.", e);
-            return Ok(Vec::new());
-        }
-    };
-    
-    Ok(prefs.get(RECENT_FILES_KEY)
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default())
+    let mut all = read_recent_files_raw();
+    // Display-cap to the user's configured limit but keep the on-disk
+    // list at the hard cap — that way reducing the limit doesn't
+    // destroy history; bumping it back later restores entries.
+    all.truncate(recent_files_limit());
+    Ok(all)
 }
 
 #[tauri::command]
 pub async fn add_recent_file(app: tauri::AppHandle, path: String) -> Result<Vec<String>, String> {
-    let mut recent = get_recent_files(app.clone()).await?;
-    
+    // Read the FULL stored list (not the display-clamped one) so a
+    // small user limit doesn't progressively erase history.
+    let mut recent = read_recent_files_raw();
+    let _ = &app; // touched on save below
+
     // Remove if already exists
     recent.retain(|p| p.to_lowercase() != path.to_lowercase());
     
     // Add to front
     recent.insert(0, path);
     
-    // Keep only MAX_RECENT_FILES
-    recent.truncate(MAX_RECENT_FILES);
+    // Keep up to the hard cap on disk so reducing the user-facing
+    // limit doesn't destroy history. `get_recent_files` clamps the
+    // returned list to the user's configured limit at read time.
+    recent.truncate(MAX_RECENT_FILES_LIMIT);
     
     // Save back
     let config_dir = get_config_dir()?;
@@ -1696,8 +1738,12 @@ pub async fn add_recent_file(app: tauri::AppHandle, path: String) -> Result<Vec<
     
     write_file_atomic(&pref_file, &content)
         .map_err(|e| format!("Failed to write preferences: {}", e))?;
-    
-    Ok(recent)
+
+    // Return the display-clamped list (same shape `get_recent_files`
+    // returns) so the caller's UI binds to the visible subset.
+    let mut visible = recent;
+    visible.truncate(recent_files_limit());
+    Ok(visible)
 }
 
 /// Return the last-modified timestamp (milliseconds since Unix epoch) for a file.
@@ -2170,9 +2216,179 @@ pub async fn write_text_file(path: String, content: String) -> Result<(), String
         .map_err(|e| format!("Failed to write text file '{}': {}", path, e))
 }
 
+/// Write raw bytes to disk. Used by the Photo Studio's screenshot export
+/// to land a PNG/JPEG at a user-picked path without going through the
+/// text-write path (which would mangle bytes on UTF-8 conversion).
+#[tauri::command]
+pub async fn write_bytes_file(path: String, bytes: Vec<u8>) -> Result<(), String> {
+    fs::write(&path, bytes)
+        .map_err(|e| format!("Failed to write file '{}': {}", path, e))
+}
+
 #[tauri::command]
 pub async fn consume_interop_handoff(_app: tauri::AppHandle) -> Result<Vec<InteropHandoff>, String> {
     consume_interop_messages("jade")
+}
+
+// ── Photo Studio background library ──────────────────────────────────
+//
+// The studio's Background panel lets users keep a small rolling
+// library of imported background images (capped at 5). They live in
+// `%APPDATA%/FrogTools/jade-studio/backgrounds/` so they persist
+// across projects / app restarts. We store the raw image bytes under
+// a content-derived filename so re-importing the same image is a
+// no-op rather than a duplicate.
+
+const STUDIO_BG_MAX: usize = 5;
+
+#[derive(Serialize)]
+pub struct StudioBackgroundEntry {
+    /// Absolute path on disk — the frontend runs it through
+    /// `convertFileSrc` to display the card thumbnail and to feed the
+    /// Babylon background layer.
+    pub path: String,
+    /// Bare filename, shown as the card label.
+    pub name: String,
+    /// File mtime in epoch millis — the frontend sorts newest-first
+    /// and it's also what the rolling-cap eviction uses.
+    pub modified_ms: u64,
+}
+
+fn studio_bg_dir() -> Result<PathBuf, String> {
+    let appdata = std::env::var("APPDATA")
+        .map_err(|_| "APPDATA environment variable not found".to_string())?;
+    let dir = PathBuf::from(appdata)
+        .join("FrogTools")
+        .join("jade-studio")
+        .join("backgrounds");
+    if !dir.exists() {
+        fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create studio background dir: {}", e))?;
+    }
+    Ok(dir)
+}
+
+fn studio_bg_is_image(name: &str) -> bool {
+    let lc = name.to_ascii_lowercase();
+    [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"]
+        .iter()
+        .any(|ext| lc.ends_with(ext))
+}
+
+fn mtime_ms(path: &Path) -> u64 {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// List the user's saved studio backgrounds, newest first.
+#[tauri::command]
+pub async fn studio_list_backgrounds() -> Result<Vec<StudioBackgroundEntry>, String> {
+    let dir = studio_bg_dir()?;
+    let mut out: Vec<StudioBackgroundEntry> = Vec::new();
+    if let Ok(rd) = fs::read_dir(&dir) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if !p.is_file() {
+                continue;
+            }
+            let name = match p.file_name().and_then(|n| n.to_str()) {
+                Some(n) if studio_bg_is_image(n) => n.to_string(),
+                _ => continue,
+            };
+            out.push(StudioBackgroundEntry {
+                path: p.to_string_lossy().into_owned(),
+                name,
+                modified_ms: mtime_ms(&p),
+            });
+        }
+    }
+    out.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
+    Ok(out)
+}
+
+/// Import an image into the studio background library. Copies the
+/// source file into the library folder, evicts the oldest entries to
+/// keep the count at `STUDIO_BG_MAX`, and returns the refreshed list.
+#[tauri::command]
+pub async fn studio_import_background(
+    src_path: String,
+) -> Result<Vec<StudioBackgroundEntry>, String> {
+    let dir = studio_bg_dir()?;
+    let src = PathBuf::from(&src_path);
+    let file_name = src
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Source path has no filename".to_string())?;
+    if !studio_bg_is_image(file_name) {
+        return Err(format!("Not a supported image type: {}", file_name));
+    }
+    let bytes = fs::read(&src).map_err(|e| format!("Failed to read '{}': {}", src_path, e))?;
+
+    // Content-addressed filename so re-importing the same image
+    // doesn't pile up duplicates. Keep the original extension for the
+    // asset-protocol loader's format sniff.
+    let mut hasher = XxHash64::with_seed(0);
+    hasher.write(&bytes);
+    let hash = hasher.finish();
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_ascii_lowercase();
+    let dst = dir.join(format!("bg_{:016x}.{}", hash, ext));
+    if !dst.exists() {
+        fs::write(&dst, &bytes)
+            .map_err(|e| format!("Failed to save background: {}", e))?;
+    } else {
+        // Already in the library — bump its mtime so the rolling-cap
+        // eviction treats this as the most-recently-used entry.
+        let _ = filetime_touch(&dst);
+    }
+
+    // Rolling-cap eviction: keep only the newest STUDIO_BG_MAX.
+    let mut all = studio_list_backgrounds().await?;
+    if all.len() > STUDIO_BG_MAX {
+        for stale in all.drain(STUDIO_BG_MAX..) {
+            let _ = fs::remove_file(&stale.path);
+        }
+    }
+    studio_list_backgrounds().await
+}
+
+/// Remove one background from the library by absolute path. Guards
+/// against deleting anything outside the library folder.
+#[tauri::command]
+pub async fn studio_delete_background(
+    path: String,
+) -> Result<Vec<StudioBackgroundEntry>, String> {
+    let dir = studio_bg_dir()?;
+    let target = PathBuf::from(&path);
+    // Containment check — only delete files that actually live in the
+    // library folder so a bad path can't nuke arbitrary files.
+    let in_library = target
+        .parent()
+        .map(|p| p == dir.as_path())
+        .unwrap_or(false);
+    if !in_library {
+        return Err("Refusing to delete a file outside the background library".to_string());
+    }
+    if target.is_file() {
+        fs::remove_file(&target)
+            .map_err(|e| format!("Failed to delete background: {}", e))?;
+    }
+    studio_list_backgrounds().await
+}
+
+/// Best-effort mtime bump (re-write the file's own bytes back) — used
+/// to mark a re-imported background as most-recently-used without a
+/// `filetime` crate dependency.
+fn filetime_touch(path: &Path) -> std::io::Result<()> {
+    let bytes = fs::read(path)?;
+    fs::write(path, bytes)
 }
 
 /// Guard against rapid duplicate spawns.  Stores the last time we spawned

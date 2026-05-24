@@ -1,0 +1,175 @@
+/* Fetch-animations picker. Lives at app-modal z-index so the studio
+   keeps painting beneath it. The styling intentionally mirrors the
+   delete-confirm + extract dialogs so the user reads it as part of
+   the same family. */
+
+.fa-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2200;
+}
+
+.fa-modal {
+    background: var(--panel-bg, #1c1f26);
+    border: 1px solid var(--border-color, #3a3e46);
+    border-radius: 6px;
+    padding: 20px 24px;
+    width: min(460px, calc(100vw - 32px));
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    color: var(--text-color, #cbd0d8);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.fa-modal-title {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.fa-modal-hint {
+    font-size: 11px;
+    color: var(--muted-color, #9aa0a8);
+    font-style: italic;
+}
+
+.fa-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.fa-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+}
+
+.fa-field-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.fa-label {
+    color: var(--text-color, #cbd0d8);
+}
+
+.fa-input {
+    background: var(--input-bg, #11141a);
+    color: var(--text-color, #e2e6ec);
+    border: 1px solid var(--border-color, #2e333c);
+    border-radius: 3px;
+    padding: 4px 8px;
+    font: inherit;
+    outline: none;
+}
+
+.fa-input:focus {
+    border-color: var(--jade-accent, #5aa9d6);
+}
+
+.fa-input-num {
+    width: 70px;
+    text-align: right;
+}
+
+.fa-hint {
+    font-size: 11px;
+    color: var(--muted-color, #9aa0a8);
+}
+
+.fa-champion-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 4px;
+    background: var(--input-bg, #11141a);
+    border: 1px solid var(--border-color, #2e333c);
+    border-radius: 3px;
+}
+
+.fa-champion-pill {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-color, #cbd0d8);
+    padding: 4px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    cursor: pointer;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fa-champion-pill:hover {
+    background: var(--hover-bg, rgba(255, 255, 255, 0.06));
+}
+
+.fa-champion-selected {
+    background: var(--selection-bg, rgba(90, 169, 214, 0.22));
+    border-color: var(--jade-accent, #5aa9d6);
+}
+
+.fa-empty {
+    grid-column: 1 / -1;
+    padding: 10px;
+    text-align: center;
+    color: var(--muted-color, #9aa0a8);
+    font-size: 11px;
+}
+
+.fa-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.fa-btn {
+    background: var(--btn-bg, #2a2e36);
+    color: var(--text-color, #cbd0d8);
+    border: 1px solid var(--border-color, #3a3e46);
+    border-radius: 3px;
+    padding: 5px 14px;
+    font: inherit;
+    cursor: pointer;
+}
+
+.fa-btn:hover {
+    background: var(--hover-bg, rgba(255, 255, 255, 0.08));
+}
+
+.fa-btn-primary {
+    background: var(--jade-accent, #5aa9d6);
+    color: #0f1115;
+    border-color: transparent;
+}
+
+.fa-btn-primary:hover {
+    filter: brightness(1.1);
+}
+
+.fa-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+[data-ui-mode="modern"] .fa-modal {
+    border-radius: 8px;
+}
+
+[data-ui-mode="modern"] .fa-input,
+[data-ui-mode="modern"] .fa-btn,
+[data-ui-mode="modern"] .fa-champion-pill,
+[data-ui-mode="modern"] .fa-champion-grid {
+    border-radius: 6px;
+}

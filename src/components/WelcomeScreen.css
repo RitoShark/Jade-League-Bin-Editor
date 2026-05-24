@@ -76,12 +76,56 @@ body.welcome-active .title-bar > * {
     height: 100%;
     -webkit-app-region: drag;
 }
+/* Brand-as-button variant: the same row, but interactive — clicking
+   opens the editor (an alt entry point for users who don't want to
+   reach the bottom-of-rail "Editor" button at high DPI). */
+.welcome-titlebar-brand-btn {
+    background: transparent;
+    border: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+    transition: background-color 140ms ease;
+}
+.welcome-titlebar-brand-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+}
+.welcome-titlebar-brand-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+/* Icon + label cross-fade. The default + hover variants occupy the
+   exact same slot via grid stacking; opacity swaps on parent hover. */
+.welcome-titlebar-icon-stack,
+.welcome-titlebar-name-stack {
+    display: inline-grid;
+    grid-template-areas: 'stack';
+    align-items: center;
+}
+.welcome-titlebar-icon-stack > *,
+.welcome-titlebar-name-stack > * {
+    grid-area: stack;
+    transition: opacity 140ms ease, transform 140ms ease;
+}
 .welcome-titlebar-icon {
     width: 18px;
     height: 18px;
     object-fit: contain;
     border-radius: 3px;
     display: block;
+}
+.welcome-titlebar-icon-hover {
+    width: 18px;
+    height: 18px;
+    color: var(--text-color, #cccccc);
+    opacity: 0;
+}
+.welcome-titlebar-brand-btn:hover:not(:disabled) .welcome-titlebar-icon-default {
+    opacity: 0;
+}
+.welcome-titlebar-brand-btn:hover:not(:disabled) .welcome-titlebar-icon-hover {
+    opacity: 1;
 }
 .welcome-titlebar-name {
     display: inline-flex;
@@ -95,6 +139,16 @@ body.welcome-active .title-bar > * {
        optically high). */
     line-height: 1;
     height: 100%;
+}
+.welcome-titlebar-name-hover {
+    opacity: 0;
+    color: var(--text-color, #cccccc);
+}
+.welcome-titlebar-brand-btn:hover:not(:disabled) .welcome-titlebar-name-default {
+    opacity: 0;
+}
+.welcome-titlebar-brand-btn:hover:not(:disabled) .welcome-titlebar-name-hover {
+    opacity: 1;
 }
 .welcome-titlebar-spacer {
     flex: 1 1 auto;
@@ -320,40 +374,54 @@ body.welcome-active .title-bar > * {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    justify-content: flex-end;
-    gap: 6px;
+    justify-content: flex-start;
+    gap: 4px;
     width: 196px;
-    height: 156px;
-    padding: 18px 16px 16px;
+    height: 150px;
+    padding: 16px;
     background: var(--window-bg, #252526);
     border: 1px solid var(--border-color, #3e3e42);
-    border-radius: 6px;
+    border-radius: 8px;
     color: var(--text-color, #cccccc);
     cursor: pointer;
-    transition: border-color 0.12s, transform 0.08s;
+    transition: border-color 0.12s, transform 0.1s ease, box-shadow 0.12s, background 0.12s;
     text-align: left;
     font-family: inherit;
 }
 .welcome-tile:hover:not(:disabled) {
     border-color: var(--jade-accent, #007acc);
-    transform: translateY(-1px);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
 }
 .welcome-tile:disabled {
     opacity: 0.45;
     cursor: not-allowed;
 }
+/* Icon sits in a rounded, accent-tinted plate pinned to the top-left of
+   the card. Keeps the eye anchored at the corner instead of floating. */
 .welcome-tile-icon {
     display: inline-flex;
-    margin-bottom: 6px;
-    /* Inherits currentColor from the tile so icons stay
-       monochrome — white on dark themes, black on light. */
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin-bottom: 12px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 14%, transparent);
+    /* Icon keeps the tile's base text color — only the plate behind it
+       is accent-tinted. */
+    transition: background 0.12s;
+}
+.welcome-tile:hover:not(:disabled) .welcome-tile-icon {
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 22%, transparent);
 }
 .welcome-tile-label {
     font-size: 15px;
-    font-weight: 500;
+    font-weight: 600;
 }
 .welcome-tile-sub {
     font-size: 12px;
+    line-height: 1.35;
     color: var(--text-muted, #8a8a8a);
 }
 
@@ -888,6 +956,152 @@ body.welcome-active .title-bar > * {
 .welcome-extract-search-input:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+/* Search-scope toggle (current folder vs whole WAD). Off state is
+   muted; on state uses the accent so the broadened scope is visible
+   at a glance. */
+.welcome-search-scope-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    margin-right: -4px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-muted, #8a8a8a);
+    cursor: pointer;
+    flex: 0 0 auto;
+    transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+
+.welcome-search-scope-btn:hover:not(:disabled) {
+    color: var(--text-color, #cccccc);
+    border-color: var(--border-color, #3e3e42);
+}
+
+.welcome-search-scope-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.welcome-search-scope-btn.on {
+    color: var(--jade-accent);
+    border-color: var(--jade-accent);
+    background: color-mix(in srgb, var(--jade-accent) 12%, transparent);
+}
+
+[data-ui-mode="modern"] .welcome-search-scope-btn:hover {
+    border-color: var(--modern-glass-border);
+}
+
+[data-ui-mode="modern"] .welcome-search-scope-btn.on {
+    background: var(--modern-accent-15);
+    border-color: var(--modern-accent);
+}
+
+/* Right-click context menu for extract rows. Visual vocabulary
+   matches the editor's context menu (clean panel + soft separators +
+   accent-tinted hover), but with a leading lucide icon column for
+   each action so the eye lands on the intent before the text. */
+.welcome-extract-ctxmenu {
+    position: fixed;
+    min-width: 220px;
+    /* Match the editor's context menu vocabulary — same surface
+       (`--window-bg`), same softer border-radius (`--border-radius`,
+       4px default), same vertical padding-only layout. */
+    background: var(--window-bg, #1e1e1e);
+    border: 1px solid var(--border-color, #454545);
+    border-radius: var(--border-radius, 4px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    padding: 4px 0;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    font-size: 12.5px;
+}
+
+/* Modern UI: keep the same `--window-bg` surface as classic — the
+ *  editor's context menu doesn't override its surface either, and the
+ *  user wants both menus to look identical. We only soften the
+ *  border + shadow to match the modern glass vocabulary. */
+[data-ui-mode="modern"] .welcome-extract-ctxmenu {
+    border-color: var(--modern-glass-border);
+    box-shadow: var(--modern-glass-shadow);
+}
+
+.welcome-extract-ctxitem {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    /* Square-edged rows (no border-radius) mirror the editor menu —
+       hover band runs full-width across the panel instead of being
+       inset by rounded corners. */
+    padding: 5px 16px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: var(--text-color, #d4d4d4);
+    font: inherit;
+    cursor: pointer;
+    transition: background-color 90ms ease, color 90ms ease;
+}
+
+.welcome-extract-ctxitem:hover:not(:disabled) {
+    background: var(--selected-tab-bg, #007acc);
+    color: #ffffff;
+}
+
+[data-ui-mode="modern"] .welcome-extract-ctxitem:hover:not(:disabled) {
+    background: var(--modern-accent-25);
+}
+
+.welcome-extract-ctxitem:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.welcome-extract-ctxicon {
+    flex: 0 0 auto;
+    color: var(--text-muted, #8a8a8a);
+}
+
+.welcome-extract-ctxitem:hover .welcome-extract-ctxicon {
+    /* Inherit the hovered row's white text color so the icon doesn't
+       fight the highlight — matches the editor menu's behavior. */
+    color: rgba(255, 255, 255, 0.92);
+}
+
+.welcome-extract-ctxlabel {
+    flex: 1 1 auto;
+    white-space: nowrap;
+}
+
+.welcome-extract-ctxsep {
+    height: 1px;
+    margin: 4px 8px;
+    background: var(--border-color, #454545);
+}
+
+[data-ui-mode="modern"] .welcome-extract-ctxsep {
+    background: var(--modern-glass-border);
+}
+
+/* "Copied" / "Copy failed" text inside the toolbar copy-button — pops
+   in place of the icon for a short beat after the click. */
+.welcome-tool-btn-text {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--jade-accent);
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+    padding: 0 4px;
 }
 
 /* Header + scrollable list combined into a table-style container.
@@ -1585,6 +1799,12 @@ body.welcome-active .title-bar > * {
     box-shadow: 0 0 0 1px var(--modern-accent-20),
                 0 6px 18px var(--modern-accent-10);
 }
+[data-ui-mode="modern"] .welcome-tile-icon {
+    background: var(--modern-accent-10, rgba(255, 255, 255, 0.05));
+}
+[data-ui-mode="modern"] .welcome-tile:hover:not(:disabled) .welcome-tile-icon {
+    background: var(--modern-accent-20, rgba(255, 255, 255, 0.08));
+}
 [data-ui-mode="modern"] .welcome-source-row.active {
     background: var(--modern-accent-10);
     border-radius: 4px;
@@ -1772,4 +1992,322 @@ body.welcome-active .title-bar > * {
     opacity: 0.7;
     font-family: var(--mono-font, ui-monospace, SFMono-Regular, monospace);
     font-size: 12px;
+}
+
+/* ── "Extract as skin mod" modal ─────────────────────────────────
+   Per-extract popup that runs the BIN-walk extraction (same flow
+   the Viewer's Export skin files button uses) with the user's
+   chosen Repath / Merge / HUD / SFX-VO / VO toggles. Modal because
+   the choices are batch-specific and we don't want them living on
+   the always-visible actions strip alongside the basic Extract
+   selected / Extract WAD buttons. */
+.welcome-skinmod-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9500;
+    animation: welcome-skinmod-fade 0.14s ease-out;
+}
+
+@keyframes welcome-skinmod-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.welcome-skinmod-modal {
+    width: 460px;
+    max-width: 92vw;
+    max-height: 90vh;
+    overflow-y: auto;
+    background: var(--window-bg);
+    border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
+    border-radius: 8px;
+    box-shadow:
+        0 20px 50px rgba(0, 0, 0, 0.5),
+        inset 0 1px 0 color-mix(in srgb, var(--text-color) 5%, transparent);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    animation: welcome-skinmod-pop 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes welcome-skinmod-pop {
+    from { transform: translateY(6px) scale(0.985); opacity: 0; }
+    to   { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.welcome-skinmod-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.welcome-skinmod-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.welcome-skinmod-close {
+    width: 24px;
+    height: 24px;
+    background: transparent;
+    border: none;
+    color: var(--text-color);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 3px;
+    opacity: 0.55;
+    transition: background 0.12s ease, opacity 0.12s ease;
+}
+
+.welcome-skinmod-close:hover {
+    background: color-mix(in srgb, #ef4444 14%, transparent);
+    color: #ef4444;
+    opacity: 1;
+}
+
+.welcome-skinmod-skn {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 10px;
+    background: color-mix(in srgb, var(--text-color) 4%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text-color) 10%, transparent);
+    border-radius: 4px;
+    margin-bottom: 4px;
+    overflow: hidden;
+}
+
+.welcome-skinmod-skn-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: color-mix(in srgb, var(--text-color) 55%, transparent);
+    flex-shrink: 0;
+}
+
+.welcome-skinmod-skn-path {
+    font-family: var(--mono-font, ui-monospace, SFMono-Regular, monospace);
+    font-size: 11px;
+    color: var(--text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+}
+
+.welcome-skinmod-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.12s ease;
+    user-select: none;
+}
+
+.welcome-skinmod-row:hover {
+    background: color-mix(in srgb, var(--text-color) 4%, transparent);
+}
+
+.welcome-skinmod-row input[type='checkbox'] {
+    margin-top: 2px;
+    accent-color: var(--jade-accent, #4a9870);
+    flex-shrink: 0;
+}
+
+.welcome-skinmod-row-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    line-height: 1.35;
+    min-width: 0;
+}
+
+.welcome-skinmod-row-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-color);
+}
+
+.welcome-skinmod-row-sub {
+    font-size: 11px;
+    color: color-mix(in srgb, var(--text-color) 55%, transparent);
+}
+
+.welcome-skinmod-row.on .welcome-skinmod-row-title {
+    color: var(--jade-accent, #4a9870);
+}
+
+.welcome-skinmod-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 6px;
+    padding-top: 10px;
+    border-top: 1px solid color-mix(in srgb, var(--text-color) 8%, transparent);
+}
+
+.welcome-skinmod-cancel,
+.welcome-skinmod-go {
+    padding: 7px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 4px;
+    border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
+    background: color-mix(in srgb, var(--text-color) 4%, transparent);
+    color: var(--text-color);
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease;
+    font-family: inherit;
+}
+
+.welcome-skinmod-cancel:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--text-color) 10%, transparent);
+}
+
+.welcome-skinmod-go {
+    background: var(--jade-accent, #4a9870);
+    border-color: var(--jade-accent, #4a9870);
+    color: #fff;
+}
+
+.welcome-skinmod-go:hover:not(:disabled) {
+    filter: brightness(1.12);
+}
+
+.welcome-skinmod-cancel:disabled,
+.welcome-skinmod-go:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* ── skinmod modal: new pieces (dropdown header + option cards) ── */
+
+.welcome-skinmod-section-label {
+    margin-top: 2px;
+    font-size: 10px;
+    font-weight: 700;
+    color: color-mix(in srgb, var(--text-color) 55%, transparent);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.welcome-skinmod-section-label-mt {
+    margin-top: 8px;
+}
+
+.welcome-skinmod-dropdown {
+    width: 100%;
+}
+
+.welcome-skinmod-skn-path {
+    font-family: var(--mono-font, ui-monospace, SFMono-Regular, monospace);
+    font-size: 10.5px;
+    color: color-mix(in srgb, var(--text-color) 60%, transparent);
+    margin-top: 2px;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.welcome-skinmod-options {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 4px;
+}
+
+/* Option "card" — each toggle is a full-width row with an icon
+   tile on the left, title + sub stacked in the middle, and a small
+   pill on the right that reflects on/off state. Whole row is the
+   click target so users don't have to aim for a tiny checkbox. */
+.welcome-skinmod-opt {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--text-color) 3%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text-color) 9%, transparent);
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    color: var(--text-color);
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.welcome-skinmod-opt:hover {
+    background: color-mix(in srgb, var(--text-color) 6%, transparent);
+}
+
+.welcome-skinmod-opt.on {
+    background: color-mix(in srgb, var(--jade-accent, #4a9870) 12%, transparent);
+    border-color: color-mix(in srgb, var(--jade-accent, #4a9870) 50%, transparent);
+}
+
+.welcome-skinmod-opt-icon {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background: color-mix(in srgb, var(--text-color) 7%, transparent);
+    border-radius: 5px;
+    color: color-mix(in srgb, var(--text-color) 75%, transparent);
+    transition: background 0.12s ease, color 0.12s ease;
+}
+
+.welcome-skinmod-opt.on .welcome-skinmod-opt-icon {
+    background: color-mix(in srgb, var(--jade-accent, #4a9870) 22%, transparent);
+    color: var(--jade-accent, #4a9870);
+}
+
+.welcome-skinmod-opt-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1;
+    min-width: 0;
+}
+
+.welcome-skinmod-opt-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-color);
+    line-height: 1.25;
+}
+
+.welcome-skinmod-opt-sub {
+    font-size: 10.5px;
+    color: color-mix(in srgb, var(--text-color) 55%, transparent);
+    line-height: 1.3;
+}
+
+.welcome-skinmod-opt-pill {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text-color) 8%, transparent);
+    color: color-mix(in srgb, var(--text-color) 55%, transparent);
+    flex-shrink: 0;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+
+.welcome-skinmod-opt-pill.on {
+    background: var(--jade-accent, #4a9870);
+    color: #fff;
 }

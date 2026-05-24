@@ -223,3 +223,38 @@
 .tab.drag-over {
     border-left: 2px solid var(--status-bar-bg, #007acc);
 }
+
+/* Tab right-click context menu — single-item for now ("Reveal in
+   Explorer"). Mirrors the explorer pane's own context menu styling so
+   they read as the same UI family. */
+.tab-ctx-menu {
+    z-index: 2000;
+    background: var(--menu-bg, #20242c);
+    border: 1px solid var(--border-color, #3a3e46);
+    border-radius: 3px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    padding: 4px 0;
+    min-width: 160px;
+    display: flex;
+    flex-direction: column;
+}
+
+.tab-ctx-menu button {
+    background: transparent;
+    border: none;
+    color: var(--text-primary, #d4d4d4);
+    text-align: left;
+    padding: 6px 12px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+}
+
+.tab-ctx-menu button:hover {
+    background: var(--accent-color, #2196f3);
+    color: #0f1115;
+}
+
+[data-ui-mode="modern"] .tab-ctx-menu {
+    border-radius: 6px;
+}

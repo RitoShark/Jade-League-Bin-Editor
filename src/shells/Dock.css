@@ -60,8 +60,28 @@
     display: flex;
     flex-direction: column;
     height: 100%;
+    min-height: 0;
     color: #cccccc;
 }
+
+/* When the pane hosts a fixed search header + a scrolling result list,
+   the header sits in `.word-pane-body` and the list lives in its own
+   sibling. Override the body's default `overflow-y: auto` so only the
+   sibling scrolls — the controls stay pinned at the top. */
+.word-find-pane > .word-pane-body {
+    flex: 0 0 auto;
+    overflow: visible;
+    padding-bottom: 0;
+}
+
+.word-find-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 4px 12px 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
 
 .word-find-input {
     display: block;
@@ -152,6 +172,477 @@
     outline: 1px solid rgba(255, 215, 64, 0.9);
 }
 
+/* ───────────────────── Field row (input + adjacent pill) ───────────────────── */
+.word-find-row {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.word-find-field {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    min-width: 0;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    transition: border-color 120ms ease;
+}
+
+.word-find-field:focus-within {
+    border-color: var(--jade-accent, #007acc);
+    box-shadow: 0 0 0 1px var(--jade-accent, #007acc) inset;
+}
+
+.word-find-field-icon {
+    flex-shrink: 0;
+    color: #8b8b8b;
+}
+
+.word-find-field-input {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 0;
+    background: transparent;
+    color: #ffffff;
+    border: none;
+    outline: none;
+    font-size: 12.5px;
+}
+
+.word-find-field-input::placeholder {
+    color: #6b6b6b;
+}
+
+/* Recessed pill that holds adjacent icon buttons (case/word, replace/replace-all,
+   prev/next). Matches the scope toggle's visual language. */
+.word-find-pill {
+    display: inline-flex;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    padding: 2px;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+/* ───────────────────── Scope + nav toolbar ───────────────────── */
+.word-find-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.word-find-scope {
+    flex: 1;
+    display: inline-flex;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    padding: 2px;
+    gap: 2px;
+}
+
+.word-find-scope-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 10px;
+    min-height: 28px;
+    background: transparent;
+    color: #cccccc;
+    border: none;
+    border-radius: 3px;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+}
+
+.word-find-scope-btn:hover:not(.is-on) {
+    color: #cccccc;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.word-find-scope-btn.is-on {
+    color: #ffffff;
+    background: rgba(0, 122, 204, 0.75);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.word-find-scope-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: inherit;
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 9px;
+}
+
+.word-find-scope-btn:not(.is-on) .word-find-scope-count {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.word-find-nav {
+    display: inline-flex;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    padding: 2px;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.word-find-iconbtn {
+    width: 30px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    color: #cccccc;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 120ms ease, color 120ms ease;
+}
+
+.word-find-iconbtn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+}
+
+.word-find-iconbtn.is-on {
+    background: rgba(0, 122, 204, 0.75);
+    color: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.word-find-iconbtn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* ───────────────────── Status bar ───────────────────── */
+.word-find-statusbar {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 6px 2px 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 11.5px;
+    min-height: 18px;
+}
+
+.word-find-status-strong {
+    color: #ffffff;
+    font-weight: 600;
+}
+
+.word-find-status-dim {
+    color: #8b8b8b;
+}
+
+.word-find-status-cursor {
+    color: #6e6e6e;
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ───────────────────── Replace-all confirmation (subtle) ───────────────────── */
+.word-find-confirm {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 6px 0 10px;
+    padding: 8px 10px;
+    background: rgba(0, 122, 204, 0.08);
+    border: 1px solid rgba(0, 122, 204, 0.35);
+    border-radius: 4px;
+}
+
+.word-find-confirm-icon {
+    color: var(--jade-accent, #4ea3e8);
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.word-find-confirm-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.word-find-confirm-text {
+    display: block;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #d6d6d6;
+    margin-bottom: 6px;
+}
+
+.word-find-confirm-actions {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.word-find-textbtn {
+    padding: 3px 10px;
+    background: transparent;
+    color: #cccccc;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    font-size: 11.5px;
+    cursor: pointer;
+}
+
+.word-find-textbtn:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.word-find-textbtn-primary {
+    background: var(--jade-accent, #007acc);
+    color: #ffffff;
+    font-weight: 500;
+}
+
+.word-find-textbtn-primary:hover {
+    filter: brightness(1.12);
+    background: var(--jade-accent, #007acc);
+}
+
+/* ───────────────────── Empty / hint state ───────────────────── */
+.word-find-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 28px 12px;
+    color: #8b8b8b;
+}
+
+.word-find-empty-icon {
+    color: #4a4a4a;
+    margin-bottom: 10px;
+}
+
+.word-find-empty-title {
+    margin: 0 0 4px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #cccccc;
+}
+
+.word-find-empty-sub {
+    margin: 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #7a7a7a;
+    max-width: 240px;
+}
+
+/* ───────────────────── Results list (compact) ───────────────────── */
+.word-find-results {
+    margin-top: 2px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Virtualized variant — outer is relative-positioned + sized to the
+   full list height; child rows are absolutely positioned at their
+   computed `top`. Only rows inside the viewport (+ overscan) are
+   mounted in the DOM. */
+.word-find-results-virtual {
+    display: block;
+    margin-top: 2px;
+    padding: 0;
+}
+
+.word-find-row-abs {
+    position: absolute;
+    left: 0;
+    right: 0;
+    /* Virtualized rows have explicit heights from the computed
+       layout, so content-visibility's intrinsic-size guess is
+       redundant — disable it to keep paint cheap and avoid any
+       layout shimmer when rows enter the visible window. */
+    content-visibility: visible;
+    contain-intrinsic-size: auto;
+}
+
+/* Match rows are visually nested under their file header — add
+   the indent here since they're absolute-positioned and no longer
+   inside the `.word-find-result-list` container that provided it. */
+.word-find-results-virtual .word-find-result-row.word-find-row-abs {
+    left: 22px;
+}
+
+.word-find-result-file {
+    display: flex;
+    flex-direction: column;
+}
+
+.word-find-result-fileheader {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    width: 100%;
+    padding: 2px 4px;
+    background: transparent;
+    border: none;
+    color: #cccccc;
+    font-size: 11.5px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 3px;
+    line-height: 1.4;
+}
+
+.word-find-result-fileheader:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.word-find-result-caret {
+    color: #8b8b8b;
+    flex-shrink: 0;
+    transition: transform 120ms ease;
+}
+
+.word-find-result-caret.is-open {
+    transform: rotate(90deg);
+}
+
+.word-find-result-fileicon {
+    color: #6e9bd1;
+    flex-shrink: 0;
+}
+
+.word-find-result-filename {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.word-find-result-filecount {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 600;
+    color: #cccccc;
+    background: rgba(255, 255, 255, 0.08);
+    padding: 0 6px;
+    line-height: 14px;
+    border-radius: 8px;
+    min-width: 14px;
+    text-align: center;
+}
+
+.word-find-result-list {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 2px 19px;
+    position: relative;
+}
+
+.word-find-result-list::before {
+    content: '';
+    position: absolute;
+    left: 11px;
+    top: 1px;
+    bottom: 1px;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.word-find-result-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 6px;
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 3px;
+    color: #b0b0b0;
+    line-height: 1.5;
+    /* Tell the browser it can skip paint/layout for off-screen rows.
+       `contain-intrinsic-size` reserves vertical space so the
+       scrollbar still reflects the true list length. */
+    content-visibility: auto;
+    contain-intrinsic-size: 0 19px;
+}
+
+.word-find-result-pending {
+    padding: 4px 6px;
+    font-size: 11px;
+    color: #6e6e6e;
+    font-style: italic;
+    list-style: none;
+}
+
+.word-find-result-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #e0e0e0;
+}
+
+.word-find-result-row.is-current {
+    background: rgba(0, 122, 204, 0.28);
+    color: #ffffff;
+    box-shadow: inset 2px 0 0 var(--jade-accent, #007acc);
+}
+
+.word-find-result-line {
+    flex-shrink: 0;
+    width: 24px;
+    text-align: right;
+    color: #6e6e6e;
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+}
+
+.word-find-result-row.is-current .word-find-result-line {
+    color: #b8d8ee;
+}
+
+.word-find-result-snippet {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--editor-font-family, Consolas, monospace);
+    font-size: 10.5px;
+}
+
+.word-find-snippet-pre,
+.word-find-snippet-post {
+    color: inherit;
+    opacity: 0.75;
+}
+
+.word-find-snippet-hit {
+    background: rgba(255, 215, 64, 0.32);
+    color: #fff5c2;
+    border-radius: 2px;
+    padding: 0 1px;
+    font-weight: 500;
+}
+
+.word-find-result-row.is-current .word-find-snippet-hit {
+    background: rgba(255, 215, 64, 0.5);
+    color: #ffffff;
+}
+
 /* ───────────────────── Docked panel overrides (shared) ─────────────────────
    When GeneralEditPanel / ParticleEditorPanel / MarkdownEditPanel are
    passed `docked`, they render with a `.docked` class. These rules
@@ -188,5 +679,30 @@
 
 .general-edit-panel.docked .gep-left-bar,
 .particle-editor-panel.docked .pep-left-bar {
+    display: none;
+}
+
+/* Docked GeneralEditPanel — flow the sections side-by-side and let
+   them wrap, so a wide dock pane fills its horizontal space instead
+   of leaving the sections in a narrow stacked column. */
+.general-edit-panel.docked .gep-sections {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 6px 22px;
+    padding: 6px 17px 10px;
+}
+
+.general-edit-panel.docked .gep-section {
+    /* Grow to share leftover width, but never narrower than this so
+       the inputs/buttons inside stay usable. */
+    flex: 1 1 240px;
+    min-width: 220px;
+    margin: 0;
+}
+
+/* The inline dividers only separate the vertical stack — the flex gap
+   handles separation between the wrapped columns instead. */
+.general-edit-panel.docked .gep-sections .gep-divider {
     display: none;
 }

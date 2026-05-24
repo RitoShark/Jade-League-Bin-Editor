@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import {
-    SearchIcon, ReplaceIcon, EditIcon, SparklesIcon, LibraryIcon,
+    SearchIcon, EditIcon, SparklesIcon, LibraryIcon,
     PaletteIcon, SettingsIcon, HelpIcon, PencilIcon, ChevronDownIcon,
     ClipboardIcon, CutIcon, CopyIcon, FileIcon, FolderOpenIcon, ClockIcon,
     SaveIcon, SaveAsIcon, LogIcon, PowerIcon, UndoIcon, RedoIcon,
@@ -240,10 +240,10 @@ function SyntaxRibbonGroup({
     const resetSyntaxControls = async () => {
         // Re-derive the syntax theme from the active UI theme. Custom
         // themes don't have a matching SYNTAX_COLORS entry, so fall back
-        // to "Dark Emptiness" the way loadSavedTheme does internally.
+        // to 'Default' the way loadSavedTheme does internally.
         const useCustom = await invoke<string>('get_preference', { key: 'UseCustomTheme', defaultValue: 'false' });
         const themeId = await invoke<string>('get_preference', { key: 'Theme', defaultValue: 'Default' });
-        const targetSyntax = (useCustom === 'true' || themeId === 'Custom') ? 'Dark Emptiness' : themeId;
+        const targetSyntax = (useCustom === 'true' || themeId === 'Custom') ? 'Default' : themeId;
 
         await invoke('set_preference', { key: 'SyntaxTheme', value: targetSyntax });
         await invoke('set_preference', { key: 'OverrideSyntax', value: 'false' });
@@ -712,27 +712,31 @@ export default function RibbonBar() {
                     </RibbonGroup>
 
                     <RibbonGroup title="Find">
+                        {/* One button for the combined Find+Replace
+                            panel — the dedicated Replace button was
+                            redundant. */}
                         <RibbonButton
                             large
                             label="Find"
                             icon={<SearchIcon size={22} />}
                             onClick={s.onFind}
-                            active={s.findWidgetOpen}
-                            title="Find (Ctrl+F)"
-                        />
-                        <RibbonButton
-                            large
-                            label="Replace"
-                            icon={<ReplaceIcon size={22} />}
-                            onClick={s.onReplace}
                             active={s.replaceWidgetOpen}
-                            title="Replace (Ctrl+H)"
+                            title="Find / Replace (Ctrl+F)"
                         />
                     </RibbonGroup>
 
                     <RibbonGroup title="Selection">
                         <RibbonButton label="Select All" icon={<SelectAllIcon size={16} />} onClick={s.onSelectAll} title="Select All (Ctrl+A)" />
                         <RibbonButton label="Compare Files" icon={<DiffIcon size={16} />} onClick={s.onCompareFiles} title="Compare Files (Ctrl+D)" />
+                        <RibbonButton
+                            label="Scan Assets"
+                            icon={<DiffIcon size={16} />}
+                            onClick={s.onScanBinAssets}
+                            disabled={!s.isBinFileOpen()}
+                            title={s.isBinFileOpen()
+                                ? 'Scan this BIN + linked BINs and report every asset they reference'
+                                : 'Open a BIN file to scan its assets'}
+                        />
                     </RibbonGroup>
 
                     <SyntaxRibbonGroup onApplied={s.handleThemeApplied} />
@@ -778,6 +782,7 @@ export default function RibbonBar() {
                             onClick={s.onMaterialLibrary}
                         />
                     </RibbonGroup>
+
 
                     <RibbonGroup title="Quartz">
                         <RibbonButton label="Send: Paint" icon={<SendIcon size={16} />} onClick={() => s.onSendToQuartz('paint')} disabled={binDisabled} />

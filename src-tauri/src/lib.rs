@@ -39,9 +39,14 @@ pub fn run() {
                 let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
             }
             // Find any file path argument (skip the exe path at index 0)
+            // — .bin / .troybin / .inibin all flow through the same
+            // open-file event; the frontend routes by extension.
             let file_path = args.iter().skip(1).find(|a| {
                 let lower = a.to_lowercase();
-                lower.ends_with(".bin") || (!a.starts_with('-') && std::path::Path::new(a.as_str()).exists())
+                lower.ends_with(".bin")
+                    || lower.ends_with(".troybin")
+                    || lower.ends_with(".inibin")
+                    || (!a.starts_with('-') && std::path::Path::new(a.as_str()).exists())
             });
             if let Some(path) = file_path {
                 let _ = app.emit("open-file", path.clone());
@@ -254,11 +259,20 @@ pub fn run() {
             extra_commands::run_installer,
             extra_commands::auto_material_override,
             extra_commands::list_directory,
+            extra_commands::list_directory_recursive,
             extra_commands::get_home_directory,
             extra_commands::parent_directory,
+            extra_commands::fs_create_directory,
+            extra_commands::fs_create_file,
+            extra_commands::fs_rename_entry,
+            extra_commands::fs_delete_entry,
             extra_commands::detect_league_install,
             extra_commands::detect_league_pbe_install,
+            extra_commands::viewer_list_champions,
             extra_commands::open_folder_in_explorer,
+            extra_commands::scan_bin_assets,
+            extra_commands::delete_files,
+            extra_commands::troybin_convert_to_bin,
             // Texture preview
             app_commands::get_file_mtime,
             app_commands::read_file_base64,
@@ -269,6 +283,10 @@ pub fn run() {
             app_commands::file_exists,
             app_commands::read_text_file,
             app_commands::write_text_file,
+            app_commands::write_bytes_file,
+            app_commands::studio_list_backgrounds,
+            app_commands::studio_import_background,
+            app_commands::studio_delete_background,
             app_commands::consume_interop_handoff,
             app_commands::send_bin_to_quartz,
             app_commands::get_quartz_install_status,
@@ -308,6 +326,7 @@ pub fn run() {
             wad_commands::wad_list_mounted,
             // WAD extraction (Phase 3: decompress + write)
             wad_commands::wad_extract,
+            wad_commands::wad_extract_skin_assets,
             wad_commands::wad_cancel_extract,
             wad_commands::wad_read_chunk_b64,
             // WAD extraction (Phase 4: hash recovery scan)
@@ -315,6 +334,7 @@ pub fn run() {
             wad_commands::wad_sniff_unknown,
             // 3D mesh previews (Phase 1: SKN parser)
             mesh_commands::read_skn_mesh,
+            mesh_commands::read_fbx_static_meshes,
             mesh_commands::wad_read_skn_mesh,
             mesh_commands::read_scb_mesh,
             mesh_commands::wad_read_scb_mesh,
@@ -329,11 +349,22 @@ pub fn run() {
             mesh_commands::read_animation,
             mesh_commands::read_skn_animations_disk_cmd,
             mesh_commands::read_skn_textures_disk,
+            mesh_commands::disk_guess_textures,
+            mesh_commands::read_viewer_texture_map_sidecar,
             mesh_commands::decode_texture_disk,
             mesh_commands::wad_read_skin_textures,
+            mesh_commands::wad_read_chroma_textures,
+            mesh_commands::viewer_resolve_skn,
+            mesh_commands::viewer_read_skin_bin,
+            mesh_commands::viewer_collect_skin_chunks,
+            mesh_commands::viewer_extract_for_studio,
             mesh_commands::wad_find_static_mesh_texture,
             mesh_commands::wad_guess_textures,
             mesh_commands::wad_decode_texture,
+            mesh_commands::decode_texture_bytes_to_png,
+            mesh_commands::decode_texture_paths_to_png,
+            mesh_commands::fetch_vanilla_animations,
+            mesh_commands::cleanup_anim_borrow_dir,
             // Taskbar progress reporting (Windows ITaskbarList3)
             taskbar_progress::set_taskbar_progress,
         ])

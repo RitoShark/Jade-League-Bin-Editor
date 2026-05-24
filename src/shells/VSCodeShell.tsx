@@ -35,14 +35,20 @@ export default function VSCodeShell() {
             />
 
             <MenuBar
-                findActive={s.findWidgetOpen}
+                findActive={s.replaceWidgetOpen}
                 replaceActive={s.replaceWidgetOpen}
                 generalEditActive={s.generalEditPanelOpen}
                 particlePanelActive={s.particlePanelOpen}
+                binNavActive={s.binNavOpen}
                 particleDisabled={!s.isBinFileOpen()}
                 onNewFile={s.onNew}
+                onNewStudioScene={s.onNewStudioScene}
+                onOpenStudioScene={s.onStudioOpen}
                 onOpenFile={s.onOpen}
+                onOpenFolder={s.onOpenFolder}
+                onOpenWadInExplorer={s.onOpenWadInExplorer}
                 onSaveFile={s.onSave}
+                onSaveAll={s.onSaveAll}
                 onSaveFileAs={s.onSaveAs}
                 onOpenLog={s.onOpenLog}
                 onExit={s.onClose}
@@ -54,9 +60,12 @@ export default function VSCodeShell() {
                 onFind={s.onFind}
                 onReplace={s.onReplace}
                 onCompareFiles={s.onCompareFiles}
+                onScanBinAssets={s.onScanBinAssets}
+                scanBinAssetsDisabled={!s.isBinFileOpen()}
                 onSelectAll={s.onSelectAll}
                 onGeneralEdit={s.onGeneralEdit}
                 onParticlePanel={s.onParticlePanel}
+                onBinNav={s.onBinNav}
                 onThemes={s.onThemes}
                 onSettings={s.onSettings}
                 onAbout={s.onAbout}
@@ -88,6 +97,7 @@ export default function VSCodeShell() {
                                 onTabClose={s.onTabClose}
                                 onTabCloseAll={s.onTabCloseAll}
                                 onTabPin={s.onTabPin}
+                            onRevealInExplorer={s.revealInExplorer}
                                 splitMode={s.splitMode}
                                 onToggleSplit={() => s.setSplitMode(!s.splitMode)}
                                 paneFilter="left"
@@ -111,6 +121,7 @@ export default function VSCodeShell() {
                                 onTabClose={s.onTabClose}
                                 onTabCloseAll={s.onTabCloseAll}
                                 onTabPin={s.onTabPin}
+                            onRevealInExplorer={s.revealInExplorer}
                                 paneFilter="right"
                                 onDropTabIntoPane={s.onTabSetPane}
                             />
@@ -124,6 +135,7 @@ export default function VSCodeShell() {
                         onTabClose={s.onTabClose}
                         onTabCloseAll={s.onTabCloseAll}
                         onTabPin={s.onTabPin}
+                        onRevealInExplorer={s.revealInExplorer}
                         splitMode={s.splitMode}
                         onToggleSplit={() => s.setSplitMode(!s.splitMode)}
                         splitDisabled={s.tabs.length < 2}
@@ -134,6 +146,7 @@ export default function VSCodeShell() {
             <WelcomeScreenWithExit
                 visible={welcomeVisible && !s.fileLoading}
                 onOpenFile={s.onOpen}
+                onNewFile={s.onNew}
                 onContinueWithoutFile={() => s.setWelcomeOverride('hide')}
                 openFileDisabled={s.openFileDisabled}
                 recentFiles={s.recentFiles}
@@ -141,6 +154,11 @@ export default function VSCodeShell() {
                 onMaterialLibrary={s.onMaterialLibrary}
                 onThemes={s.onThemes}
                 onSettings={s.onSettings}
+                onAbout={s.onAbout}
+                onNewStudioScene={s.onNewStudioScene}
+                onOpenFolder={s.onOpenFolder}
+                onOpenSkinBinAsText={s.onOpenSkinBinAsText}
+                onSendMeshToStudio={s.onSendMeshToStudio}
                 appIcon={s.appIcon}
                 onMinimize={s.onMinimize}
                 onMaximize={s.onMaximize}

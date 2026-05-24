@@ -9,6 +9,13 @@ export const TEXFormat = {
   ETC2: 3,
   DXT1: 10,
   DXT5: 12,
+  // Patch 16.10+ — BC7 sRGB atlases + BC5 normal maps. The Rust
+  // decoder handles these via texture2ddecoder; the TS path here
+  // doesn't (BC7 in particular is a substantial port), so it falls
+  // through to the "Unknown" branch and the preview pane reports
+  // the format name only.
+  BC7: 13,
+  BC5: 14,
   BGRA8: 20
 } as const;
 
@@ -424,6 +431,8 @@ export function formatName(format: number): string {
   switch (format) {
     case TEXFormat.DXT1: return 'DXT1 (BC1)';
     case TEXFormat.DXT5: return 'DXT5 (BC3)';
+    case TEXFormat.BC5: return 'BC5';
+    case TEXFormat.BC7: return 'BC7 sRGB';
     case TEXFormat.BGRA8: return 'BGRA8';
     case TEXFormat.ETC1: return 'ETC1';
     case TEXFormat.ETC2_EAC: return 'ETC2 EAC';

@@ -1,0 +1,417 @@
+.asset-gallery-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9600;
+    animation: asset-gallery-fade 0.14s ease-out;
+}
+
+@keyframes asset-gallery-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.asset-gallery-modal {
+    width: 1100px;
+    max-width: 96vw;
+    height: 80vh;
+    background: var(--window-bg);
+    color: var(--text-color);
+    border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
+    border-radius: 8px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.asset-gallery-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid color-mix(in srgb, var(--text-color) 10%, transparent);
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.asset-gallery-count {
+    font-weight: 400;
+    font-size: 12px;
+    opacity: 0.78;
+    flex: 0 0 auto;
+}
+
+.asset-gallery-filter {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 360px;
+    margin-left: auto;
+    background: color-mix(in srgb, var(--window-bg) 70%, var(--text-color) 6%);
+    color: var(--text-color);
+    border: 1px solid color-mix(in srgb, var(--text-color) 14%, transparent);
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 12px;
+    font-family: inherit;
+}
+
+.asset-gallery-filter:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--jade-accent, var(--accent-color, #2196f3)) 70%, transparent);
+}
+
+.asset-gallery-close {
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+    opacity: 0.7;
+}
+
+.asset-gallery-close:hover {
+    opacity: 1;
+}
+
+.asset-gallery-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 14px;
+}
+
+.asset-gallery-empty {
+    opacity: 0.6;
+    font-size: 12px;
+    text-align: center;
+    padding: 40px 0;
+}
+
+.asset-gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+}
+
+.asset-gallery-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: color-mix(in srgb, var(--window-bg) 65%, var(--text-color) 5%);
+    border: 1px solid color-mix(in srgb, var(--text-color) 10%, transparent);
+    border-radius: 6px;
+    padding: 8px;
+    overflow: hidden;
+}
+
+.asset-gallery-thumb {
+    aspect-ratio: 1 / 1;
+    background:
+        repeating-conic-gradient(
+            color-mix(in srgb, var(--text-color) 8%, transparent) 0% 25%,
+            transparent 0% 50%
+        ) 0 / 16px 16px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.asset-gallery-thumb img {
+    max-width: 100%;
+    max-height: 100%;
+    image-rendering: pixelated;
+}
+
+.asset-gallery-thumb-loading,
+.asset-gallery-thumb-error {
+    font-size: 11px;
+    opacity: 0.55;
+    padding: 6px 8px;
+    text-align: center;
+    word-break: break-word;
+}
+
+/* Typed placeholder — icon + extension label, used for non-image
+   assets (animations, audio containers, etc.) so the user can tell
+   them apart at a glance instead of seeing a "..." or just the bare
+   extension. Drawn in the theme's text colour so the gallery never
+   clashes with whatever palette the user has selected — same
+   convention the row icons in the extractor use. */
+.asset-gallery-thumb-typed {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    opacity: 0.78;
+    color: var(--text-color);
+}
+
+.asset-gallery-thumb-typed-label {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+}
+
+.asset-gallery-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.asset-gallery-path {
+    font-size: 11px;
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.asset-gallery-bins {
+    font-size: 10px;
+    opacity: 0.6;
+}
+
+/* Mode chips next to the title */
+.asset-gallery-modes {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 6px;
+}
+
+.asset-gallery-mode {
+    background: color-mix(in srgb, var(--window-bg) 65%, var(--text-color) 5%);
+    color: var(--text-color);
+    border: 1px solid color-mix(in srgb, var(--text-color) 10%, transparent);
+    border-radius: 4px;
+    padding: 4px 9px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    opacity: 0.75;
+}
+
+.asset-gallery-mode:hover {
+    opacity: 1;
+}
+
+.asset-gallery-mode.on {
+    background: color-mix(in srgb, var(--jade-accent, var(--accent-color, #2196f3)) 65%, transparent);
+    color: #fff;
+    border-color: color-mix(in srgb, var(--jade-accent, var(--accent-color, #2196f3)) 80%, transparent);
+    opacity: 1;
+}
+
+/* Action bar (selection + delete) */
+.asset-gallery-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    border-bottom: 1px solid color-mix(in srgb, var(--text-color) 8%, transparent);
+    background: color-mix(in srgb, var(--window-bg) 88%, var(--text-color) 4%);
+    font-size: 12px;
+}
+
+.asset-gallery-actions-info {
+    flex: 1 1 auto;
+    opacity: 0.78;
+}
+
+.asset-gallery-actions-btn {
+    background: color-mix(in srgb, var(--window-bg) 60%, var(--text-color) 8%);
+    color: var(--text-color);
+    border: 1px solid color-mix(in srgb, var(--text-color) 14%, transparent);
+    border-radius: 4px;
+    padding: 5px 11px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.asset-gallery-actions-btn:hover {
+    background: color-mix(in srgb, var(--window-bg) 50%, var(--text-color) 14%);
+}
+
+.asset-gallery-actions-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.asset-gallery-actions-btn--danger {
+    background: color-mix(in srgb, #d23 60%, transparent);
+    color: #fff;
+    border-color: color-mix(in srgb, #d23 80%, transparent);
+}
+
+.asset-gallery-actions-btn--danger:hover {
+    background: #d23;
+}
+
+.asset-gallery-actions-btn--danger:disabled {
+    background: color-mix(in srgb, var(--window-bg) 60%, var(--text-color) 8%);
+    color: var(--text-color);
+    border-color: color-mix(in srgb, var(--text-color) 14%, transparent);
+}
+
+/* Inline summary banner after a delete batch */
+.asset-gallery-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px;
+    background: color-mix(in srgb, var(--jade-accent, var(--accent-color, #2196f3)) 22%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--text-color) 10%, transparent);
+    font-size: 12px;
+}
+
+.asset-gallery-summary-x {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0.7;
+    font-size: 16px;
+}
+
+/* Cell extras: selection state, unused badge, checkbox */
+.asset-gallery-cell {
+    position: relative;
+    cursor: pointer;
+}
+
+.asset-gallery-cell.selected {
+    border-color: color-mix(in srgb, var(--jade-accent, var(--accent-color, #2196f3)) 80%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--jade-accent, var(--accent-color, #2196f3)) 50%, transparent);
+}
+
+.asset-gallery-cell.unused {
+    border-color: color-mix(in srgb, #d23 40%, color-mix(in srgb, var(--text-color) 10%, transparent));
+}
+
+.asset-gallery-cell-check {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    z-index: 2;
+}
+
+.asset-gallery-cell-tag {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 2;
+    background: color-mix(in srgb, #d23 80%, transparent);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.04em;
+}
+
+/* Delete confirmation modal */
+.asset-gallery-confirm-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9700;
+}
+
+.asset-gallery-confirm {
+    width: 460px;
+    max-width: 90%;
+    background: var(--window-bg);
+    color: var(--text-color);
+    border: 1px solid color-mix(in srgb, var(--text-color) 14%, transparent);
+    border-radius: 8px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+}
+
+.asset-gallery-confirm h3 {
+    margin: 0;
+    font-size: 15px;
+}
+
+.asset-gallery-confirm p {
+    margin: 0;
+    font-size: 12px;
+    opacity: 0.85;
+}
+
+.asset-gallery-confirm-list {
+    max-height: 200px;
+    overflow: auto;
+    background: color-mix(in srgb, var(--window-bg) 80%, var(--text-color) 4%);
+    border: 1px solid color-mix(in srgb, var(--text-color) 8%, transparent);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    font-size: 11px;
+}
+
+.asset-gallery-confirm-line {
+    padding: 1px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.asset-gallery-confirm-more {
+    margin-top: 4px;
+    opacity: 0.6;
+    font-size: 11px;
+}
+
+.asset-gallery-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.asset-gallery-confirm-actions button {
+    background: color-mix(in srgb, var(--window-bg) 60%, var(--text-color) 8%);
+    color: var(--text-color);
+    border: 1px solid color-mix(in srgb, var(--text-color) 14%, transparent);
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.asset-gallery-confirm-actions button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.asset-gallery-confirm-delete {
+    background: #d23 !important;
+    color: #fff !important;
+    border-color: #d23 !important;
+}
+
+.asset-gallery-confirm-delete:hover:not(:disabled) {
+    background: #b21 !important;
+}

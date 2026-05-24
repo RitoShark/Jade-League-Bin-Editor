@@ -1,32 +1,47 @@
 /* ─────────────────────────────────────────────
-   About Dialog — themed
-   Base uses CSS theme variables so it reacts to
-   theme changes and the rounded-corners setting.
-   [data-ui-mode="modern"] in App.modernui.css
-   adds glass effects on top.
+   About Dialog — themed, modernised
+   Theme tokens drive everything; no hardcoded
+   blues/reds. Modern UI adds glass on top via
+   App.modernui.css.
    ───────────────────────────────────────────── */
 
 .about-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.65);
+    background: rgba(0, 0, 0, 0.62);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 10000;
+    animation: about-fade 0.16s ease-out;
+}
+
+@keyframes about-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 .about-dialog {
-    width: 780px;
+    width: 660px;
     max-width: 95vw;
     max-height: 90vh;
     background: var(--window-bg);
-    border: 1px solid #3E3E42;
+    border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
     border-radius: var(--border-radius);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    box-shadow:
+        0 24px 60px rgba(0, 0, 0, 0.55),
+        inset 0 1px 0 color-mix(in srgb, var(--text-color) 6%, transparent);
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    animation: about-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes about-pop {
+    from { transform: translateY(8px) scale(0.985); opacity: 0; }
+    to   { transform: translateY(0) scale(1); opacity: 1; }
 }
 
 /* ── Title bar ── */
@@ -34,340 +49,435 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid #3E3E42;
-    background: var(--title-bar-bg);
-}
-
-.about-title-content {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    padding: 12px 16px 12px 20px;
+    background: transparent;
 }
 
 .about-title-text {
     color: var(--text-color);
-    font-size: 18px;
+    font-size: 14px;
     font-weight: 600;
+    letter-spacing: 0.02em;
 }
 
 .about-close-btn {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     background: transparent;
     border: none;
     color: var(--text-color);
-    font-size: 18px;
     cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--border-radius);
+    border-radius: 4px;
     opacity: 0.55;
-    transition: all 0.15s ease;
+    transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
 .about-close-btn:hover {
-    background: rgba(232, 17, 35, 0.2);
+    background: color-mix(in srgb, #ef4444 14%, transparent);
     color: #ef4444;
     opacity: 1;
 }
 
-/* ── Content: three glass columns ── */
-.about-content {
+/* ── Body: two columns, no inner boxes ── */
+.about-body {
     flex: 1;
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 16px;
-    padding: 20px;
+    grid-template-columns: 1fr 1.05fr;
+    gap: 0;
     overflow-y: auto;
 }
 
-.about-column {
+.about-hero,
+.about-actions {
+    padding: 12px 24px 24px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
 }
 
-/* ── App info card ── */
-.about-app-info {
-    display: flex;
-    flex-direction: column;
+.about-hero {
     align-items: center;
-    padding: 20px 16px;
-    background: var(--tab-bg);
-    border: 1px solid #3E3E42;
-    border-radius: var(--border-radius);
-    gap: 8px;
+    text-align: center;
+    border-right: 1px solid color-mix(in srgb, var(--text-color) 10%, transparent);
 }
 
-/* ── Icon row: active center, sides smaller ── */
+/* Project section inside the hero column needs full-width left-aligned
+   flow even though the icon / name above it are centered. */
+.about-hero > .about-section-label,
+.about-hero > .about-btn-stack,
+.about-hero > .about-meta {
+    align-self: stretch;
+    text-align: left;
+}
+
+.about-actions {
+    gap: 4px;
+}
+
+/* ── Icon trio ── */
 .about-icon-row {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 10px;
+    margin: 14px 0 12px;
 }
 
 .about-icon-wrapper {
     position: relative;
 }
 
-.about-icon-button {
+.about-icon-btn {
     position: relative;
-    background: var(--tab-bg);
-    border: 1px solid #3E3E42;
-    border-radius: var(--border-radius);
+    background: color-mix(in srgb, var(--text-color) 4%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text-color) 10%, transparent);
+    border-radius: 10px;
     padding: 12px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+    line-height: 0;
 }
 
-.about-icon-button:hover {
-    background: var(--selected-tab-bg);
-    border-color: var(--status-bar-bg);
-}
-
-.about-app-icon {
+.about-icon-btn img {
     width: 56px;
     height: 56px;
     display: block;
-    border-radius: var(--border-radius);
+    border-radius: 6px;
 }
 
-/* Side (unselected) icons — smaller */
-.about-icon-button.about-icon-side {
+.about-icon-btn:hover {
+    background: color-mix(in srgb, var(--jade-accent, #4a9870) 12%, transparent);
+    border-color: color-mix(in srgb, var(--jade-accent, #4a9870) 40%, transparent);
+    transform: translateY(-1px);
+}
+
+.about-icon-btn.active {
+    border-color: color-mix(in srgb, var(--jade-accent, #4a9870) 55%, transparent);
+    background: color-mix(in srgb, var(--jade-accent, #4a9870) 10%, transparent);
+}
+
+.about-icon-btn.side {
     padding: 8px;
-    opacity: 0.65;
+    opacity: 0.55;
 }
 
-.about-icon-button.about-icon-side .about-app-icon {
-    width: 38px;
-    height: 38px;
+.about-icon-btn.side img {
+    width: 36px;
+    height: 36px;
 }
 
-.about-icon-button.about-icon-side:hover {
+.about-icon-btn.side:hover {
     opacity: 1;
 }
 
-.about-icon-edit-badge {
+/* Edit / clear badges — flat, accent-tinted, only on hover */
+.about-icon-edit,
+.about-icon-clear {
     position: absolute;
-    bottom: -6px;
-    left: -6px;
-    width: 22px;
-    height: 22px;
-    background: linear-gradient(135deg, #0e639c, #1177bb);
-    border-radius: 50%;
-    display: flex;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: white;
-    font-size: 11px;
-    opacity: 0;
-    transition: opacity 0.2s ease;
-    box-shadow: 0 2px 8px rgba(14, 99, 156, 0.4);
-}
-
-.about-icon-clear-badge {
-    position: absolute;
-    bottom: -6px;
-    right: -6px;
-    width: 22px;
-    height: 22px;
-    background: linear-gradient(135deg, #c02020, #e03030);
-    border: none;
     border-radius: 50%;
+    border: none;
     cursor: pointer;
     opacity: 0;
-    transition: opacity 0.2s ease;
-    box-shadow: 0 2px 8px rgba(192, 32, 32, 0.4);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    color: #fff;
+}
+
+.about-icon-edit {
+    bottom: -4px;
+    left: -4px;
+    background: var(--jade-accent, #4a9870);
+    box-shadow: 0 2px 6px color-mix(in srgb, var(--jade-accent, #4a9870) 50%, transparent);
+}
+
+.about-icon-clear {
+    bottom: -4px;
+    right: -4px;
+    background: #ef4444;
+    box-shadow: 0 2px 6px rgba(239, 68, 68, 0.5);
     padding: 0;
 }
 
-.about-icon-clear-badge::before,
-.about-icon-clear-badge::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 10px;
-    height: 2px;
-    background: white;
-    border-radius: 1px;
-}
-
-.about-icon-clear-badge::before {
-    transform: translate(-50%, -50%) rotate(45deg);
-}
-
-.about-icon-clear-badge::after {
-    transform: translate(-50%, -50%) rotate(-45deg);
-}
-
-.about-icon-clear-badge:hover {
-    background: linear-gradient(135deg, #e03030, #f04040);
-}
-
-.about-icon-wrapper:hover .about-icon-edit-badge,
-.about-icon-wrapper:hover .about-icon-clear-badge {
+.about-icon-wrapper:hover .about-icon-edit,
+.about-icon-wrapper:hover .about-icon-clear {
     opacity: 1;
 }
 
+.about-icon-edit:hover,
+.about-icon-clear:hover {
+    transform: scale(1.08);
+}
+
+/* ── Name + subtitle ── */
 .about-app-name {
-    font-size: 22px;
+    font-size: 26px;
     font-weight: 700;
     color: var(--text-color);
-    margin: 4px 0 0 0;
+    margin: 6px 0 2px;
     letter-spacing: -0.3px;
 }
 
 .about-app-subtitle {
     font-size: 12px;
-    color: var(--text-muted);
+    color: color-mix(in srgb, var(--text-color) 60%, transparent);
     text-align: center;
-    margin: 0;
+    margin: 0 0 18px;
     line-height: 1.4;
 }
 
-/* ── Info cards ── */
-.about-info-card {
-    background: var(--tab-bg);
-    border: 1px solid #3E3E42;
-    border-radius: var(--border-radius);
-    padding: 12px 14px;
-}
-
-.about-info-label {
-    font-size: 10px;
-    color: var(--text-muted);
-    margin-bottom: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-weight: 600;
-}
-
-.about-info-value {
-    font-size: 14px;
-    color: var(--text-color);
-    font-weight: 500;
-}
-
-/* ── Section cards ── */
-.about-section-card {
-    background: var(--tab-bg);
-    border: 1px solid #3E3E42;
-    border-radius: var(--border-radius);
-    padding: 16px;
-}
-
-.about-section-title {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--text-color);
-    margin: 0 0 8px 0;
-}
-
-.about-section-text {
-    font-size: 12px;
-    color: var(--text-muted);
-    line-height: 1.55;
-    margin: 0 0 14px 0;
-}
-
-.about-section-label {
-    font-size: 10px;
-    font-weight: 700;
-    color: var(--text-muted);
-    margin: 0 0 8px 0;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-}
-
-/* ── Supporters list ── */
-.about-supporters-list {
+/* ── Meta block ── */
+.about-meta {
+    width: 100%;
+    border-top: 1px solid color-mix(in srgb, var(--text-color) 9%, transparent);
+    padding-top: 12px;
     display: flex;
     flex-direction: column;
-    gap: 5px;
-    max-height: 150px;
-    overflow-y: auto;
+    gap: 6px;
 }
 
-.about-supporter {
-    font-size: 13px;
-    color: var(--text-color);
-    padding: 6px 10px;
-    background: var(--window-bg);
-    border-radius: var(--border-radius);
-    user-select: none;
-    border: 1px solid transparent;
+.about-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
 }
 
-.about-supporter.highlighted {
-    background: rgba(78, 201, 176, 0.1);
-    border: 1px solid rgba(78, 201, 176, 0.25);
-    color: #4ec9b0;
+.about-meta-key {
+    color: color-mix(in srgb, var(--text-color) 55%, transparent);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 10px;
     font-weight: 600;
-    box-shadow: 0 2px 8px rgba(78, 201, 176, 0.08);
 }
 
-/* ── Documentation button ── */
-.about-doc-button {
+.about-meta-val {
+    color: var(--text-color);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Action column ── */
+.about-section-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: color-mix(in srgb, var(--text-color) 55%, transparent);
+    margin: 4px 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.about-section-label-mt {
+    margin-top: 16px;
+}
+
+.about-btn-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.about-btn {
     width: 100%;
-    padding: 10px 14px;
-    background: linear-gradient(135deg, #0e639c, #1177bb);
-    border: none;
-    border-radius: var(--border-radius);
-    color: white;
+    padding: 9px 12px;
+    background: color-mix(in srgb, var(--text-color) 4%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
+    border-radius: 6px;
+    color: var(--text-color);
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
-    box-shadow: 0 4px 12px rgba(14, 99, 156, 0.3);
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.12s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    text-align: left;
+    font-family: inherit;
 }
 
-.about-doc-button:hover {
-    background: linear-gradient(135deg, #1177bb, #1485cc);
-    box-shadow: 0 6px 16px rgba(14, 99, 156, 0.4);
+.about-btn:hover {
+    background: color-mix(in srgb, var(--jade-accent, #4a9870) 14%, transparent);
+    border-color: color-mix(in srgb, var(--jade-accent, #4a9870) 45%, transparent);
+    color: var(--text-color);
+    transform: translateY(-1px);
 }
 
-.about-report-button {
-    background: linear-gradient(135deg, #b33a00, #d44a10);
-    box-shadow: 0 4px 12px rgba(179, 58, 0, 0.3);
+.about-btn:active {
+    transform: translateY(0);
 }
 
-.about-report-button:hover {
-    background: linear-gradient(135deg, #d44a10, #e55a20);
-    box-shadow: 0 6px 16px rgba(179, 58, 0, 0.4);
+.about-btn.variant-issue:hover {
+    background: color-mix(in srgb, #ef4444 14%, transparent);
+    border-color: color-mix(in srgb, #ef4444 45%, transparent);
+    color: #ef4444;
 }
 
-.about-discord-button {
-    background: linear-gradient(135deg, #5865F2, #6d78f5);
-    box-shadow: 0 4px 12px rgba(88, 101, 242, 0.3);
+.about-btn.variant-discord:hover {
+    background: color-mix(in srgb, #5865F2 15%, transparent);
+    border-color: color-mix(in srgb, #5865F2 50%, transparent);
+    color: #8b94ff;
 }
 
-.about-discord-button:hover {
-    background: linear-gradient(135deg, #6d78f5, #7c86f7);
-    box-shadow: 0 6px 16px rgba(88, 101, 242, 0.4);
+/* Restart guide — mascot peeks from the right edge. The button uses
+   relative positioning + extra right padding so she can overflow a
+   little without overlapping the text. */
+.about-btn.variant-restart-guide {
+    position: relative;
+    padding-right: 44px;
+    overflow: visible;
 }
 
-/* ── Scrollbars ── */
-.about-content::-webkit-scrollbar,
-.about-supporters-list::-webkit-scrollbar {
+.about-btn-mascot {
+    position: absolute;
+    right: -6px;
+    bottom: -8px;
+    width: 44px;
+    height: 44px;
+    object-fit: contain;
+    pointer-events: none;
+    transform: scaleX(-1);
+    filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.45));
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: high-quality;
+    transition: transform 0.18s ease;
+}
+
+.about-btn.variant-restart-guide:hover .about-btn-mascot {
+    transform: scaleX(-1) translateY(-2px);
+}
+
+/* Donate — same neutral resting state as the other two action buttons;
+   hovers to a jade-accent tint, matching the donor pill color. */
+.about-btn.variant-donate:hover {
+    background: color-mix(in srgb, var(--jade-accent, #4a9870) 14%, transparent);
+    border-color: color-mix(in srgb, var(--jade-accent, #4a9870) 50%, transparent);
+    color: var(--jade-accent, #4a9870);
+}
+
+/* Faded "— get listed in Special thanks" suffix that sits inline next
+   to the button's main label. */
+.about-btn-sub {
+    opacity: 0.55;
+    font-weight: 400;
+}
+
+/* ── Special thanks ── */
+.about-thanks {
+    margin-top: auto;
+    padding-top: 4px;
+    max-height: 240px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+/* Credit groups sit slightly indented (8px) so they read as a list
+   under the Special thanks header rather than aligning flush with it,
+   and the first group hugs close to the header so the section feels
+   like one unit instead of two. */
+.about-credits-group {
+    margin-top: 6px;
+    padding-left: 8px;
+}
+
+.about-credits-group:first-of-type {
+    margin-top: 2px;
+}
+
+.about-credits-group-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    font-weight: 600;
+    color: color-mix(in srgb, var(--text-color) 50%, transparent);
+    margin-bottom: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+/* Compact row layout — one entry per line, accent-colored name plus
+   optional faded "— note" suffix. Replaces the chunkier pill grid so
+   we can fit many credits without scrolling. */
+.about-credits-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.about-credits-row {
+    font-size: 12px;
+    line-height: 1.45;
+    padding: 1px 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px;
+}
+
+.about-credits-name {
+    font-weight: 600;
+}
+
+.about-credits-note {
+    color: color-mix(in srgb, var(--text-color) 55%, transparent);
+    font-weight: 400;
+    font-size: 11.5px;
+}
+
+/* Variant tints applied to the name only — keeps notes uniformly muted. */
+.about-credits-row.variant-donor .about-credits-name {
+    color: var(--jade-accent, #4a9870);
+}
+
+.about-credits-row.variant-contributor .about-credits-name {
+    color: #f3a960;
+}
+
+.about-thanks::-webkit-scrollbar {
     width: 5px;
 }
 
-.about-content::-webkit-scrollbar-track,
-.about-supporters-list::-webkit-scrollbar-track {
+.about-thanks::-webkit-scrollbar-track {
     background: transparent;
 }
 
-.about-content::-webkit-scrollbar-thumb,
-.about-supporters-list::-webkit-scrollbar-thumb {
-    background: var(--scrollbar-thumb);
+.about-thanks::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--text-color) 16%, transparent);
     border-radius: 3px;
 }
 
-.about-content::-webkit-scrollbar-thumb:hover,
-.about-supporters-list::-webkit-scrollbar-thumb:hover {
-    background: var(--scrollbar-thumb-hover);
+.about-thanks {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-color) 16%, transparent) transparent;
+}
+
+/* ── Scrollbar ── */
+.about-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.about-body::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.about-body::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--text-color) 18%, transparent);
+    border-radius: 3px;
+}
+
+.about-body::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--jade-accent, #4a9870) 55%, var(--text-color) 25%);
+}
+
+.about-body {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-color) 18%, transparent) transparent;
 }

@@ -127,6 +127,48 @@ pub fn disk_layout_for_skn(skn_disk_path: &str) -> Option<DiskLayout> {
     Some(DiskLayout { root, wad_subfolder })
 }
 
+/// Look up the chroma BIN (`data/characters/{champ}/skins/skin{N}.bin`)
+/// belonging to a CDragon chroma id, *given* the base SKN's path so we
+/// can derive `{champ}`. `chroma_skin_num` is `chroma_cdragon_id % 1000`
+/// — chromas occupy their own `skinNN` slot on disk, siblings of the
+/// parent skin (not children embedded in its BIN).
+///
+/// Tries the literal `skinNN.bin` first and the no-leading-zero form
+/// `skin{n}.bin` second (Riot uses both inconsistently for single-digit
+/// numbers). Returns `None` if the SKN isn't resolved, the champion
+/// can't be inferred, or no candidate BIN exists in the mount.
+pub fn find_chroma_bin(
+    mount_id: u64,
+    base_skn_path_hash: u64,
+    chroma_skin_num: u32,
+) -> Option<SkinBinMatch> {
+    with_mount(mount_id, |m| {
+        let chunk_hashes: HashSet<u64> = m.chunks.iter().map(|c| c.path_hash).collect();
+        let resolved_skn = m.resolved.get(&base_skn_path_hash)?.to_lowercase();
+
+        let parts: Vec<&str> = resolved_skn
+            .split(|c| c == '/' || c == '\\')
+            .filter(|s| !s.is_empty())
+            .collect();
+        let champion = extract_champion(&parts)?;
+
+        let raw = format!("data/characters/{champion}/skins/skin{chroma_skin_num:02}.bin");
+        let stripped = format!("data/characters/{champion}/skins/skin{chroma_skin_num}.bin");
+
+        for candidate in [raw, stripped] {
+            let h = xxh64_path(&candidate);
+            if chunk_hashes.contains(&h) {
+                return Some(SkinBinMatch {
+                    path: candidate,
+                    path_hash_hex: format!("{:016x}", h),
+                });
+            }
+        }
+        None
+    })
+    .flatten()
+}
+
 /// Same as [`find_skin_bin`] but for disk-source previews. Walks up
 /// from the SKN path until it finds an `assets/` segment, then tries
 /// both `data/<wad_subfolder>/...` and plain `data/...` to construct

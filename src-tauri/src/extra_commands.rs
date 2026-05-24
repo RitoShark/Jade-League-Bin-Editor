@@ -163,14 +163,22 @@ pub async fn register_bin_association() -> Result<(), String> {
         cmd_key.set_value("", &format!("\"{}\" \"%1\"", exe_path))
             .map_err(|e| format!("Failed to set open command: {}", e))?;
 
-        let (ext_key, _) = hkcu
-            .create_subkey(r"Software\Classes\.bin")
-            .map_err(|e| format!("Failed to create .bin key: {}", e))?;
-        ext_key.set_value("", &"JadeBinFile")
-            .map_err(|e| format!("Failed to set .bin default: {}", e))?;
+        // Register every extension Jade can open as the default
+        // file type: `.bin` (Riot BIN), `.troybin` / `.inibin`
+        // (legacy VFX source files the troybin convert pipeline
+        // handles). All three point at the same `JadeBinFile` class
+        // so they share the icon and open-command — the frontend
+        // routes by extension.
+        for ext in &[".bin", ".troybin", ".inibin"] {
+            let (ext_key, _) = hkcu
+                .create_subkey(format!(r"Software\Classes\{}", ext))
+                .map_err(|e| format!("Failed to create {} key: {}", ext, e))?;
+            ext_key.set_value("", &"JadeBinFile")
+                .map_err(|e| format!("Failed to set {} default: {}", ext, e))?;
+        }
 
         notify_shell_change();
-        println!("[FileAssoc] Registered .bin association with icon: {}", icon_value);
+        println!("[FileAssoc] Registered .bin/.troybin/.inibin association with icon: {}", icon_value);
         Ok(())
     }
     #[cfg(not(windows))]
@@ -189,16 +197,19 @@ pub async fn unregister_bin_association() -> Result<(), String> {
 
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
 
-        if let Ok(ext_key) = hkcu.open_subkey(r"Software\Classes\.bin") {
-            let current_val: Result<String, _> = ext_key.get_value("");
-            if current_val.ok().as_deref() == Some("JadeBinFile") {
-                let _ = hkcu.delete_subkey_all(r"Software\Classes\.bin");
+        for ext in &[".bin", ".troybin", ".inibin"] {
+            let key_path = format!(r"Software\Classes\{}", ext);
+            if let Ok(ext_key) = hkcu.open_subkey(&key_path) {
+                let current_val: Result<String, _> = ext_key.get_value("");
+                if current_val.ok().as_deref() == Some("JadeBinFile") {
+                    let _ = hkcu.delete_subkey_all(&key_path);
+                }
             }
         }
         let _ = hkcu.delete_subkey_all(r"Software\Classes\JadeBinFile");
 
         notify_shell_change();
-        println!("[FileAssoc] Unregistered .bin association");
+        println!("[FileAssoc] Unregistered .bin/.troybin/.inibin association");
         Ok(())
     }
     #[cfg(not(windows))]
@@ -889,6 +900,75 @@ pub fn list_directory(path: String) -> Result<Vec<DirEntry>, String> {
     Ok(out)
 }
 
+/// A single entry in the explorer's recursive index — used by the
+/// filter row to fuzzy-match against every file/folder under the
+/// root without paying the cost of a full `list_directory` per
+/// folder. Keeps the payload tight: just the relative path, the
+/// kind, and the extension.
+#[derive(Serialize)]
+pub struct RecursiveEntry {
+    pub rel_path: String,
+    pub is_dir: bool,
+    pub extension: String,
+}
+
+/// Recursively walk `root` collecting every visible entry as a flat
+/// list. Bounded at 200_000 entries to keep huge content trees from
+/// pinning the IPC channel for tens of seconds — the filter row
+/// uses this for fuzzy matching, and 200k matches is already past
+/// the point where the UI is useful. Hidden / dotted entries are
+/// skipped to match `list_directory`'s behaviour.
+#[tauri::command]
+pub fn list_directory_recursive(path: String) -> Result<Vec<RecursiveEntry>, String> {
+    const LIMIT: usize = 200_000;
+    let root = std::path::Path::new(&path);
+    if !root.is_dir() {
+        return Err(format!("Not a directory: {}", path));
+    }
+    let mut out: Vec<RecursiveEntry> = Vec::new();
+    let mut stack: Vec<(std::path::PathBuf, String)> = vec![(root.to_path_buf(), String::new())];
+    while let Some((dir, rel_prefix)) = stack.pop() {
+        let read = match std::fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(_) => continue, // permission denied, skip
+        };
+        for entry in read.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let entry_path = entry.path();
+            let metadata = entry.metadata().ok();
+            let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+            let rel = if rel_prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{}/{}", rel_prefix, name)
+            };
+            let extension = if is_dir {
+                String::new()
+            } else {
+                entry_path
+                    .extension()
+                    .map(|e| e.to_string_lossy().into_owned().to_lowercase())
+                    .unwrap_or_default()
+            };
+            out.push(RecursiveEntry {
+                rel_path: rel.clone(),
+                is_dir,
+                extension,
+            });
+            if out.len() >= LIMIT {
+                return Ok(out);
+            }
+            if is_dir {
+                stack.push((entry_path, rel));
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 pub fn get_home_directory() -> Option<String> {
     if let Some(home) = std::env::var_os("USERPROFILE") {
@@ -908,6 +988,80 @@ pub fn parent_directory(path: String) -> String {
     p.parent()
         .map(|pp| pp.to_string_lossy().into_owned())
         .unwrap_or(path)
+}
+
+/// Create a new empty directory at `parent_path/name`. Errors if the
+/// parent doesn't exist or the target already exists. Used by the file
+/// explorer pane's "New Folder" action.
+#[tauri::command]
+pub fn fs_create_directory(parent_path: String, name: String) -> Result<String, String> {
+    let parent = std::path::Path::new(&parent_path);
+    if !parent.is_dir() {
+        return Err(format!("Parent is not a directory: {}", parent_path));
+    }
+    if name.trim().is_empty() || name.contains('/') || name.contains('\\') {
+        return Err("Invalid folder name".to_string());
+    }
+    let target = parent.join(&name);
+    if target.exists() {
+        return Err(format!("Already exists: {}", target.display()));
+    }
+    std::fs::create_dir(&target).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+/// Create an empty file at `parent_path/name`. Same error semantics as
+/// `fs_create_directory`.
+#[tauri::command]
+pub fn fs_create_file(parent_path: String, name: String) -> Result<String, String> {
+    let parent = std::path::Path::new(&parent_path);
+    if !parent.is_dir() {
+        return Err(format!("Parent is not a directory: {}", parent_path));
+    }
+    if name.trim().is_empty() || name.contains('/') || name.contains('\\') {
+        return Err("Invalid file name".to_string());
+    }
+    let target = parent.join(&name);
+    if target.exists() {
+        return Err(format!("Already exists: {}", target.display()));
+    }
+    std::fs::File::create(&target).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+/// Rename `path` to a sibling with `new_name`. Returns the new path.
+#[tauri::command]
+pub fn fs_rename_entry(path: String, new_name: String) -> Result<String, String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+    if new_name.trim().is_empty() || new_name.contains('/') || new_name.contains('\\') {
+        return Err("Invalid name".to_string());
+    }
+    let parent = p.parent().ok_or_else(|| "Cannot rename root".to_string())?;
+    let target = parent.join(&new_name);
+    if target.exists() && target != p {
+        return Err(format!("Already exists: {}", target.display()));
+    }
+    std::fs::rename(p, &target).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+/// Delete a file or directory (recursively). The explorer pane warns
+/// the user before invoking this.
+#[tauri::command]
+pub fn fs_delete_entry(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+    if p.is_dir() {
+        std::fs::remove_dir_all(p).map_err(|e| e.to_string())?;
+    } else {
+        std::fs::remove_file(p).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Open a directory in Windows Explorer. Different from
@@ -938,13 +1092,26 @@ pub fn open_folder_in_explorer(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Probe a few common locations for a League of Legends install. Returns
-/// the deepest mod-relevant subdirectory: <install>/Game/DATA/FINAL when
-/// it exists (that's where every moddable asset lives), falling back to
-/// the install root otherwise. The Riot Client sits in a different
-/// directory and isn't matched by this probe.
+/// Find a League install by first asking the Riot Client where it put
+/// the games it manages, then falling back to a hardcoded list of
+/// common locations. Returns `<install>/Game/DATA/FINAL` (where every
+/// moddable champion WAD lives) when that subfolder exists, otherwise
+/// the install root.
+///
+/// The Riot Client maintains `%ProgramData%\Riot Games\RiotClientInstalls.json`
+/// with the canonical path of every Riot game on the machine —
+/// reading that catches custom drives / custom folder names that the
+/// hardcoded probe list would miss entirely (M:\Games\League etc.).
 #[tauri::command]
 pub fn detect_league_install() -> Option<String> {
+    if let Some(p) = riot_client_install_paths()
+        .into_iter()
+        .find(|p| !is_pbe_path(p))
+    {
+        if let Some(resolved) = resolve_install_root(&p) {
+            return Some(resolved);
+        }
+    }
     detect_riot_install(&[
         r"C:\Riot Games\League of Legends",
         r"D:\Riot Games\League of Legends",
@@ -955,12 +1122,19 @@ pub fn detect_league_install() -> Option<String> {
     ])
 }
 
-/// Same probe as [`detect_league_install`] but for the public-beta
-/// client. Riot installs PBE under "League of Legends (PBE)" by
-/// default; some users rename it slightly so we cover the common
-/// permutations.
+/// PBE counterpart of [`detect_league_install`]. Same JSON-first
+/// cascade — we just filter for the entry whose path contains a PBE
+/// marker (`(PBE)` or `PBE` segment) instead of skipping it.
 #[tauri::command]
 pub fn detect_league_pbe_install() -> Option<String> {
+    if let Some(p) = riot_client_install_paths()
+        .into_iter()
+        .find(|p| is_pbe_path(p))
+    {
+        if let Some(resolved) = resolve_install_root(&p) {
+            return Some(resolved);
+        }
+    }
     detect_riot_install(&[
         r"C:\Riot Games\League of Legends (PBE)",
         r"D:\Riot Games\League of Legends (PBE)",
@@ -973,6 +1147,155 @@ pub fn detect_league_pbe_install() -> Option<String> {
         r"C:\Program Files\Riot Games\League of Legends (PBE)",
         r"C:\Program Files (x86)\Riot Games\League of Legends (PBE)",
     ])
+}
+
+/// Read `%ProgramData%\Riot Games\RiotClientInstalls.json` and return
+/// every League install path the Riot Client tracks. Each entry is
+/// returned with native separators + no trailing slash. Empty / missing
+/// JSON returns an empty vec — caller falls back to a hardcoded probe.
+fn riot_client_install_paths() -> Vec<String> {
+    let program_data = std::env::var("ProgramData")
+        .or_else(|_| std::env::var("PROGRAMDATA"))
+        .unwrap_or_else(|_| "C:\\ProgramData".to_string());
+    let json_path = std::path::Path::new(&program_data)
+        .join("Riot Games")
+        .join("RiotClientInstalls.json");
+    let Ok(bytes) = std::fs::read(&json_path) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Vec::new();
+    };
+    // `associated_client` maps `<game install path>` →
+    // `<RiotClientServices.exe path>`. The keys are what we want.
+    // Riot writes them with forward slashes and a trailing slash; we
+    // normalise both before handing back.
+    let mut out: Vec<String> = Vec::new();
+    if let Some(obj) = value.get("associated_client").and_then(|v| v.as_object()) {
+        for key in obj.keys() {
+            let lower = key.to_lowercase();
+            if !lower.contains("league of legends") {
+                continue;
+            }
+            let mut path = key.replace('/', "\\");
+            while path.ends_with('\\') || path.ends_with('/') {
+                path.pop();
+            }
+            if !path.is_empty() {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
+/// Heuristic: does this path look like a PBE install? Matches the
+/// `(PBE)` parenthesised tag (Riot's canonical form) and the bare
+/// trailing `PBE` segment some users rename to.
+fn is_pbe_path(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    if lower.contains("(pbe)") {
+        return true;
+    }
+    // Bare ` pbe` token at the tail — matches `League of Legends PBE`
+    // but not `League of Legends Public Build Environment` style.
+    lower.ends_with(" pbe") || lower.ends_with("\\pbe") || lower.ends_with("/pbe")
+}
+
+/// Validate an install root and return either `<root>/Game/DATA/FINAL`
+/// (when present — the canonical mod-relevant subdir) or the install
+/// root itself. None when the path doesn't pass the basic sanity
+/// check (`Game/` folder or `League of Legends.exe` at the root).
+fn resolve_install_root(install_path: &str) -> Option<String> {
+    let p = std::path::Path::new(install_path);
+    if !p.is_dir() {
+        return None;
+    }
+    if !(p.join("Game").is_dir() || p.join("League of Legends.exe").exists()) {
+        return None;
+    }
+    let final_path = p.join("Game").join("DATA").join("FINAL");
+    if final_path.is_dir() {
+        return Some(final_path.to_string_lossy().into_owned());
+    }
+    Some(install_path.to_string())
+}
+
+/// One champion WAD found in the user's install — enough info for the
+/// Viewer's stage-1 gallery (which mounts nothing — it just lists what's
+/// available). The `id` is the WAD's filename stem (e.g. `Aatrox`,
+/// `Chogath`); the front-end uses it to look up portraits on CDragon.
+#[derive(Serialize)]
+pub struct ChampionEntry {
+    pub id: String,
+    pub wad_path: String,
+}
+
+/// Enumerate per-champion WAD files under `<final_path>/Champions/`,
+/// excluding sub-mode WADs (Ruby = Arena, Strawberry = Swarm) and any
+/// locale-specific variants like `Aatrox.en_US.wad.client` (we only want
+/// the canonical base WAD per champion). Does **not** mount anything —
+/// the gallery is a pure list view; mounts happen lazily when the user
+/// clicks a tile.
+#[tauri::command]
+pub fn viewer_list_champions(final_path: String) -> Result<Vec<ChampionEntry>, String> {
+    let champs_dir = std::path::Path::new(&final_path).join("Champions");
+    if !champs_dir.is_dir() {
+        return Err(format!(
+            "Champions folder not found at {}",
+            champs_dir.display()
+        ));
+    }
+
+    // Sub-mode + non-playable WADs to filter out. Matched case-insensitively
+    // against either the whole stem (`Ruby`, `Strawberry`) or as a prefix
+    // (`Ruby_Sentinel`, `Strawberry_Briar`, `TFTChampion_*`). All garbage
+    // we don't want appearing in the gallery.
+    const EXCLUDED_EXACT: &[&str] = &["Ruby", "Strawberry"];
+    const EXCLUDED_PREFIXES: &[&str] = &["Ruby_", "Strawberry_", "TFTChampion"];
+
+    let mut entries: Vec<ChampionEntry> = Vec::new();
+    let read = std::fs::read_dir(&champs_dir)
+        .map_err(|e| format!("Failed to read {}: {}", champs_dir.display(), e))?;
+    for entry in read.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        // Match base WADs (`<Champion>.wad.client`) — skip locale variants
+        // (`<Champion>.en_US.wad.client`) by requiring no extra dot in the stem.
+        let stem = match name.strip_suffix(".wad.client") {
+            Some(s) => s,
+            None => continue,
+        };
+        if stem.is_empty() || stem.contains('.') {
+            continue;
+        }
+        let stem_lower = stem.to_ascii_lowercase();
+        if EXCLUDED_EXACT
+            .iter()
+            .any(|x| x.eq_ignore_ascii_case(stem))
+        {
+            continue;
+        }
+        if EXCLUDED_PREFIXES
+            .iter()
+            .any(|p| stem_lower.starts_with(&p.to_ascii_lowercase()))
+        {
+            continue;
+        }
+        entries.push(ChampionEntry {
+            id: stem.to_string(),
+            wad_path: path.to_string_lossy().into_owned(),
+        });
+    }
+
+    entries.sort_by(|a, b| a.id.to_lowercase().cmp(&b.id.to_lowercase()));
+    Ok(entries)
 }
 
 /// Walk a list of candidate Riot install dirs and return the deepest
@@ -996,4 +1319,190 @@ fn detect_riot_install(candidates: &[&str]) -> Option<String> {
         return Some(path.to_string());
     }
     None
+}
+
+// ============================================================
+// BIN asset scanner — walks a root BIN plus every dependency BIN
+// it references on disk, returning a deduped per-BIN asset list.
+// Frontend turns this into a markdown report with the
+// `jade-asset-list: true` frontmatter the gallery view keys off.
+// ============================================================
+
+#[tauri::command]
+pub fn scan_bin_assets(path: String) -> Result<crate::core::bin::asset_scan::BinAssetReport, String> {
+    crate::core::bin::asset_scan::scan_bin_assets(std::path::Path::new(&path))
+}
+
+// ============================================================
+// Troybin → BIN conversion. Reads a `.troybin` / `.inibin` source,
+// runs it through the full troybin pipeline (Stage 1-5) to produce
+// ritobin text, then compiles the text via `text_to_tree` +
+// `write_bin_ltk` to a binary `.bin` file written next to the
+// source. Returns the output path so the frontend can open the
+// resulting BIN in a regular editor tab.
+// ============================================================
+
+#[derive(Serialize)]
+pub struct TroybinConvertResult {
+    pub output_path: String,
+}
+
+/// Convert a single troybin source file to a binary `.bin` written
+/// next to the source. Returns the absolute output path.
+#[tauri::command]
+pub fn troybin_convert_to_bin(path: String) -> Result<TroybinConvertResult, String> {
+    crate::core::troybin::values::try_values()
+        .map_err(|e| format!("values.json: {e}"))?;
+    let output = convert_troybin_to_bin_path(std::path::Path::new(&path))?;
+    Ok(TroybinConvertResult {
+        output_path: output.to_string_lossy().into_owned(),
+    })
+}
+
+/// Cut off everything after the BIN structure's final closing brace.
+/// Used to drop the "Troygrade was unable to translate the following
+/// properties: …" free-text trailer the Python tool appends, which
+/// `text_to_tree` rejects as content after the last `}`. Returns the
+/// slice up to and including the final `}` followed by its line
+/// terminator(s); leaves a stem that's a valid ritobin document.
+fn strip_post_bin_trailer(text: &str) -> &str {
+    // The closing brace is the last `}` in the document — find it
+    // and keep up to the newline that follows. If there's no
+    // trailing newline (one-liner BINs would be weird but possible),
+    // keep through the brace itself.
+    if let Some(brace_idx) = text.rfind('}') {
+        // Include any immediately-following \r\n / \n so the
+        // text_to_tree input still terminates with a newline.
+        let after = brace_idx + 1;
+        let bytes = text.as_bytes();
+        let mut end = after;
+        if end < bytes.len() && bytes[end] == b'\r' { end += 1; }
+        if end < bytes.len() && bytes[end] == b'\n' { end += 1; }
+        &text[..end]
+    } else {
+        text
+    }
+}
+
+/// Run Stages 1-5 and return the ritobin text without any compile
+/// or disk side effects.
+fn troybin_pipeline_text(input: &std::path::Path) -> Result<String, String> {
+    let bytes = std::fs::read(input)
+        .map_err(|e| format!("read {}: {}", input.display(), e))?;
+    let entries = crate::core::troybin::read_troybin_binary(&bytes)
+        .map_err(|e| format!("parse {}: {}", input.display(), e))?;
+    let ini = crate::core::troybin::resolve_and_write_ini(&entries);
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("troybin")
+        .to_string();
+    let mut data = crate::core::troybin::read_troybin(
+        "Assets/Particles",
+        false,
+        &ini,
+        &format!("{stem}.txt"),
+        true,
+    );
+    data.emitters = crate::core::troybin::update_emitters(&data.emitters);
+    let bin_struct = crate::core::troybin::create_bin(&data, "");
+    Ok(crate::core::troybin::write_bin(&bin_struct, ""))
+}
+
+/// Shared per-file conversion: troybin → ritobin text → ltk_meta
+/// `BinTree` → binary bytes → `<source-dir>/<stem>.bin`. Returns the
+/// output path on success.
+///
+/// On `text_to_tree` failure we write the intermediate text to a
+/// sidecar `<stem>.troybin-debug.txt` next to the source so the user
+/// can diagnose which line the compiler rejected. The error message
+/// references the sidecar path.
+fn convert_troybin_to_bin_path(input: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let text = troybin_pipeline_text(input)?;
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("troybin")
+        .to_string();
+
+    // The Python tool appends a free-text trailer ("Troygrade was
+    // unable to translate the following properties: …") AFTER the
+    // closing `}` of the BIN structure. Riot's strict ritobin
+    // grammar (which `text_to_tree` implements) rejects anything
+    // past the last brace, so strip the trailer before compiling.
+    // The trailer stays in the corpus-diff baseline because we
+    // didn't change `write_bin` itself.
+    let compile_text = strip_post_bin_trailer(&text);
+    let tree = match crate::core::bin::text_to_tree(compile_text) {
+        Ok(t) => t,
+        Err(e) => {
+            // Dump the intermediate ritobin text so the user can see
+            // which line the compiler rejected — without it the
+            // failure reads as opaque "compile error" with no recourse.
+            let sidecar = input.with_file_name(format!("{stem}.troybin-debug.txt"));
+            let _ = std::fs::write(&sidecar, text.as_bytes());
+            return Err(format!(
+                "compile {}: {} (intermediate text saved to {})",
+                input.display(),
+                e,
+                sidecar.display()
+            ));
+        }
+    };
+    let out_bytes = crate::core::bin::write_bin_ltk(&tree)
+        .map_err(|e| format!("write_bin {}: {}", input.display(), e))?;
+
+    let output = input.with_file_name(format!("{stem}.bin"));
+    std::fs::write(&output, &out_bytes)
+        .map_err(|e| format!("write {}: {}", output.display(), e))?;
+    Ok(output)
+}
+
+#[derive(Serialize)]
+pub struct DeleteFilesResult {
+    /// Number of files successfully removed.
+    pub deleted: u32,
+    /// Per-file failure reasons. Empty on a clean run.
+    pub failed: Vec<(String, String)>,
+}
+
+/// Delete a batch of files. The frontend (asset gallery's unused-files
+/// bulk delete) already resolved each path against the scan report's
+/// mod root and asked the user to confirm — we keep the safety bar
+/// here by requiring every target to live inside `mod_root` (also passed
+/// in) so a stray path can't escape it. Errors are collected per-file
+/// rather than failing the whole batch; the UI surfaces the failures
+/// so the user can decide what to do with them.
+#[tauri::command]
+pub fn delete_files(mod_root: String, paths: Vec<String>) -> Result<DeleteFilesResult, String> {
+    let root = std::path::Path::new(&mod_root);
+    if !root.is_dir() {
+        return Err(format!("mod_root is not a directory: {}", mod_root));
+    }
+    let canonical_root = match root.canonicalize() {
+        Ok(p) => p,
+        Err(e) => return Err(format!("canonicalize mod_root: {}", e)),
+    };
+
+    let mut deleted: u32 = 0;
+    let mut failed: Vec<(String, String)> = Vec::new();
+    for raw in paths {
+        let p = std::path::Path::new(&raw);
+        // Canonicalize to defeat ".." path traversal. We require the
+        // resolved path to live under the canonical mod root before
+        // touching it.
+        let canonical = match p.canonicalize() {
+            Ok(c) => c,
+            Err(e) => { failed.push((raw, format!("not found: {}", e))); continue; }
+        };
+        if !canonical.starts_with(&canonical_root) {
+            failed.push((raw, "outside mod root — refused".to_string()));
+            continue;
+        }
+        match std::fs::remove_file(&canonical) {
+            Ok(_) => { deleted += 1; }
+            Err(e) => { failed.push((raw, e.to_string())); }
+        }
+    }
+    Ok(DeleteFilesResult { deleted, failed })
 }

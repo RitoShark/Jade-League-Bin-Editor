@@ -18,7 +18,14 @@ import {
     applyUIFont, injectFontFaces, fontFileNameToFamily,
     ensurePresetFontLoaded, preloadBundledFonts,
 } from '../lib/themeApplicator';
-import { PaletteIcon, SparklesIcon, ImageIcon, SettingsIcon, TypeIcon, LayoutIcon, FontSourceWindowsIcon, FontSourceBundledIcon, FontSourceImportedIcon } from './Icons';
+import { PaletteIcon, SettingsIcon, FontSourceWindowsIcon, FontSourceBundledIcon, FontSourceImportedIcon } from './Icons';
+import {
+    PaintRoller as UIThemeLucide,
+    Paintbrush as SyntaxLucide,
+    Wallpaper as BackgroundLucide,
+    Type as FontLucide,
+    Columns3Cog as LayoutLucide,
+} from 'lucide-react';
 import './ThemesDialog.css';
 
 interface ThemesDialogProps {
@@ -42,12 +49,12 @@ type NavSection = 'ui' | 'syntax' | 'background' | 'workspace' | 'options' | 'fo
 type ShellVariant = 'vscode' | 'word' | 'visualstudio';
 
 const NAV_ITEMS: { id: NavSection; label: string; icon: React.ReactNode }[] = [
-    { id: 'ui',         label: 'UI Theme',      icon: <PaletteIcon size={15} />  },
-    { id: 'syntax',     label: 'Syntax Colors',  icon: <SparklesIcon size={15} /> },
-    { id: 'background', label: 'Background',     icon: <ImageIcon size={15} />   },
-    { id: 'fonts',      label: 'Fonts',          icon: <TypeIcon size={15} />    },
-    { id: 'workspace',  label: 'Workspace',      icon: <LayoutIcon size={15} />  },
-    { id: 'options',    label: 'Options',         icon: <SettingsIcon size={15} />},
+    { id: 'ui',         label: 'UI Theme',      icon: <UIThemeLucide size={16} />    },
+    { id: 'syntax',     label: 'Syntax Colors', icon: <SyntaxLucide size={16} />     },
+    { id: 'background', label: 'Background',    icon: <BackgroundLucide size={16} /> },
+    { id: 'fonts',      label: 'Fonts',         icon: <FontLucide size={16} />       },
+    { id: 'workspace',  label: 'Workspace',     icon: <LayoutLucide size={16} />     },
+    { id: 'options',    label: 'Options',       icon: <SettingsIcon size={15} />     },
 ];
 
 

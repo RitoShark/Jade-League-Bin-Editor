@@ -1,0 +1,1116 @@
+/* Shared styles for Photo Studio dock panels (anim, background, mesh,
+   actions). Reuses the `mop-*` classes from MaterialOverrideDockPanel
+   for inputs / buttons / dialog shell so the studio panels inherit
+   the same classic + modern-UI treatments without duplicating CSS. */
+@import url('../shells/MaterialOverrideDockPanel.css');
+
+.studio-panel {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    color: var(--text-color, #cccccc);
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    overflow: hidden;
+    box-sizing: border-box;
+    /* Match the existing docked panel background (GeneralEditPanel /
+       ParticleEditorPanel use this same var so all dock panels read
+       as the same shade instead of bleeding the darker editor bg
+       through `mop-dialog`'s transparent default). */
+    background: var(--tab-bg, #2d2d30) !important;
+}
+
+/* Subtle accent stripe along the leading edge, matching the
+   `.gep-left-bar` / `.pep-left-bar` affordance the General Edit and
+   Particle panels carry in their floating form. The VS shell hides
+   those bars when those panels are docked; for the studio panels we
+   want a thin accent because there's no other shell chrome telling
+   you which panel is which. */
+.studio-panel::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 2px;
+    background: var(--jade-accent, var(--vscode-focusBorder, #007acc));
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.studio-panel {
+    position: relative;
+}
+
+.studio-panel .mop-content {
+    /* Tighter than mop's 10px so the dock-bottom strip stays compact. */
+    padding: 10px;
+    /* Flex column so children with `flex: 1` (e.g. the anim clip
+       list) grow to fill spare vertical space when the dock pane is
+       tall. The base mop-content rule only sets `flex: 1` on the
+       content element itself, not its inner layout. */
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.studio-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.studio-row + .studio-row {
+    margin-top: 8px;
+}
+
+.studio-field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-color, #cccccc);
+}
+
+.studio-field-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-color, #cccccc);
+    opacity: 0.78;
+    white-space: nowrap;
+}
+
+.studio-divider {
+    width: 1px;
+    align-self: stretch;
+    background: #3E3E42;
+    margin: 0 2px;
+}
+
+.studio-num-input {
+    width: 64px;
+    text-align: center;
+}
+
+/* Dimension input with flanking ÷2 / ×2 buttons. The buttons hug
+   the input so the trio reads as a single control. */
+.studio-dim-group {
+    display: inline-flex;
+    align-items: stretch;
+}
+
+.studio-dim-group .studio-num-input {
+    border-radius: 0;
+    border-left-width: 0;
+    border-right-width: 0;
+    width: 56px;
+}
+
+.studio-dim-step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    min-width: 28px;
+    padding: 0 6px;
+    font-size: 11px;
+    font-weight: 600;
+    background-color: var(--vscode-input-background, #3c3c3c);
+    color: var(--text-color, #cccccc);
+    border: 1px solid var(--border-color, #3e3e42);
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.studio-dim-group .studio-dim-step:first-of-type {
+    border-radius: 3px 0 0 3px;
+}
+
+.studio-dim-group .studio-dim-step:last-of-type {
+    border-radius: 0 3px 3px 0;
+}
+
+.studio-dim-step:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+    border-color: var(--jade-accent, #007acc);
+    color: #ffffff;
+}
+
+.studio-select {
+    width: 90px;
+    height: 28px;
+    padding: 4px 8px;
+    background-color: var(--vscode-input-background, #3c3c3c);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 2px);
+    color: var(--vscode-input-foreground, #cccccc);
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.studio-color-swatch {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 2px);
+    background: transparent;
+    cursor: pointer;
+}
+
+.studio-color-swatch:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.studio-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-color, #cccccc);
+    cursor: pointer;
+    user-select: none;
+}
+
+.studio-checkbox input {
+    cursor: pointer;
+}
+
+.studio-status-error {
+    flex-basis: 100%;
+    margin: 0;
+    padding: 6px 8px;
+    font-size: 11px;
+    color: #f48771;
+    background-color: rgba(244, 135, 113, 0.15);
+    border: 1px solid rgba(244, 135, 113, 0.3);
+    border-radius: var(--border-radius, 2px);
+}
+
+/* ── Anim panel-specific ─────────────────────────────────────────── */
+.studio-anim-list {
+    flex: 1 1 0;
+    min-height: 80px;
+    /* No max-height — the parent mop-content is a flex column with the
+       search + controls bar taking fixed height, so flex:1 here grows
+       the clip list to fill whatever vertical space the dock pane
+       gives us. Long clip lists no longer hide behind a 220px cap. */
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+    background: var(--vscode-input-background, #1e1e1e);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 2px);
+}
+
+.studio-anim-clip {
+    text-align: left;
+    padding: 4px 8px;
+    font-size: 12px;
+    background: transparent;
+    color: var(--text-color, #cccccc);
+    border: 1px solid transparent;
+    border-radius: var(--border-radius, 3px);
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.studio-anim-clip:hover:not(:disabled) {
+    background: var(--selected-tab-bg, #2a2d2e);
+}
+
+.studio-anim-clip.active {
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 25%, transparent);
+    border-color: var(--jade-accent, #007acc);
+}
+
+.studio-anim-clip:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.studio-anim-list::-webkit-scrollbar {
+    width: 4px;
+}
+.studio-anim-list::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb, #555);
+    border-radius: 2px;
+}
+
+.studio-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 4px 4px;
+    border-top: 1px solid #3E3E42;
+    margin-top: 8px;
+}
+
+.studio-icon-btn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--text-color, #cccccc);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 2px);
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.studio-icon-btn:hover:not(:disabled) {
+    background: var(--selected-tab-bg, #2a2d2e);
+    border-color: var(--vscode-focusBorder, #007acc);
+}
+
+.studio-icon-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.studio-speed-btn {
+    width: 46px;
+}
+
+.studio-scrub {
+    flex: 1;
+    min-width: 60px;
+}
+
+.studio-time {
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-color, #cccccc);
+    opacity: 0.7;
+    white-space: nowrap;
+}
+
+/* ── Objects panel-specific ──────────────────────────────────────── */
+.studio-objects-list {
+    flex: 1 1 0;
+    min-height: 80px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 8px;
+    padding: 4px;
+    background: var(--vscode-input-background, #1e1e1e);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 2px);
+}
+
+.studio-objects-list::-webkit-scrollbar {
+    width: 4px;
+}
+.studio-objects-list::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb, #555);
+    border-radius: 2px;
+}
+
+.studio-objects-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    background: transparent;
+    color: var(--text-color, #cccccc);
+    border: 1px solid transparent;
+    border-radius: var(--border-radius, 3px);
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
+    width: 100%;
+}
+
+.studio-objects-row:hover {
+    background: var(--selected-tab-bg, #2a2d2e);
+}
+
+.studio-objects-row.active {
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 25%, transparent);
+    border-color: var(--jade-accent, #007acc);
+}
+
+.studio-objects-kind {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary, #9DA5B4);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    min-width: 38px;
+    text-align: center;
+}
+
+.studio-objects-kind.kind-skn {
+    color: #8cc5ff;
+    background: rgba(0, 122, 204, 0.12);
+    border-color: rgba(0, 122, 204, 0.32);
+}
+
+.studio-objects-kind.kind-gltf {
+    color: #4ec9b0;
+    background: rgba(78, 201, 176, 0.12);
+    border-color: rgba(78, 201, 176, 0.32);
+}
+
+.studio-objects-kind.kind-fbx {
+    color: #e8a520;
+    background: rgba(232, 165, 32, 0.12);
+    border-color: rgba(232, 165, 32, 0.32);
+}
+
+.studio-objects-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+}
+
+.studio-objects-eye {
+    flex-shrink: 0;
+    padding: 2px 4px;
+    color: var(--text-secondary, #9DA5B4);
+    cursor: pointer;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    position: relative;
+}
+
+.studio-objects-eye:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary, #d4d4d4);
+}
+
+.studio-objects-eye.hidden {
+    /* Subtle dim when the object is off, so users can scan the list
+       and see at a glance what's currently shown vs hidden. */
+    opacity: 0.55;
+}
+
+/* Default state: show the "what we are now" icon (Eye when visible,
+   EyeOff when hidden). On hover, swap to the OPPOSITE icon so the
+   button previews what clicking will do. Both icons sit in the same
+   stacking slot via absolute positioning so the swap doesn't shift
+   layout. */
+.studio-objects-eye .studio-objects-eye-idle,
+.studio-objects-eye .studio-objects-eye-hover {
+    display: block;
+    transition: opacity 0.12s ease;
+}
+.studio-objects-eye .studio-objects-eye-hover {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.studio-objects-eye.visible .studio-objects-eye-idle { opacity: 1; }
+.studio-objects-eye.visible .studio-objects-eye-hover { opacity: 0; }
+.studio-objects-eye.visible:hover .studio-objects-eye-idle { opacity: 0; }
+.studio-objects-eye.visible:hover .studio-objects-eye-hover { opacity: 1; }
+
+.studio-objects-eye.hidden .studio-objects-eye-idle { opacity: 0; }
+.studio-objects-eye.hidden .studio-objects-eye-hover { opacity: 1; }
+.studio-objects-eye.hidden:hover .studio-objects-eye-idle { opacity: 1; }
+.studio-objects-eye.hidden:hover .studio-objects-eye-hover { opacity: 0; }
+
+/* Swap which icon is the "anchor" (in flow) so the row's width
+   doesn't change between states — the visible icon sits in flow,
+   the other one absolute-overlays it. */
+.studio-objects-eye.hidden .studio-objects-eye-idle {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+.studio-objects-eye.hidden .studio-objects-eye-hover {
+    position: static;
+    transform: none;
+}
+
+.studio-objects-remove {
+    flex-shrink: 0;
+    padding: 0 4px;
+    color: var(--text-secondary, #9DA5B4);
+    cursor: pointer;
+    border-radius: 3px;
+    font-size: 12px;
+    line-height: 16px;
+}
+
+.studio-objects-remove:hover {
+    background: rgba(244, 135, 113, 0.18);
+    color: #f48771;
+}
+
+.studio-objects-gizmo-row {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #3E3E42;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.studio-objects-gizmo-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary, #9DA5B4);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-right: 4px;
+}
+
+.studio-gizmo-btn {
+    padding: 4px 10px;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--text-color, #cccccc);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 3px);
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.studio-gizmo-btn:hover {
+    background: var(--selected-tab-bg, #2a2d2e);
+    border-color: var(--vscode-focusBorder, #007acc);
+}
+
+.studio-gizmo-btn.active {
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 30%, transparent);
+    border-color: var(--jade-accent, #007acc);
+    color: var(--text-primary, #ffffff);
+}
+
+[data-ui-mode="modern"] .studio-objects-gizmo-row {
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+[data-ui-mode="modern"] .studio-gizmo-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 6px;
+    transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+[data-ui-mode="modern"] .studio-gizmo-btn:hover {
+    background: var(--modern-accent-15);
+    border-color: var(--jade-accent);
+}
+
+[data-ui-mode="modern"] .studio-gizmo-btn.active {
+    background: var(--modern-accent-25);
+    border-color: var(--jade-accent);
+}
+
+.studio-objects-transform {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #3E3E42;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.studio-objects-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary, #9DA5B4);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.studio-objects-reset {
+    padding: 2px 8px;
+    background: transparent;
+    color: var(--text-secondary, #9DA5B4);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: 3px;
+    font-size: 10px;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.studio-objects-reset:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary, #d4d4d4);
+}
+
+.studio-objects-transform-row {
+    display: grid;
+    grid-template-columns: 32px 1fr 1fr 1fr;
+    gap: 4px;
+    align-items: center;
+}
+
+.studio-objects-transform-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary, #9DA5B4);
+}
+
+.studio-objects-axis-input {
+    height: 24px;
+    padding: 2px 6px;
+    font-size: 11px;
+    text-align: right;
+}
+
+[data-ui-mode="modern"] .studio-objects-list {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 6px;
+}
+
+[data-ui-mode="modern"] .studio-objects-row {
+    border-radius: 6px;
+    padding: 6px 9px;
+}
+
+[data-ui-mode="modern"] .studio-objects-row:hover {
+    background: var(--modern-accent-15);
+}
+
+[data-ui-mode="modern"] .studio-objects-row.active {
+    background: var(--modern-accent-25);
+}
+
+[data-ui-mode="modern"] .studio-objects-transform {
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+[data-ui-mode="modern"] .studio-objects-kind {
+    border-radius: 999px;
+}
+
+/* ── Mesh panel-specific ─────────────────────────────────────────── */
+.studio-mesh-content {
+    /* Mesh panel docks to bottom by default; allow the card grid to
+       wrap horizontally instead of stacking vertically. */
+    overflow-x: auto;
+    overflow-y: auto;
+}
+
+.studio-mesh-transparency {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 8px 10px 8px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border-color, #3e3e42);
+}
+
+[data-ui-mode="modern"] .studio-mesh-transparency {
+    border-bottom-color: var(--modern-glass-border);
+}
+
+.studio-mesh-slider {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding-left: 24px;
+}
+
+.studio-mesh-slider-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted, #8a8a8a);
+}
+
+.studio-mesh-slider-value {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    color: var(--text-color, #cccccc);
+}
+
+.studio-mesh-slider input[type='range'] {
+    width: 100%;
+    accent-color: var(--jade-accent);
+    margin: 0;
+}
+
+.studio-mesh-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+}
+
+.studio-mesh-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid #3E3E42;
+    border-radius: var(--border-radius, 4px);
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.studio-mesh-vis {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-color, #cccccc);
+    cursor: pointer;
+    user-select: none;
+    min-width: 0;
+}
+
+.studio-mesh-vis input {
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.studio-mesh-name {
+    font-weight: 500;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.studio-mesh-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: space-between;
+}
+
+.studio-mesh-flip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10.5px;
+    color: var(--text-secondary, #9DA5B4);
+    cursor: pointer;
+    user-select: none;
+}
+
+.studio-mesh-flip input {
+    cursor: pointer;
+}
+
+[data-ui-mode="modern"] .studio-mesh-flip input[type="checkbox"] {
+    accent-color: var(--jade-accent);
+    width: 13px;
+    height: 13px;
+}
+
+.studio-mesh-badge {
+    align-self: flex-start;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-radius: 10px;
+    border: 1px solid transparent;
+}
+
+.studio-mesh-badge-auto {
+    color: #4ec9b0;
+    background: rgba(78, 201, 176, 0.10);
+    border-color: rgba(78, 201, 176, 0.32);
+}
+
+.studio-mesh-badge-manual {
+    color: var(--jade-accent-text, #8cc5ff);
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 14%, transparent);
+    border-color: color-mix(in srgb, var(--jade-accent, #007acc) 35%, transparent);
+}
+
+.studio-mesh-badge-missing {
+    color: #e8a520;
+    background: rgba(232, 165, 32, 0.10);
+    border-color: rgba(232, 165, 32, 0.32);
+}
+
+.studio-mesh-path {
+    font-size: 10px;
+    color: var(--text-color, #cccccc);
+    opacity: 0.62;
+    font-family: 'Consolas', 'Courier New', monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.studio-mesh-actions {
+    display: flex;
+    gap: 6px;
+}
+
+/* ── Background panel: image library ─────────────────────────────── */
+.studio-bg-library {
+    position: relative;
+    margin-top: 10px;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 4px);
+}
+
+.studio-bg-library.drag-over {
+    border-color: var(--jade-accent, #007acc);
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 12%, transparent);
+}
+
+.studio-bg-library-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.studio-bg-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 8px;
+}
+
+.studio-bg-card {
+    position: relative;
+    aspect-ratio: 16 / 10;
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 4px);
+    overflow: hidden;
+    cursor: pointer;
+    background: #1e1e1e;
+    transition: border-color 0.12s ease;
+}
+
+.studio-bg-card:hover {
+    border-color: color-mix(in srgb, var(--jade-accent, #007acc) 60%, var(--border-color, #3e3e42));
+}
+
+.studio-bg-card.active {
+    border-color: var(--jade-accent, #007acc);
+    box-shadow: 0 0 0 1px var(--jade-accent, #007acc);
+}
+
+.studio-bg-card-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    user-select: none;
+}
+
+.studio-bg-card-remove {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    line-height: 1;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: 3px;
+    opacity: 0;
+    transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.studio-bg-card:hover .studio-bg-card-remove {
+    opacity: 1;
+}
+
+.studio-bg-card-remove:hover {
+    background: rgba(244, 135, 113, 0.85);
+}
+
+.studio-bg-drop-hint {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--editor-bg, #1e1e1e) 70%, transparent);
+    color: var(--jade-accent-text, #8cc5ff);
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: var(--border-radius, 4px);
+    pointer-events: none;
+}
+
+[data-ui-mode="modern"] .studio-bg-library {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+}
+
+[data-ui-mode="modern"] .studio-bg-card {
+    border-radius: 6px;
+}
+
+.studio-bg-transform {
+    margin-top: 10px;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 4px);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+[data-ui-mode="modern"] .studio-bg-transform {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+}
+
+.studio-uv-viewer {
+    margin-top: 6px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 4px);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: stretch;
+}
+
+.studio-uv-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary, #9DA5B4);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.studio-uv-close {
+    padding: 0 6px;
+    background: transparent;
+    color: var(--text-secondary, #9DA5B4);
+    border: none;
+    cursor: pointer;
+    border-radius: 3px;
+    line-height: 16px;
+    font-size: 12px;
+}
+
+.studio-uv-close:hover {
+    color: var(--text-primary, #d4d4d4);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.studio-uv-canvas {
+    display: block;
+    align-self: center;
+    width: 100%;
+    max-width: 280px;
+    height: auto;
+    image-rendering: pixelated;
+    background: #1e1e1e;
+    border: 1px solid var(--border-color, #3e3e42);
+}
+
+.studio-uv-stats {
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 10.5px;
+    color: var(--text-secondary, #9DA5B4);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+[data-ui-mode="modern"] .studio-uv-viewer {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+}
+
+.studio-proc-editor {
+    margin-top: 6px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 4px);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.studio-proc-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.studio-proc-label {
+    flex-shrink: 0;
+    width: 56px;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-secondary, #9DA5B4);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+[data-ui-mode="modern"] .studio-proc-editor {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+}
+
+.studio-mesh-actions .mop-btn {
+    flex: 1;
+    height: 26px;
+    padding: 0 10px;
+    font-size: 11px;
+}
+
+/* ── Modern UI overrides ──────────────────────────────────────────
+   Studio panels reuse the mop-* dialog shell so MaterialOverride's
+   modern overrides already cover inputs / buttons / dropdowns. These
+   rules add modern accents for the studio-only chrome (mesh cards,
+   badges, anim clip rows). */
+
+[data-ui-mode="modern"] .studio-panel {
+    font-family: inherit;
+    /* Beat the inherited modern `mop-dialog` rule (which uses the
+       darker `--modern-dialog-bg` translucent surface). The General
+       Edit and Particle panels use `--vscode-editorWidget-background`
+       — matching that keeps every dockable panel in the same shade. */
+    background: var(--vscode-editorWidget-background) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: none !important;
+}
+
+[data-ui-mode="modern"] .studio-panel::before {
+    /* Drop the classic-mode accent stripe in modern; the modern look
+       prefers softer card edges over hard stripes. */
+    display: none;
+}
+
+[data-ui-mode="modern"] .studio-anim-list {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 6px;
+}
+
+[data-ui-mode="modern"] .studio-anim-clip {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 5px 9px;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+[data-ui-mode="modern"] .studio-anim-clip:hover:not(:disabled) {
+    background: var(--modern-accent-15);
+    border-color: rgba(255, 255, 255, 0.10);
+}
+
+[data-ui-mode="modern"] .studio-anim-clip.active {
+    background: var(--modern-accent-25);
+    border-color: var(--jade-accent);
+}
+
+[data-ui-mode="modern"] .studio-controls {
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+[data-ui-mode="modern"] .studio-icon-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 6px;
+    transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+[data-ui-mode="modern"] .studio-icon-btn:hover:not(:disabled) {
+    background: var(--modern-accent-15);
+    border-color: var(--jade-accent);
+}
+
+[data-ui-mode="modern"] .studio-select {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    height: 30px;
+}
+
+[data-ui-mode="modern"] .studio-color-swatch {
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 6px;
+}
+
+[data-ui-mode="modern"] .studio-checkbox input[type="checkbox"] {
+    accent-color: var(--jade-accent);
+    width: 14px;
+    height: 14px;
+}
+
+[data-ui-mode="modern"] .studio-mesh-card {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+}
+
+[data-ui-mode="modern"] .studio-mesh-badge {
+    border-radius: 999px;
+}
+
+[data-ui-mode="modern"] .studio-mesh-vis input[type="checkbox"] {
+    accent-color: var(--jade-accent);
+    width: 14px;
+    height: 14px;
+}
+
+/* Pose-panel search row — places the search input + fetch button
+   side by side. The fetch button stays the same size as the
+   playback row buttons (studio-icon-btn) so the panel reads as a
+   single visual family. */
+.studio-anim-search-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.studio-anim-search-row .mop-input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.studio-fetch-anim-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}

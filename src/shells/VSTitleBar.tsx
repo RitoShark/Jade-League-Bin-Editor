@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { MinimizeIcon, MaximizeIcon, RestoreIcon, CloseIcon, ChevronRightIcon } from '../components/Icons';
+import { SquareArrowRightEnter } from 'lucide-react';
 import { useShell } from './ShellContext';
 
 /**
@@ -40,9 +41,23 @@ export default function VSTitleBar() {
                 type="button"
                 className="vs-title-icon-btn"
                 onClick={() => s.setWelcomeOverride('force')}
-                title="Main page"
+                title="Back to main page"
+                data-guide-id="logo"
             >
-                <img src={s.appIcon} className="vs-title-icon" alt="Jade" draggable={false} />
+                {/* Hover swaps the Jade logo for a mirrored
+                    enter-arrow — visual symmetry with the welcome
+                    screen's brand-as-editor-shortcut, signalling
+                    "this jumps you back to the other side". */}
+                <img
+                    src={s.appIcon}
+                    className="vs-title-icon vs-title-icon-default"
+                    alt="Jade"
+                    draggable={false}
+                />
+                <SquareArrowRightEnter
+                    size={20}
+                    className="vs-title-icon vs-title-icon-hover"
+                />
             </button>
 
             <div className="vs-menu-row">
@@ -92,6 +107,9 @@ export default function VSTitleBar() {
                             </button>
                             <button className="vs-menu-option" onClick={click(s.onSaveAs)}>
                                 <span>Save As…</span><span className="vs-shortcut">Ctrl+Shift+S</span>
+                            </button>
+                            <button className="vs-menu-option" onClick={click(s.onSaveAll)}>
+                                <span>Save All</span><span className="vs-shortcut">Ctrl+Alt+S</span>
                             </button>
                             <div className="vs-menu-separator" />
                             <button className="vs-menu-option" onClick={click(s.onOpenLog)}>
@@ -148,6 +166,14 @@ export default function VSTitleBar() {
                             </button>
                             <button className="vs-menu-option" onClick={click(s.onCompareFiles)}>
                                 <span>Compare Files…</span><span className="vs-shortcut">Ctrl+D</span>
+                            </button>
+                            <button
+                                className="vs-menu-option"
+                                onClick={click(s.onScanBinAssets)}
+                                disabled={!s.isBinFileOpen()}
+                                title={!s.isBinFileOpen() ? 'Open a BIN file to scan its assets' : 'Walk this BIN and its linked BINs, list every referenced asset'}
+                            >
+                                <span>Scan BIN Assets…</span>
                             </button>
                             <div className="vs-menu-separator" />
                             <button className="vs-menu-option" onClick={click(s.onSelectAll)}>

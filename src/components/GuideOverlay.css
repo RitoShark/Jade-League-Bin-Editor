@@ -1,0 +1,681 @@
+/* ── GuideOverlay ─────────────────────────────────────────────────── */
+
+.guide-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    pointer-events: none;
+}
+
+/* Semi-transparent dim rectangles that surround the spotlight */
+.guide-dim {
+    position: fixed;
+    background: rgba(0, 0, 0, 0.72);
+    pointer-events: all;
+    transition: none;
+}
+
+/* Transparent outline ring around the spotlighted element */
+.guide-spotlight {
+    position: fixed;
+    pointer-events: none;
+    box-shadow: 0 0 0 2px var(--jade-accent, #4a9870), 0 0 18px 4px rgba(74, 152, 112, 0.28);
+    border-radius: 3px;
+    z-index: 9001;
+}
+
+/* Invisible click-blocker laid over the spotlight hole on info steps —
+   the element is only being explained, so the user can't click through
+   it. Gated steps skip this so the prompted action still works. */
+.guide-hole-block {
+    position: fixed;
+    background: transparent;
+    pointer-events: all;
+    z-index: 9001;
+}
+
+/* Full-viewport invisible blocker for the welcome / farewell steps,
+   which have no dim backdrop but still must seal off the app behind. */
+.guide-fullblock {
+    position: fixed;
+    inset: 0;
+    background: transparent;
+    pointer-events: all;
+    z-index: 9000;
+}
+
+/* ── Guide card ───────────────────────────────────────────────────── */
+
+.guide-card {
+    position: fixed;
+    background: var(--window-bg, #1e1e1e);
+    border: 1px solid color-mix(in srgb, var(--text-color, #d4d4d4) 14%, transparent);
+    border-radius: 10px;
+    padding: 18px 20px 16px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255,255,255,0.05);
+    pointer-events: all;
+    z-index: 9002;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 520px;
+}
+
+.guide-step-label {
+    font-size: 11px;
+    color: var(--jade-accent, #4a9870);
+    letter-spacing: 0.05em;
+    font-weight: 500;
+    opacity: 0.85;
+}
+
+.guide-card-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-color, #d4d4d4);
+    margin: 0;
+    line-height: 1.3;
+}
+
+.guide-card-body {
+    font-size: 13px;
+    color: color-mix(in srgb, var(--text-color, #d4d4d4) 80%, transparent);
+    line-height: 1.55;
+    margin: 0;
+    /* Preserve explicit `\n` line breaks in step bodies (find-dock
+       splits its first instruction onto its own line). */
+    white-space: pre-line;
+}
+
+.guide-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.guide-card-next {
+    background: var(--jade-accent, #4a9870);
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    padding: 7px 18px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: filter 0.12s;
+}
+
+.guide-card-next:hover:not(:disabled) {
+    filter: brightness(1.12);
+}
+
+.guide-card-next:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.guide-card-skip-step {
+    font-size: 11px;
+    color: var(--text-muted, #888);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.guide-card-skip-step:hover {
+    color: var(--text-color, #d4d4d4);
+}
+
+.guide-card-waiting {
+    font-size: 11px;
+    color: var(--jade-accent, #4a9870);
+    font-style: italic;
+}
+
+/* ── Theme picker (welcome step) ──────────────────────────────────── */
+
+.guide-welcome-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 4px;
+}
+
+.guide-welcome-mascot {
+    width: 100px;
+    height: 100px;
+    flex-shrink: 0;
+    object-fit: contain;
+    filter: drop-shadow(0 3px 10px rgba(0,0,0,0.5));
+}
+
+.guide-welcome-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-color, #d4d4d4);
+    margin: 0;
+}
+
+.guide-welcome-sub {
+    font-size: 13px;
+    color: color-mix(in srgb, var(--text-color, #d4d4d4) 70%, transparent);
+    margin: 0;
+}
+
+.guide-theme-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted, #888);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-top: 4px;
+}
+
+.guide-theme-row {
+    display: flex;
+    gap: 10px;
+}
+
+.guide-theme-card {
+    flex: 1;
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    /* Kill the native <button> chrome — its default face + padding was
+       what showed up as a white frame around each preview. */
+    background: transparent;
+    padding: 0;
+    border: 2px solid color-mix(in srgb, var(--text-color, #d4d4d4) 12%, transparent);
+    transition: border-color 0.15s, transform 0.12s;
+    display: flex;
+    flex-direction: column;
+}
+
+.guide-theme-card:hover {
+    transform: translateY(-2px);
+}
+
+.guide-theme-card.selected {
+    border-color: var(--jade-accent, #4a9870);
+}
+
+/* Disabled because the theme depends on Modern UI being on. Stays
+   non-interactive and visually faded so it reads as "unavailable
+   right now" rather than "broken". */
+.guide-theme-card.locked {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: auto;
+}
+.guide-theme-card.locked:hover {
+    transform: none;
+}
+
+.guide-theme-preview {
+    height: 64px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.guide-theme-bar {
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.guide-theme-editor {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    padding: 6px 8px;
+}
+
+.guide-theme-line {
+    border-radius: 2px;
+    height: 5px;
+    opacity: 0.55;
+}
+
+.guide-theme-status {
+    height: 8px;
+    flex-shrink: 0;
+}
+
+.guide-theme-name {
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    padding: 5px 4px;
+    background: rgba(0, 0, 0, 0.25);
+}
+
+/* ── Step body: icon-labelled rows ────────────────────────────────── */
+
+.guide-step-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+
+.guide-step-list-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+}
+
+.guide-step-list-icon {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    margin-top: 1px;
+    /* Accent-tinted plate, but the glyph itself keeps the normal icon
+       colour so it reads the same as the real toolbar/rail icons. */
+    background: color-mix(in srgb, var(--jade-accent, #4a9870) 16%, transparent);
+    color: var(--text-color, #d4d4d4);
+}
+
+.guide-step-list-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.4;
+    /* Leave room so the mascot in the bottom-right corner never sits
+       on top of the last row's text. */
+    min-width: 0;
+}
+
+.guide-step-list-label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-color, #d4d4d4);
+}
+
+.guide-step-list-desc {
+    font-size: 12px;
+    color: color-mix(in srgb, var(--text-color, #d4d4d4) 72%, transparent);
+}
+
+/* ── Step card mascot ─────────────────────────────────────────────── */
+
+/* Two placements per step (set by MASCOT_PLACEMENT):
+   `.top`    — perched on the card's top-right edge, ~20% poking above.
+   `.bottom` — peeking up out of the bottom-right corner.
+   `.mirror` flips her for cards on the screen's right half so her tail
+   trails toward the nearer edge. */
+.guide-step-mascot {
+    position: absolute;
+    width: 132px;
+    height: 132px;
+    object-fit: contain;
+    /* Source is 512² — at our display sizes it's a strong downscale.
+       Hint the renderer to use a high-quality filter; default 'auto'
+       sometimes picks a faster (softer) path. */
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: high-quality;
+    filter: drop-shadow(0 5px 12px rgba(0, 0, 0, 0.55));
+    pointer-events: none;
+}
+
+.guide-step-mascot.top {
+    top: -26px;
+    right: 14px;
+}
+
+.guide-step-mascot.bottom {
+    bottom: -44px;
+    right: -18px;
+}
+
+.guide-step-mascot.mirror {
+    transform: scaleX(-1);
+}
+
+/* Larger inset mascot for the wider customize card — bumped size and
+   shifted in/down so she reads proportional rather than tiny in the
+   corner. */
+.guide-step-mascot.customize {
+    width: 180px;
+    height: 180px;
+    /* Perched above the card edge — same intent as `.top`, just
+       offset to suit the larger mascot size on the wider card. */
+    top: -36px;
+    right: 18px;
+}
+
+/* ── find-dock drag hint ──────────────────────────────────────────── */
+
+/* A small looping illustration: a tab-header strip is grabbed by the
+   cursor and dragged onto a dock-guide target (whose glyph mirrors the
+   real VS dock cross). `steps(90)` over 3s caps it at ~30fps so the
+   loop stays cheap. */
+.guide-drag-hint {
+    position: relative;
+    height: 56px;
+    margin: 4px 0 2px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--text-color, #d4d4d4) 7%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text-color, #d4d4d4) 10%, transparent);
+}
+
+/* Dock target — the SVG inside replicates the dock-guide glyph; this
+   wrapper just colours the outline stroke (via currentColor). */
+.guide-drag-hint-target {
+    position: absolute;
+    top: 50%;
+    right: 22px;
+    transform: translateY(-50%);
+    display: flex;
+    color: color-mix(in srgb, var(--text-color, #d4d4d4) 55%, transparent);
+}
+
+/* Dragged element — shaped like a tab header (rounded top, squarer
+   bottom) so it reads as "the top of a tab being moved". */
+.guide-drag-hint-tab {
+    position: absolute;
+    top: 50%;
+    left: 16px;
+    width: 56px;
+    height: 20px;
+    margin-top: -10px;
+    border-radius: 6px 6px 2px 2px;
+    background: var(--jade-accent, #4a9870);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+    animation: guide-drag-slide 3s steps(90) infinite;
+}
+
+/* Faux tab title line. */
+.guide-drag-hint-tabtitle {
+    position: absolute;
+    top: 7px; left: 8px;
+    width: 26px; height: 5px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.6);
+}
+
+/* The lucide MousePointer2 grabbing the tab's top-left corner. */
+.guide-drag-hint-cursor {
+    position: absolute;
+    top: -4px;
+    left: -3px;
+    color: #fff;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+}
+
+@keyframes guide-drag-slide {
+    0%        { transform: translateX(0); opacity: 0; }
+    10%       { transform: translateX(0); opacity: 1; }
+    62%       { transform: translateX(214px); opacity: 1; }
+    76%       { transform: translateX(214px) scale(0.82); opacity: 0.55; }
+    84%, 100% { transform: translateX(214px) scale(0.82); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .guide-drag-hint-tab { animation: none; opacity: 1; }
+}
+
+/* ── Farewell mascot ──────────────────────────────────────────────── */
+
+.guide-farewell-mascot-wrap {
+    display: flex;
+    justify-content: center;
+    margin-bottom: -4px;
+}
+
+.guide-farewell-mascot {
+    width: 156px;
+    height: 156px;
+    object-fit: contain;
+    filter: drop-shadow(0 4px 14px rgba(0,0,0,0.5));
+}
+
+/* ── More themes link ─────────────────────────────────────────────── */
+
+.guide-more-themes {
+    font-size: 11px;
+    color: var(--text-muted, #888);
+    text-align: center;
+    margin: -2px 0 2px;
+}
+
+/* ── Skip button (bottom-right, subtle) ───────────────────────────── */
+
+.guide-skip-btn {
+    position: fixed;
+    bottom: 16px;
+    right: 20px;
+    background: none;
+    border: none;
+    color: rgba(128, 128, 128, 0.55);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 4px 6px;
+    pointer-events: all;
+    z-index: 9003;
+    letter-spacing: 0.03em;
+    transition: color 0.15s;
+}
+
+.guide-skip-btn:hover {
+    color: var(--text-muted, #888);
+}
+
+/* ── Skip confirmation ────────────────────────────────────────────── */
+
+.guide-skip-confirm {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: all;
+    z-index: 9010;
+}
+
+.guide-skip-confirm-card {
+    background: var(--window-bg, #1e1e1e);
+    border: 1px solid color-mix(in srgb, var(--text-color, #d4d4d4) 14%, transparent);
+    border-radius: 10px;
+    padding: 22px 26px 20px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255,255,255,0.05);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 280px;
+    max-width: 340px;
+}
+
+.guide-skip-confirm-card > p {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-color, #d4d4d4);
+}
+
+.guide-skip-confirm-sub {
+    font-size: 12px !important;
+    font-weight: 400 !important;
+    color: color-mix(in srgb, var(--text-color, #d4d4d4) 65%, transparent) !important;
+}
+
+.guide-skip-confirm-btns {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 8px;
+}
+
+.guide-skip-confirm-no {
+    background: none;
+    border: 1px solid var(--border-color, #555);
+    border-radius: 5px;
+    color: var(--text-color, #d4d4d4);
+    padding: 6px 14px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.12s;
+}
+
+.guide-skip-confirm-no:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.guide-skip-confirm-yes {
+    background: var(--jade-accent, #4a9870);
+    border: none;
+    border-radius: 5px;
+    color: #fff;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: filter 0.12s;
+}
+
+.guide-skip-confirm-yes:hover {
+    filter: brightness(1.12);
+}
+
+/* ── Customize step ──────────────────────────────────────────────── */
+
+/* Wider card variant — the customize step needs room for a 4-column
+   theme grid plus a 2-column bottom panel. Centered (positioning code
+   sets top/left to 50%) so the explicit width override is safe. */
+.guide-card-wide {
+    max-width: 720px;
+}
+
+.guide-customize-section-label {
+    margin: 12px 0 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: color-mix(in srgb, var(--text-color, #d4d4d4) 70%, transparent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.guide-customize-theme-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 2px 6px 2px 2px;
+}
+
+/* App-themed scrollbar for the theme grid + recent-files table. */
+.guide-customize-theme-grid::-webkit-scrollbar,
+.welcome-recent-table::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+.guide-customize-theme-grid::-webkit-scrollbar-track,
+.welcome-recent-table::-webkit-scrollbar-track {
+    background: transparent;
+}
+.guide-customize-theme-grid::-webkit-scrollbar-thumb,
+.welcome-recent-table::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--text-color, #d4d4d4) 18%, transparent);
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+.guide-customize-theme-grid::-webkit-scrollbar-thumb:hover,
+.welcome-recent-table::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--jade-accent, #4a9870) 55%, var(--text-color, #d4d4d4) 25%);
+    background-clip: padding-box;
+}
+
+/* Firefox scrollbar styling — same intent, simpler API. */
+.guide-customize-theme-grid,
+.welcome-recent-table {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-color, #d4d4d4) 18%, transparent) transparent;
+}
+
+.guide-customize-bottom {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 4px;
+}
+
+.guide-customize-bottom-col {
+    display: flex;
+    flex-direction: column;
+}
+
+.guide-customize-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.guide-customize-row-desc {
+    margin: 0;
+    font-size: 12px;
+    color: color-mix(in srgb, var(--text-color, #d4d4d4) 75%, transparent);
+    flex: 1;
+}
+
+.guide-customize-toggle {
+    padding: 6px 14px;
+    background: color-mix(in srgb, var(--window-bg, #1e1e1e) 60%, var(--text-color, #d4d4d4) 6%);
+    color: var(--text-color, #d4d4d4);
+    border: 1px solid color-mix(in srgb, var(--text-color, #d4d4d4) 14%, transparent);
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, transform 0.12s;
+}
+
+.guide-customize-toggle:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--jade-accent, #4a9870) 20%, var(--window-bg, #1e1e1e));
+    border-color: var(--jade-accent, #4a9870);
+}
+
+.guide-customize-toggle:disabled {
+    cursor: default;
+}
+
+/* On = already registered. We hard-disable in TSX so this is just a
+   visual badge — themed so it reads as "done" rather than "broken". */
+.guide-customize-toggle.on {
+    background: color-mix(in srgb, var(--jade-accent, #4a9870) 22%, transparent);
+    border-color: color-mix(in srgb, var(--jade-accent, #4a9870) 50%, transparent);
+    color: var(--jade-accent, #4a9870);
+    opacity: 1;
+}
+
+.guide-customize-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.guide-customize-slider {
+    flex: 1;
+    accent-color: var(--jade-accent, #4a9870);
+}
+
+.guide-customize-slider-value {
+    min-width: 28px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: var(--text-color, #d4d4d4);
+}

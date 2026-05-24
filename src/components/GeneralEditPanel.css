@@ -116,6 +116,14 @@
   background-color: rgba(90, 93, 94, 0.31);
 }
 
+/* Sections wrapper. `display: contents` makes it a no-op in the
+   floating popup — the sections + dividers lay out exactly as if the
+   wrapper weren't there. The docked layout (Dock.css) overrides this
+   to a flex-wrap row so wide dock panes flow sections horizontally. */
+.gep-sections {
+  display: contents;
+}
+
 /* Section styling - collapsible sections */
 .gep-section {
   margin: 0 25px 6px 17px;
@@ -283,9 +291,17 @@
 .gep-icon-texture::before { content: '◻'; font-size: 10px; }
 .gep-icon-material::before { content: '◆'; font-size: 9px; }
 .gep-icon-auto::before { content: '↻'; font-size: 12px; }
+.gep-icon-remove::before { content: '✕'; font-size: 11px; }
 
 /* Auto from SKN button - same style as Texture/Material */
 .gep-btn-auto:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Generic disabled state — used by the rigPoseModifierData strip button
+   when no block is present in the file. */
+.gep-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

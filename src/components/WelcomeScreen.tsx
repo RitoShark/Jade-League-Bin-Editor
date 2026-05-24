@@ -5,10 +5,12 @@ import {
     LibraryIcon, PaletteIcon, SettingsIcon, ChevronRightIcon, SearchIcon,
     MinimizeIcon, MaximizeIcon, RestoreIcon, CloseIcon,
 } from './Icons';
-import { FormatIcon, extractExtension, getFormatConfig } from './FormatIcons';
+import { FormatIcon, extractExtension, getFormatConfig, getAudioIconForFileName } from './FormatIcons';
 import { texBufferToDataURL, ddsBufferToDataURL, ddsFormatName, formatName as texFormatName } from '../lib/texFormat';
-import ExtractionSettingsDialog from './ExtractionSettingsDialog';
+import ExtractionSettingsDialog, { ExtractMode } from './ExtractionSettingsDialog';
+import PortalDropdown from './PortalDropdown';
 import { MeshPreview } from './MeshPreview';
+import ViewerTab from './ViewerTab';
 import Editor from '@monaco-editor/react';
 import {
     RITOBIN_LANGUAGE_ID,
@@ -17,13 +19,38 @@ import {
 import {
     Folder as LucideFolder,
     FolderOpen as LucideFolderOpen,
+    Copy as CopyIcon,
+    Files as FilesIcon,
+    Mic as MicIcon,
+    ToolCase as ToolCaseIcon,
+    RefreshCw as RefreshCwIcon,
+    ArrowUp as ArrowUpLucide,
+    ScanSearch as ScanSearchLucide,
+    Save as SaveIcon,
+    SaveAll as SaveAllIcon,
+    FolderDown as FolderDownIcon,
     Package as LucidePackage,
     PackageOpen as LucidePackageOpen,
+    FileAxis3d,
+    FileCode,
+    FileDown,
+    FileBraces,
+    FileType,
+    File as LucideFile,
+    SquareArrowRightEnter,
+    Aperture,
+    FilePlus,
+    House,
+    FolderSearch,
+    Camera,
+    CircleHelp as HelpIcon,
 } from 'lucide-react';
 import './WelcomeScreen.css';
 
 interface WelcomeScreenProps {
     onOpenFile: () => void;
+    /** Create a fresh empty file — same action as the File ▸ New menu. */
+    onNewFile: () => void;
     /** Dismisses the welcome overlay and reveals the empty editor without
      *  picking a file. Wired to the home tab's "Continue without file"
      *  button — lets the user land in the editor and decide what to open
@@ -35,6 +62,28 @@ interface WelcomeScreenProps {
     onMaterialLibrary?: () => void;
     onThemes?: () => void;
     onSettings?: () => void;
+    onAbout?: () => void;
+    onNewStudioScene?: () => void;
+    /** Pops the OS folder-picker and opens the chosen folder in the
+     *  Explorer pane (studio shell only). When omitted, the tile is
+     *  hidden. */
+    onOpenFolder?: () => void;
+    /** Viewer → editor handoff. When the user clicks "Open in BIN editor"
+     *  in the model-viewer's Export accordion, we pass the text-form BIN
+     *  + a display name up so the host can create a new editor tab. */
+    onOpenSkinBinAsText?: (text: string, displayName: string) => void;
+    /** Viewer → Photo Studio handoff. Host extracts the skin's folder
+     *  to a temp dir, opens a new studio scene, and loads it. */
+    onSendMeshToStudio?: (
+        mountId: number,
+        sknChunkHashHex: string,
+        champion: string,
+        skinNum: number,
+        label: string,
+        shadowForm: boolean,
+        chromaSkinNum: number | null,
+        textureBindings: Array<{ submeshName: string; chunkHashHex: string | null }> | null,
+    ) => void;
     appIcon?: string;
     /** Custom window-chrome handlers — when supplied, the welcome screen
      *  draws its own title bar with min/max/close controls. Falls back
@@ -53,6 +102,11 @@ interface WelcomeScreenProps {
      *  welcome at its closed transform; clearing it on the next frame
      *  triggers the slide-in transition. Mirror of `isClosing`. */
     isOpening?: boolean;
+    /** When true the welcome screen is parked off-screen (`display:none`)
+     *  but kept mounted so views like Extract Files retain their state —
+     *  the user can browse a WAD, hop to a BIN editor, and come back to
+     *  the exact same WAD/folder/preview. The wrapper owns this flag. */
+    hidden?: boolean;
 }
 
 interface DirEntry {
@@ -133,7 +187,17 @@ interface WadHashScanResult {
     elapsed_ms: number;
 }
 
-type WelcomeView = 'home' | 'extract';
+type WelcomeView = 'home' | 'extract' | 'viewer';
+
+/** Cross-tab navigation request — Viewer asks Extract Files to mount
+ *  a WAD (if not already) and reveal a specific path inside it.
+ *  `mode: 'folder'` opens the folder; `mode: 'file'` opens the parent
+ *  folder + highlights the file. */
+interface ExtractorNavTarget {
+    wadPath: string;
+    subPath: string;
+    mode: 'file' | 'folder';
+}
 
 function isWadFileName(name: string): boolean {
     const lower = name.toLowerCase();
@@ -188,6 +252,7 @@ function formatBytes(bytes: number): string {
  */
 export default function WelcomeScreen({
     onOpenFile,
+    onNewFile,
     onContinueWithoutFile,
     openFileDisabled = false,
     recentFiles = [],
@@ -195,6 +260,11 @@ export default function WelcomeScreen({
     onMaterialLibrary,
     onThemes,
     onSettings,
+    onAbout,
+    onNewStudioScene,
+    onOpenFolder,
+    onOpenSkinBinAsText,
+    onSendMeshToStudio,
     appIcon,
     onMinimize,
     onMaximize,
@@ -202,9 +272,36 @@ export default function WelcomeScreen({
     isMaximized = false,
     isClosing = false,
     isOpening = false,
+    hidden = false,
 }: WelcomeScreenProps) {
     const [view, setView] = useState<WelcomeView>('home');
     const [search, setSearch] = useState('');
+    // Once the user opens the Extract Files view we keep `ExtractView`
+    // mounted for the rest of the session (just hidden when off-view),
+    // so a browsed WAD / folder / preview survives hopping to a BIN
+    // editor and back. Mounted lazily so first launch stays cheap.
+    const [extractMounted, setExtractMounted] = useState(false);
+    useEffect(() => {
+        if (view === 'extract') setExtractMounted(true);
+    }, [view]);
+    // Same lazy-mount + keep-alive treatment for the Viewer tab so the
+    // CDragon icon cache and any future mount survives tab hops.
+    const [viewerMounted, setViewerMounted] = useState(false);
+    useEffect(() => {
+        if (view === 'viewer') setViewerMounted(true);
+    }, [view]);
+
+    // Viewer → Extract Files cross-tab navigation request. The Viewer's
+    // Export accordion sets this to "go open this BIN / skin folder in
+    // Extract". ExtractView reads it via prop + clears it via
+    // `onConsumed` after navigating, so re-requests fire even if the
+    // user lands on the same target.
+    const [extractNav, setExtractNav] = useState<ExtractorNavTarget | null>(null);
+    const handleJumpToExtractor = (target: ExtractorNavTarget) => {
+        setExtractMounted(true);
+        setExtractNav(target);
+        setView('extract');
+    };
 
     const greeting = useMemo(timeOfDayGreeting, []);
 
@@ -282,22 +379,50 @@ export default function WelcomeScreen({
     // to hide the shell's own title-bar contents (the welcome screen
     // brings its own bar) and quiet any chrome behind us.
     useEffect(() => {
+        if (hidden) return;
         document.body.classList.add('welcome-active');
         return () => document.body.classList.remove('welcome-active');
-    }, []);
+    }, [hidden]);
 
     return (
-        <div className={`welcome-screen-v2${isClosing ? ' welcome-screen-v2-closing' : ''}${isOpening ? ' welcome-screen-v2-opening' : ''}`}>
+        <div
+            className={`welcome-screen-v2${isClosing ? ' welcome-screen-v2-closing' : ''}${isOpening ? ' welcome-screen-v2-opening' : ''}`}
+            style={hidden ? { display: 'none' } : undefined}
+        >
             {(onMinimize || onMaximize || onClose) && (
                 <div className="welcome-titlebar" data-tauri-drag-region>
-                    <div className="welcome-titlebar-brand">
-                        <img
-                            src={appIcon || '/media/jadejade.png'}
-                            alt="Jade"
-                            className="welcome-titlebar-icon"
-                        />
-                        <span className="welcome-titlebar-name">Jade</span>
-                    </div>
+                    {/* Top-left brand doubles as a shortcut to the
+                        editor — 600-DPI users had to scroll the rail
+                        to reach the Editor button at the bottom, so
+                        this gives them a stable top-of-screen entry
+                        point. On hover the icon + label morph into
+                        the editor entry-arrow icon, signalling what
+                        clicking will do without an extra tooltip. */}
+                    <button
+                        type="button"
+                        className="welcome-titlebar-brand welcome-titlebar-brand-btn"
+                        onClick={onContinueWithoutFile}
+                        disabled={!onContinueWithoutFile}
+                        title="Open the editor"
+                        data-guide-id="editor-brand"
+                    >
+                        <span className="welcome-titlebar-icon-stack">
+                            <img
+                                src={appIcon || '/media/jadejade.png'}
+                                alt=""
+                                className="welcome-titlebar-icon welcome-titlebar-icon-default"
+                                draggable={false}
+                            />
+                            <SquareArrowRightEnter
+                                size={20}
+                                className="welcome-titlebar-icon welcome-titlebar-icon-hover"
+                            />
+                        </span>
+                        <span className="welcome-titlebar-name-stack">
+                            <span className="welcome-titlebar-name welcome-titlebar-name-default">Jade</span>
+                            <span className="welcome-titlebar-name welcome-titlebar-name-hover">Editor</span>
+                        </span>
+                    </button>
                     <div className="welcome-titlebar-spacer" data-tauri-drag-region />
                     <div className="welcome-titlebar-controls">
                         {onMinimize && (
@@ -333,13 +458,13 @@ export default function WelcomeScreen({
                     </div>
                 </div>
             )}
-            <aside className="welcome-rail">
+            <aside className="welcome-rail" data-guide-id="rail">
                 <button
                     type="button"
                     className={`welcome-rail-item${view === 'home' ? ' active' : ''}`}
                     onClick={() => setView('home')}
                 >
-                    <HomeIcon size={20} />
+                    <House size={20} />
                     <span>Home</span>
                 </button>
 
@@ -348,10 +473,10 @@ export default function WelcomeScreen({
                     className="welcome-rail-item welcome-rail-item-action"
                     onClick={onOpenFile}
                     disabled={openFileDisabled}
-                    title="Open a .bin file (Ctrl+O)"
+                    title="Open a file (Ctrl+O)"
                 >
-                    <DocIcon size={20} />
-                    <span>Open BIN</span>
+                    <LucideFile size={20} />
+                    <span>Open file</span>
                 </button>
 
                 <button
@@ -359,16 +484,38 @@ export default function WelcomeScreen({
                     className={`welcome-rail-item${view === 'extract' ? ' active' : ''}`}
                     onClick={() => setView('extract')}
                 >
-                    <FolderIcon size={20} />
+                    <FolderSearch size={20} />
                     <span>Extract Files</span>
+                </button>
+
+                <button
+                    type="button"
+                    className={`welcome-rail-item${view === 'viewer' ? ' active' : ''}`}
+                    onClick={() => setView('viewer')}
+                    title="Browse champions, skins, and 3D models"
+                >
+                    <Aperture size={20} />
+                    <span>Viewer</span>
                 </button>
 
                 <div className="welcome-rail-spacer" />
 
-                {onSettings && (
-                    <button type="button" className="welcome-rail-item" onClick={onSettings}>
-                        <SettingsIcon size={20} />
-                        <span>Settings</span>
+                {/* Bottom rail slot used to host the Editor shortcut.
+                    That entry point moved to the top-left brand
+                    button (better Fitts target, mirrors the editor
+                    side's "logo returns to welcome"). The slot now
+                    holds About — the same Help-menu surface that
+                    lives on the right side of the editor's toolbar. */}
+                {onAbout && (
+                    <button
+                        type="button"
+                        className="welcome-rail-item"
+                        onClick={onAbout}
+                        title="About Jade"
+                        data-guide-id="about-btn"
+                    >
+                        <HelpIcon size={20} />
+                        <span>About</span>
                     </button>
                 )}
             </aside>
@@ -381,30 +528,49 @@ export default function WelcomeScreen({
                         onSearch={setSearch}
                         recentFiles={recentFiles}
                         onOpenFile={onOpenFile}
-                        onContinueWithoutFile={onContinueWithoutFile}
+                        onNewFile={onNewFile}
                         onOpenRecentFile={onOpenRecentFile}
                         onMaterialLibrary={onMaterialLibrary}
                         onThemes={onThemes}
                         onSettings={onSettings}
+                        onNewStudioScene={onNewStudioScene}
+                        onOpenFolder={onOpenFolder}
                         openFileDisabled={openFileDisabled}
                     />
                 )}
-                {view === 'extract' && (
-                    <ExtractView
-                        onExtractStatus={setExtractStatusText}
-                        onProgress={setProgress}
-                        multiWadActiveRef={multiWadActiveRef}
-                    />
+                {extractMounted && (
+                    <div style={{ display: view === 'extract' ? 'contents' : 'none' }}>
+                        <ExtractView
+                            active={!hidden && view === 'extract'}
+                            onOpenSkinBinAsText={onOpenSkinBinAsText}
+                            onOpenRecentFile={onOpenRecentFile}
+                            onExtractStatus={setExtractStatusText}
+                            onProgress={setProgress}
+                            multiWadActiveRef={multiWadActiveRef}
+                            navRequest={extractNav}
+                            onNavConsumed={() => setExtractNav(null)}
+                        />
+                    </div>
+                )}
+                {viewerMounted && (
+                    <div style={{ display: view === 'viewer' ? 'contents' : 'none' }}>
+                        <ViewerTab
+                            active={!hidden && view === 'viewer'}
+                            onOpenSkinBinAsText={onOpenSkinBinAsText}
+                            onSendMeshToStudio={onSendMeshToStudio}
+                            onExtractStatus={setExtractStatusText}
+                            onJumpToExtractor={handleJumpToExtractor}
+                        />
+                    </div>
                 )}
             </main>
 
-            {/* Status bar — only present on the Extract view. Sits in
-                its own grid slot below `main`, leaving the rail (which
-                spans the full height) untouched on the left. The fill
-                animates left-to-right across the entire bar. The
-                status text overlays the bar (centered) so progress
-                updates don't jiggle the buttons in the sources column. */}
-            {view === 'extract' && (
+            {/* Status bar — shown for both Extract and Viewer (both
+                drive `wad-extract-progress` events when extracting).
+                Sits in its own grid slot below `main`, leaving the rail
+                untouched on the left. The fill animates left-to-right;
+                the status text overlays it. */}
+            {(view === 'extract' || view === 'viewer') && (
                 <div className="welcome-status">
                     <div
                         className="welcome-status-fill"
@@ -465,12 +631,20 @@ export function WelcomeScreenWithExit({
         };
     }, [visible, shouldRender]);
 
-    if (!shouldRender) return null;
+    // Never fully unmount once it has rendered — when `shouldRender` is
+    // false we keep WelcomeScreen in the tree but parked (`hidden`), so
+    // the Extract Files view holds onto its browsed WAD / preview state
+    // across trips to a BIN editor. `hidden` also short-circuits the
+    // body class + drag-drop listeners so a parked screen is inert.
+    const [everRendered, setEverRendered] = useState(visible);
+    useEffect(() => { if (shouldRender) setEverRendered(true); }, [shouldRender]);
+    if (!shouldRender && !everRendered) return null;
     return (
         <WelcomeScreen
             {...props}
             isClosing={phase === 'closing'}
             isOpening={phase === 'opening'}
+            hidden={!shouldRender}
         />
     );
 }
@@ -482,11 +656,13 @@ function HomeView({
     onSearch,
     recentFiles,
     onOpenFile,
-    onContinueWithoutFile,
+    onNewFile,
     onOpenRecentFile,
     onMaterialLibrary,
     onThemes,
     onSettings,
+    onNewStudioScene,
+    onOpenFolder,
     openFileDisabled,
 }: {
     greeting: string;
@@ -494,17 +670,22 @@ function HomeView({
     onSearch: (s: string) => void;
     recentFiles: string[];
     onOpenFile: () => void;
-    onContinueWithoutFile?: () => void;
+    onNewFile: () => void;
     onOpenRecentFile?: (path: string) => void;
     onMaterialLibrary?: () => void;
     onThemes?: () => void;
     onSettings?: () => void;
+    onNewStudioScene?: () => void;
+    onOpenFolder?: () => void;
     openFileDisabled?: boolean;
 }) {
     const filteredRecent = useMemo(() => {
-        if (!search.trim()) return recentFiles.slice(0, 12);
+        // The backend already clamps to the user's configured limit
+        // (see `recent_files_limit` in app_commands.rs). Don't cap
+        // again here — the list scrolls inside `.welcome-recent-table`.
+        if (!search.trim()) return recentFiles;
         const q = search.toLowerCase();
-        return recentFiles.filter(p => p.toLowerCase().includes(q)).slice(0, 12);
+        return recentFiles.filter(p => p.toLowerCase().includes(q));
     }, [recentFiles, search]);
 
     // Fetch the on-disk mtime for each visible recent file so the
@@ -532,31 +713,42 @@ function HomeView({
         <div className="welcome-home">
             <div className="welcome-home-head">
                 <h1 className="welcome-greeting">{greeting}</h1>
-                {onContinueWithoutFile && (
-                    <button
-                        type="button"
-                        className="welcome-skip-btn"
-                        onClick={onContinueWithoutFile}
-                        title="Skip the welcome screen and go to an empty editor"
-                    >
-                        Continue without file
-                        <ChevronRightIcon size={14} strokeWidth={1.8} />
-                    </button>
-                )}
             </div>
 
-            <section className="welcome-section">
+            <section className="welcome-section" data-guide-id="quick-actions">
                 <div className="welcome-section-head">
                     <h2 className="welcome-section-title">Quick actions</h2>
                 </div>
                 <div className="welcome-tiles">
                     <ActionTile
-                        label="Open BIN"
-                        sub="Open a .bin file"
+                        label="New file"
+                        sub="Start a fresh empty file"
+                        icon={<FilePlus size={28} />}
+                        onClick={onNewFile}
+                    />
+                    <ActionTile
+                        label="Open file"
+                        sub="Browse for a file to open"
                         icon={<DocIcon size={28} />}
                         onClick={onOpenFile}
                         disabled={openFileDisabled}
                     />
+                    {onOpenFolder && (
+                        <ActionTile
+                            label="Open folder"
+                            sub="Browse a folder in the Explorer pane"
+                            icon={<LucideFolderOpen size={28} />}
+                            onClick={onOpenFolder}
+                        />
+                    )}
+                    {onNewStudioScene && (
+                        <ActionTile
+                            label="Photo Studio"
+                            sub="Stage a model and export thumbnails"
+                            icon={<Camera size={28} />}
+                            onClick={onNewStudioScene}
+                        />
+                    )}
                     {onMaterialLibrary && (
                         <ActionTile
                             label="Material Library"
@@ -624,7 +816,7 @@ function HomeView({
                                 title={filePath}
                             >
                                 <span className="col-icon">
-                                    <FormatIcon extension={ext} size={32} />
+                                    {recentFileIcon(filePath, ext)}
                                 </span>
                                 <span className="col-name">
                                     <span className="welcome-recent-name">{fileName}</span>
@@ -666,13 +858,38 @@ function ActionTile({
 
 /* ────────────────── Extract view ────────────────── */
 function ExtractView({
+    active,
+    onOpenSkinBinAsText,
+    onOpenRecentFile,
     onExtractStatus,
     onProgress,
     multiWadActiveRef,
+    navRequest,
+    onNavConsumed,
 }: {
+    /** False while the welcome screen is parked behind a BIN editor or
+     *  the user is on another welcome tab. ExtractView stays mounted so
+     *  its state survives, but the global drag-drop listener only
+     *  registers while it's the foreground view. */
+    active: boolean;
+    /** Open one or more `.bin`/`.py` chunks as text in the editor. Same
+     *  callback the Viewer uses for "Open in BIN editor"; ExtractView
+     *  wires it to a right-click "Send to editor" entry. */
+    onOpenSkinBinAsText?: (text: string, displayName: string) => void;
+    /** Open a real on-disk file in the editor (used for the "Send to
+     *  editor" entry when the right-clicked row is a disk file — no
+     *  need to round-trip through bytes-to-text since the file already
+     *  lives on disk). Same handler the recent-files list uses. */
+    onOpenRecentFile?: (path: string) => void;
     onExtractStatus: (s: string | null) => void;
     onProgress: (pct: number) => void;
     multiWadActiveRef: React.MutableRefObject<boolean>;
+    /** Externally-requested navigation (Viewer's "Show BIN" / "Show files"
+     *  buttons). When set, ExtractView mounts the WAD if needed and
+     *  navigates to the requested sub-path, then calls `onNavConsumed`
+     *  so the parent can clear it. */
+    navRequest: ExtractorNavTarget | null;
+    onNavConsumed: () => void;
 }) {
     const [leagueInstall, setLeagueInstall] = useState<string | null>(null);
     const [leaguePbeInstall, setLeaguePbeInstall] = useState<string | null>(null);
@@ -694,8 +911,39 @@ function ExtractView({
     const [mountInfo, setMountInfo] = useState<WadOpenResult | null>(null);
     const [wadEntries, setWadEntries] = useState<WadEntry[]>([]);
     const [wadCurrentDir, setWadCurrentDir] = useState<string>('');
+    // Search scope toggle. Default: limit matches to the current sub-
+    // folder and its children (so a search inside `data/` won't pull
+    // in unrelated hits from `assets/`). Toggle on to broaden back to
+    // the whole WAD. State is per-session, not persisted — the user
+    // generally wants the same scope across mounts.
+    const [searchWholeWad, setSearchWholeWad] = useState(false);
+    // Brief toast / status hint when the user copies a path. Timed
+    // out after 1.4s so the message doesn't linger.
+    const [copyHint, setCopyHint] = useState<string | null>(null);
+    // Right-click context menu state. `null` = closed; otherwise the
+    // viewport coords + the row the user clicked. Action options are
+    // derived from `row.kind` at render time.
+    const [contextMenu, setContextMenu] = useState<
+        { x: number; y: number; row: BrowseRow } | null
+    >(null);
     const [wadSelected, setWadSelected] = useState<WadEntry | null>(null);
     const [openingWad, setOpeningWad] = useState(false);
+    // VO ↔ main WAD switcher state. When the user opens
+    // `Aatrox.wad.client` and an `Aatrox.VO.wad.client` (or vice
+    // versa) sits next to it on disk, we offer a one-click jump
+    // between the two. `null` = no counterpart detected (button is
+    // disabled). Probed each time `mountInfo.path` changes.
+    const [wadCounterpartPath, setWadCounterpartPath] = useState<string | null>(null);
+    // Per-WAD memory of in-WAD nav + selection state, keyed by the
+    // WAD's disk path. Saved when switching to the counterpart;
+    // restored when switching back so VO ↔ main feels seamless.
+    const wadStateMemoryRef = useRef<
+        Map<string, { dir: string; selectedHash: string | null }>
+    >(new Map());
+    // After a counterpart switch fires `openWad`, this ref carries the
+    // hash to re-select once entries land. Cleared by the consuming
+    // effect below so it only fires once.
+    const pendingWadSelectionRef = useRef<string | null>(null);
     const [extracting, setExtracting] = useState(false);
     /** Bridge to the welcome-screen-level status overlay. Passing the
      *  setter through a prop instead of duplicating state keeps the
@@ -760,19 +1008,86 @@ function ExtractView({
     const IMAGE_ZOOM_MIN = 0.25;
     const IMAGE_ZOOM_MAX = 6;
     const [imageZoom, setImageZoom] = useState(1);
+    // Pan offset for left-click-drag. Cleared whenever zoom resets to
+    // 1× so the texture re-centers, and on every previewed-file
+    // change. Refs track in-flight drags without forcing a render
+    // for each mousemove.
+    const [imagePan, setImagePan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+    const panDragRef = useRef<{
+        startX: number;
+        startY: number;
+        baseX: number;
+        baseY: number;
+    } | null>(null);
+    const [panning, setPanning] = useState(false);
+
     const onImageWheel = (e: React.WheelEvent<HTMLDivElement>) => {
         e.preventDefault();
         const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
         setImageZoom(prev => Math.max(IMAGE_ZOOM_MIN, Math.min(IMAGE_ZOOM_MAX, prev * factor)));
     };
-    // Reset zoom whenever the previewed file changes — a 4× zoom on
-    // the previous texture shouldn't carry over to the next click.
-    useEffect(() => { setImageZoom(1); }, [wadSelected?.path_hash_hex, selected?.path]);
+
+    const onImageMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+        // Only the left mouse button starts a pan — right-click is
+        // left alone for context menus, middle for scroll wheels.
+        if (e.button !== 0) return;
+        e.preventDefault();
+        panDragRef.current = {
+            startX: e.clientX,
+            startY: e.clientY,
+            baseX: imagePan.x,
+            baseY: imagePan.y,
+        };
+        setPanning(true);
+    };
+    const onImageMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+        const drag = panDragRef.current;
+        if (!drag) return;
+        setImagePan({
+            x: drag.baseX + (e.clientX - drag.startX),
+            y: drag.baseY + (e.clientY - drag.startY),
+        });
+    };
+    const onImageMouseUp = () => {
+        if (!panDragRef.current) return;
+        panDragRef.current = null;
+        setPanning(false);
+    };
+
+    // Reset zoom + pan whenever the previewed file changes — a 4×
+    // zoom and a panned offset on the previous texture shouldn't
+    // carry over to the next click.
+    useEffect(() => {
+        setImageZoom(1);
+        setImagePan({ x: 0, y: 0 });
+    }, [wadSelected?.path_hash_hex, selected?.path]);
+    // Double-click resets pan + zoom — handy "snap back" for when the
+    // user has zoomed in tight and lost the image.
+    const onImageDoubleClick = () => {
+        setImageZoom(1);
+        setImagePan({ x: 0, y: 0 });
+    };
     // When true, clicking a row in a WAD also toggles its checkbox.
     // When false, only the checkbox itself toggles selection — clicking
     // the row only changes the preview. Some users prefer the strict
     // mode so a stray click doesn't add things to the extract queue.
     const [autoCheckOnClick, setAutoCheckOnClick] = useState(true);
+    // Output layout: 'structure' recreates the WAD's folder tree (default),
+    // 'flat' dumps every extracted file straight into the target dir.
+    const [extractMode, setExtractMode] = useState<ExtractMode>('structure');
+    // When preserving structure, whether to nest everything under a folder
+    // named after the WAD (`aatrox/assets/...`) or extract its top-level
+    // folders straight into the target. Ignored in flat mode.
+    const [makeWadFolder, setMakeWadFolder] = useState(true);
+    // Default extraction location — when enabled, extracts skip the
+    // "pick a folder" dialog entirely and write straight to this path.
+    // The path itself defaults to `Documents/Jade Exports` (resolved on
+    // first run when the stored preference is empty).
+    const [useDefaultLocation, setUseDefaultLocation] = useState(false);
+    const [defaultExtractLocation, setDefaultExtractLocation] = useState('');
+    // Prefix inserted under `assets/` / `data/` when the Viewer's
+    // "Re-path" checkbox is on. Default mirrors Quartz's convention.
+    const [repathPrefix, setRepathPrefix] = useState<string>('jade');
     useEffect(() => {
         invoke<string>('get_preference', {
             key: 'WadUseRenamePattern',
@@ -786,6 +1101,48 @@ function ExtractView({
         })
             .then(v => setAutoCheckOnClick(v === 'True'))
             .catch(() => {});
+        invoke<string>('get_preference', {
+            key: 'WadExtractMode',
+            defaultValue: 'structure',
+        })
+            .then(v => setExtractMode(v === 'flat' ? 'flat' : 'structure'))
+            .catch(() => {});
+        invoke<string>('get_preference', {
+            key: 'WadMakeWadFolder',
+            defaultValue: 'True',
+        })
+            .then(v => setMakeWadFolder(v === 'True'))
+            .catch(() => {});
+        invoke<string>('get_preference', {
+            key: 'WadUseDefaultLocation',
+            defaultValue: 'False',
+        })
+            .then(v => setUseDefaultLocation(v === 'True'))
+            .catch(() => {});
+        // Resolve the stored default location, falling back to
+        // `Documents/Jade Exports` the first time (and persisting it so
+        // the path the user sees in settings is always concrete).
+        invoke<string>('get_preference', {
+            key: 'WadRepathPrefix',
+            defaultValue: 'jade',
+        })
+            .then(v => setRepathPrefix(v || 'jade'))
+            .catch(() => {});
+        invoke<string>('get_preference', {
+            key: 'WadDefaultLocation',
+            defaultValue: '',
+        })
+            .then(async (v) => {
+                if (v) { setDefaultExtractLocation(v); return; }
+                try {
+                    const { documentDir, join } = await import('@tauri-apps/api/path');
+                    const fallback = await join(await documentDir(), 'Jade Exports');
+                    setDefaultExtractLocation(fallback);
+                    invoke('set_preference', { key: 'WadDefaultLocation', value: fallback })
+                        .catch(() => {});
+                } catch { /* no path API — leave empty, dialog still works */ }
+            })
+            .catch(() => {});
     }, []);
     const toggleRenamePattern = (next: boolean) => {
         setUseRenamePattern(next);
@@ -794,12 +1151,62 @@ function ExtractView({
             value: next ? 'True' : 'False',
         }).catch(() => {});
     };
+    const changeRepathPrefix = (next: string) => {
+        // Trim whitespace; leave slash handling to the Rust side
+        // (it strips leading/trailing slashes anyway).
+        setRepathPrefix(next);
+        invoke('set_preference', {
+            key: 'WadRepathPrefix',
+            value: next.trim(),
+        }).catch(() => {});
+    };
     const toggleAutoCheckOnClick = (next: boolean) => {
         setAutoCheckOnClick(next);
         invoke('set_preference', {
             key: 'WadAutoCheckOnClick',
             value: next ? 'True' : 'False',
         }).catch(() => {});
+    };
+    const changeExtractMode = (next: ExtractMode) => {
+        setExtractMode(next);
+        invoke('set_preference', {
+            key: 'WadExtractMode',
+            value: next,
+        }).catch(() => {});
+    };
+    const toggleMakeWadFolder = (next: boolean) => {
+        setMakeWadFolder(next);
+        invoke('set_preference', {
+            key: 'WadMakeWadFolder',
+            value: next ? 'True' : 'False',
+        }).catch(() => {});
+    };
+    const toggleUseDefaultLocation = (next: boolean) => {
+        setUseDefaultLocation(next);
+        invoke('set_preference', {
+            key: 'WadUseDefaultLocation',
+            value: next ? 'True' : 'False',
+        }).catch(() => {});
+    };
+    const pickDefaultLocation = async () => {
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const picked = await open({ directory: true, multiple: false });
+        if (typeof picked !== 'string') return;
+        setDefaultExtractLocation(picked);
+        invoke('set_preference', { key: 'WadDefaultLocation', value: picked })
+            .catch(() => {});
+    };
+
+    /** Resolve where an extraction should write. When the default-location
+     *  setting is on and a path is set, use it without a dialog; otherwise
+     *  prompt the user. Returns `null` when the user cancels the dialog. */
+    const resolveExtractTarget = async (): Promise<string | null> => {
+        if (useDefaultLocation && defaultExtractLocation) {
+            return defaultExtractLocation;
+        }
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const picked = await open({ directory: true, multiple: false });
+        return typeof picked === 'string' ? picked : null;
     };
 
     // ── Preview state for WAD chunks (DDS / TEX / browser image). Disk-
@@ -903,6 +1310,15 @@ function ExtractView({
 
     const closeWad = async () => {
         if (mountInfo) {
+            // Wipe every in-WAD browse entry for this mount before
+            // tearing it down. Leaving them around would cause a
+            // fresh open of the same WAD (different mount id) to
+            // miss them anyway, but stale keys waste memory and
+            // could surprise debugging.
+            const stalePrefix = `wad:${mountInfo.id}:`;
+            for (const k of Array.from(browseMemoryRef.current.keys())) {
+                if (k.startsWith(stalePrefix)) browseMemoryRef.current.delete(k);
+            }
             try { await invoke('wad_close', { id: mountInfo.id }); } catch { /* ignore */ }
         }
         setMountInfo(null);
@@ -912,7 +1328,60 @@ function ExtractView({
         setSelectedHashes(new Set());
     };
 
-    const openWad = async (path: string) => {
+    /** Navigate to a different in-WAD folder. Saves the scroll +
+     *  search state of the folder we're leaving so the restore
+     *  effect can put us back where we were if we come back. */
+    const navigateWadDir = (nextDir: string) => {
+        if (mountInfo && nextDir !== wadCurrentDir) {
+            const liveTop = listRef.current?.scrollTop ?? listScrollTop;
+            browseMemoryRef.current.set(
+                `wad:${mountInfo.id}:${wadCurrentDir}`,
+                { scrollTop: liveTop, search },
+            );
+        }
+        setWadCurrentDir(nextDir);
+    };
+
+    // Guards against the nav effect firing `openWad` twice for the
+    // same WAD before mountInfo has updated — without this, a
+    // duplicate call's late `setWadCurrentDir('')` overwrites the
+    // navigation we performed in between, sending the user back to
+    // the WAD root. Cleared in openWad's finally.
+    const openWadInFlightRef = useRef<string | null>(null);
+
+    // Browse-position memory keyed by a string id:
+    //   - `disk:<currentPath>` for disk folder navigation
+    //   - `wad:<mountId>:<wadCurrentDir>` for in-WAD folder navigation
+    // Saved on every navigation transition; restored when returning
+    // to a key that matches the current search. WAD-side entries are
+    // cleared the moment we unmount that WAD so a fresh open of the
+    // same WAD starts at the top.
+    const browseMemoryRef = useRef<
+        Map<string, { scrollTop: number; search: string }>
+    >(new Map());
+
+    /** Build the memory key for the current browse location. Disk
+     *  paths and in-WAD folders share the same map but use distinct
+     *  prefixes so they never collide. */
+    const buildBrowseKey = (
+        mount: { id: number } | null,
+        diskPath: string,
+        wadDir: string,
+    ): string =>
+        mount ? `wad:${mount.id}:${wadDir}` : `disk:${diskPath}`;
+
+    const openWad = async (path: string, initialSubDir = '') => {
+        if (openWadInFlightRef.current === path) return;
+        openWadInFlightRef.current = path;
+        // Capture the disk-side browse state (scroll + search) before
+        // we navigate away, keyed by the path the user is currently
+        // browsing. Restored by the scroll-reset effect when they return.
+        if (currentPath) {
+            browseMemoryRef.current.set(`disk:${currentPath}`, {
+                scrollTop: listScrollTop,
+                search,
+            });
+        }
         setOpeningWad(true);
         setError(null);
         // Browsing into a WAD shouldn't keep the disk-side preview row
@@ -932,7 +1401,11 @@ function ExtractView({
             const items = await invoke<WadEntry[]>('wad_list_entries', { id: info.id });
             setMountInfo(info);
             setWadEntries(items);
-            setWadCurrentDir('');
+            // Land at the caller's requested subdir when they passed
+            // one — used by the Viewer's "Show files / Show BIN" jump
+            // so the user opens the WAD pre-scoped to the right folder
+            // instead of root.
+            setWadCurrentDir(initialSubDir);
             setWadSelected(null);
             // Switching WADs starts with a clean queue — leftover
             // checkboxes from the previous WAD would silently leak
@@ -957,6 +1430,11 @@ function ExtractView({
             setError(typeof e === 'string' ? e : 'Failed to open WAD');
         } finally {
             setOpeningWad(false);
+            // Clear the in-flight latch regardless of outcome so a
+            // failed open can be retried without being silently skipped.
+            if (openWadInFlightRef.current === path) {
+                openWadInFlightRef.current = null;
+            }
         }
     };
 
@@ -966,6 +1444,384 @@ function ExtractView({
         if (mountInfo) await closeWad();
         setCurrentPath(path);
     };
+
+    /** League ships per-locale VO WADs alongside the main champion
+     *  WAD using the pattern `<base>.<locale>.wad.client`, where the
+     *  locale is a Riot region code like `en_US`, `fr_FR`, `ja_JP`,
+     *  `ko_KR`, `es_MX`, `zh_CN`, etc.
+     *
+     *  - From a locale VO WAD → return the main WAD path (strip the
+     *    `.<locale>` segment).
+     *  - From a main WAD → return `null` (caller scans the dir to
+     *    find which locale variants actually exist; we don't know
+     *    which one the user wants without looking).
+     */
+    const stripLocaleSegment = (path: string): { main: string; isVo: boolean } => {
+        // Match the basename's tail: optional `.<locale>` before
+        // `.wad.client` / `.wad.mobile` / `.wad`. Two-letter language
+        // + underscore + two-letter region.
+        const m = path.match(/^(.*?)(\.[a-z]{2}_[A-Z]{2})(\.wad(?:\.(?:client|mobile))?)$/);
+        if (m) return { main: m[1] + m[3], isVo: true };
+        return { main: path, isVo: false };
+    };
+
+    /** Find a sibling locale VO WAD for the given main-WAD path.
+     *  Lists the parent directory and returns the first file whose
+     *  name matches `<basename-of-main>.<locale>.<ext>`. Returns
+     *  null when nothing matches (champion has no VO shipped). */
+    const findAnyLocaleSibling = async (mainPath: string): Promise<string | null> => {
+        const norm = mainPath.replace(/\\/g, '/');
+        const slash = norm.lastIndexOf('/');
+        const dir = slash === -1 ? '' : mainPath.slice(0, slash);
+        const baseName = slash === -1 ? mainPath : mainPath.slice(slash + 1);
+        // Build the expected filename prefix + tail. Use `\\` to be
+        // safe — the rust list_directory returns absolute paths in OS-
+        // native form, so the matcher works on either separator.
+        const tailMatch = baseName.match(/(\.wad(?:\.(?:client|mobile))?)$/i);
+        if (!tailMatch) return null;
+        const stem = baseName.slice(0, baseName.length - tailMatch[1].length);
+        const tail = tailMatch[1];
+        const prefix = `${stem}.`;
+        try {
+            const entries = await invoke<{ name: string; is_dir: boolean; path: string }[]>(
+                'list_directory',
+                { path: dir },
+            );
+            for (const e of entries) {
+                if (e.is_dir) continue;
+                if (!e.name.startsWith(prefix)) continue;
+                // The bit between prefix and tail must look like a locale.
+                const inner = e.name.slice(prefix.length, e.name.length - tail.length);
+                if (/^[a-z]{2}_[A-Z]{2}$/.test(inner)) return e.path;
+            }
+        } catch {
+            /* directory unreadable → no counterpart */
+        }
+        return null;
+    };
+
+    // Probe the counterpart whenever the mount path changes. For a
+    // locale VO WAD we straight-up compute the main path. For the
+    // main WAD we have to ASK the filesystem which locale variants
+    // exist, since the user might have any locale installed.
+    useEffect(() => {
+        if (!mountInfo) {
+            setWadCounterpartPath(null);
+            return;
+        }
+        let cancelled = false;
+        const { main, isVo } = stripLocaleSegment(mountInfo.path);
+        (async () => {
+            if (isVo) {
+                // Locale VO → main. Verify the main exists before we
+                // promise the user they can switch to it.
+                try {
+                    const exists = await invoke<boolean>('file_exists', { path: main });
+                    if (!cancelled) setWadCounterpartPath(exists ? main : null);
+                } catch {
+                    if (!cancelled) setWadCounterpartPath(null);
+                }
+            } else {
+                // Main → locale VO. Scan the dir for any sibling that
+                // matches `<base>.<locale>.<ext>`.
+                const found = await findAnyLocaleSibling(mountInfo.path);
+                if (!cancelled) setWadCounterpartPath(found);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [mountInfo?.path]);
+
+    /** Switch from the current WAD to its VO/main counterpart.
+     *  Saves the current in-WAD path + selection under the source
+     *  WAD's key, then restores any saved state for the destination.
+     *  Called from the search-bar VO/main toggle button. */
+    const switchToWadCounterpart = async () => {
+        if (!mountInfo || !wadCounterpartPath) return;
+        // Save current WAD's state before tearing it down.
+        wadStateMemoryRef.current.set(mountInfo.path, {
+            dir: wadCurrentDir,
+            selectedHash: wadSelected?.path_hash_hex ?? null,
+        });
+        const target = wadCounterpartPath;
+        const savedDest = wadStateMemoryRef.current.get(target);
+        // Queue the selection-restore hash before openWad commits, so
+        // the effect that watches `wadEntries` (below) can pick it up
+        // as soon as the new WAD's chunk list lands.
+        pendingWadSelectionRef.current = savedDest?.selectedHash ?? null;
+        await closeWad();
+        await openWad(target, savedDest?.dir ?? '');
+    };
+
+    // Apply any queued selection once the WAD's entries land (e.g.
+    // after a VO/main switch). Single-shot — the ref is cleared after
+    // the match so subsequent entry changes don't re-fire.
+    useEffect(() => {
+        const target = pendingWadSelectionRef.current;
+        if (!target || wadEntries.length === 0) return;
+        const match = wadEntries.find((e) => e.path_hash_hex === target);
+        if (match) setWadSelected(match);
+        pendingWadSelectionRef.current = null;
+    }, [wadEntries]);
+
+    // Close the context menu on any outside click / Esc / another
+    // right-click. Mirrors how most native menus dismiss themselves.
+    useEffect(() => {
+        if (!contextMenu) return;
+        const close = () => setContextMenu(null);
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') close();
+        };
+        window.addEventListener('click', close);
+        window.addEventListener('contextmenu', close);
+        window.addEventListener('keydown', onKey);
+        return () => {
+            window.removeEventListener('click', close);
+            window.removeEventListener('contextmenu', close);
+            window.removeEventListener('keydown', onKey);
+        };
+    }, [contextMenu]);
+
+    // Right-click handler — opens the menu at the cursor. We
+    // `preventDefault` to suppress the browser's native context menu,
+    // and `stopPropagation` so the close-on-click listener installed
+    // above doesn't immediately fire and dismiss us.
+    const openContextMenu = (e: React.MouseEvent, row: BrowseRow) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setContextMenu({ x: e.clientX, y: e.clientY, row });
+    };
+
+    // Copy the row's path (in-WAD for wad rows, OS path for disk rows).
+    const handleCopyRowPath = (row: BrowseRow) => {
+        setContextMenu(null);
+        let p = '';
+        if (row.kind === 'wad-file') p = row.entry.path;
+        else if (row.kind === 'wad-folder') p = row.subPath;
+        else p = row.entry.path;
+        if (!p) return;
+        navigator.clipboard.writeText(p).catch(() => {});
+        onExtractStatus(`Copied ${p}`);
+        setTimeout(() => onExtractStatus(null), 1400);
+    };
+
+    // Copy just the row's basename (the part after the last `/`).
+    // Distinct from "Copy path" because users often want only the
+    // filename without the full WAD-relative or disk path leading up
+    // to it. Disabled when multiple rows are selected — picking which
+    // name to copy in that case isn't meaningful.
+    const handleCopyRowName = (row: BrowseRow) => {
+        setContextMenu(null);
+        let p = '';
+        if (row.kind === 'wad-file') p = row.entry.path;
+        else if (row.kind === 'wad-folder') p = row.subPath;
+        else p = row.entry.path;
+        if (!p) return;
+        // Strip any trailing slash, then take the part after the last
+        // separator (covers both / and \\ for disk paths on Windows).
+        const trimmed = p.replace(/[\\/]+$/, '');
+        const i = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+        const name = i === -1 ? trimmed : trimmed.slice(i + 1);
+        navigator.clipboard.writeText(name).catch(() => {});
+        onExtractStatus(`Copied ${name}`);
+        setTimeout(() => onExtractStatus(null), 1400);
+    };
+
+    // Save a single WAD chunk to disk via "Save As" dialog. Bypasses
+    // the folder-structure preference entirely — the file lands at
+    // whatever path the user picks, with whatever name they choose.
+    const handleSaveSingleWadFile = async (entry: WadEntry) => {
+        setContextMenu(null);
+        if (!mountInfo) return;
+        const lastSlash = entry.path.lastIndexOf('/');
+        const fname = lastSlash === -1 ? entry.path : entry.path.slice(lastSlash + 1);
+        const { save } = await import('@tauri-apps/plugin-dialog');
+        const picked = await save({ title: 'Save file as', defaultPath: fname });
+        if (!picked || typeof picked !== 'string') return;
+        try {
+            const b64 = await invoke<string>('wad_read_chunk_b64', {
+                id: mountInfo.id,
+                pathHashHex: entry.path_hash_hex,
+            });
+            const bin = atob(b64);
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            await invoke('write_bytes_file', { path: picked, bytes: Array.from(bytes) });
+            onExtractStatus(`Saved ${fname}`);
+        } catch (err) {
+            onExtractStatus(`Save failed: ${err}`);
+        }
+    };
+
+    // ── Send BIN chunk(s) to the editor ────────────────────────
+    // Mirrors the Viewer's "Open in BIN editor" flow: pull each chunk's
+    // bytes via `wad_read_chunk_b64`, convert through
+    // `convert_bin_bytes_to_text`, and hand the result up via the
+    // `onOpenSkinBinAsText` prop (App.tsx opens an editor tab with the
+    // synthetic name). Accepts a list of entries so multi-select works
+    // — each one becomes its own tab.
+    const sendEntriesToEditor = async (entries: WadEntry[]) => {
+        if (!onOpenSkinBinAsText || !mountInfo || entries.length === 0) return;
+        let opened = 0;
+        let failed = 0;
+        for (const entry of entries) {
+            try {
+                const b64 = await invoke<string>('wad_read_chunk_b64', {
+                    id: mountInfo.id,
+                    pathHashHex: entry.path_hash_hex,
+                });
+                const bin = atob(b64);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                const text = await invoke<string>('convert_bin_bytes_to_text', {
+                    binData: Array.from(bytes),
+                });
+                const lastSlash = entry.path.lastIndexOf('/');
+                const fname = lastSlash === -1 ? entry.path : entry.path.slice(lastSlash + 1);
+                onOpenSkinBinAsText(text, fname);
+                opened++;
+            } catch (err) {
+                console.warn('[extract] send to editor failed:', entry.path, err);
+                failed++;
+            }
+        }
+        if (opened > 0) {
+            onExtractStatus(
+                failed > 0
+                    ? `Sent ${opened} to editor (${failed} failed)`
+                    : `Sent ${opened} ${opened === 1 ? 'file' : 'files'} to editor`,
+            );
+        } else if (failed > 0) {
+            onExtractStatus(`Send to editor failed`);
+        }
+    };
+
+    /** Returns the list of `.bin`/`.py` WadEntries the user means by
+     *  right-clicking — if they have multi-select active and the
+     *  right-clicked row is part of it, every selected `.bin`/`.py`;
+     *  otherwise just the right-clicked row (if it is one). */
+    const collectBinEntriesForRow = (row: BrowseRow): WadEntry[] => {
+        if (row.kind !== 'wad-file') return [];
+        const isBinPath = (p: string) => {
+            const lower = p.toLowerCase();
+            return lower.endsWith('.bin') || lower.endsWith('.py');
+        };
+        // Multi-select takes precedence iff the right-clicked row is in it.
+        if (selectedHashes.size > 1 && selectedHashes.has(row.entry.path_hash_hex)) {
+            return wadEntries.filter(
+                (e) => selectedHashes.has(e.path_hash_hex) && isBinPath(e.path),
+            );
+        }
+        return isBinPath(row.entry.path) ? [row.entry] : [];
+    };
+
+    const handleSendBinToEditor = async (row: BrowseRow) => {
+        setContextMenu(null);
+        const entries = collectBinEntriesForRow(row);
+        if (entries.length === 0) return;
+        await sendEntriesToEditor(entries);
+    };
+
+    /** Returns the absolute disk path if the row is a disk-side
+     *  `.bin`/`.py` file, otherwise null. No multi-select on the disk
+     *  side — single file at a time. */
+    const collectDiskBinPathForRow = (row: BrowseRow): string | null => {
+        if (row.kind !== 'disk-file') return null;
+        const lower = row.entry.name.toLowerCase();
+        if (!lower.endsWith('.bin') && !lower.endsWith('.py')) return null;
+        return row.entry.path;
+    };
+
+    const handleSendDiskBinToEditor = (row: BrowseRow) => {
+        setContextMenu(null);
+        const path = collectDiskBinPathForRow(row);
+        if (!path || !onOpenRecentFile) return;
+        onOpenRecentFile(path);
+        onExtractStatus(`Sent to editor`);
+        setTimeout(() => onExtractStatus(null), 1400);
+    };
+
+    // Save a set of chunks flat to a folder. Used for "Save selected"
+    // and "Save folder" — both pre-build the hash list and reuse
+    // wad_extract with `flatten: true`, which writes every file's
+    // basename directly into the target dir without recreating any
+    // of the WAD's subfolder structure.
+    const saveChunksFlat = async (hashes: string[], dialogTitle: string) => {
+        if (!mountInfo || hashes.length === 0) return;
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const picked = await open({ directory: true, multiple: false, title: dialogTitle });
+        if (!picked || typeof picked !== 'string') return;
+        try {
+            const actionId = `extract-flat-${Date.now()}`;
+            await invoke('wad_extract', {
+                id: mountInfo.id,
+                outputDir: picked,
+                actionId,
+                selectedHashes: hashes,
+                useRename: true,
+                flatten: true,
+            });
+        } catch (err) {
+            onExtractStatus(`Save failed: ${err}`);
+        }
+    };
+
+    const handleSaveSelectedFlat = () => {
+        setContextMenu(null);
+        const hashes = Array.from(selectedHashes);
+        void saveChunksFlat(
+            hashes,
+            `Save ${hashes.length} file${hashes.length === 1 ? '' : 's'} (flat)`,
+        );
+    };
+
+    const handleSaveFolderFlat = (subPath: string) => {
+        setContextMenu(null);
+        const prefix = subPath.toLowerCase() + '/';
+        const hashes = wadEntries
+            .filter((e) => {
+                const lower = e.path.toLowerCase();
+                return lower === subPath.toLowerCase() || lower.startsWith(prefix);
+            })
+            .map((e) => e.path_hash_hex);
+        void saveChunksFlat(hashes, `Save folder (flat)`);
+    };
+
+    // External navigation request — Viewer's "Show BIN" / "Show files"
+    // buttons land here. Mount the requested WAD if it isn't already,
+    // then jump to the sub-path. Re-fires when the request changes
+    // OR when mount/entries become available after a fresh openWad.
+    useEffect(() => {
+        if (!navRequest) return;
+        const lowerSub = navRequest.subPath.toLowerCase().replace(/\/+$/, '');
+        // For 'file' mode the target folder is the file's parent dir;
+        // for 'folder' mode it's the folder itself. Computing this up
+        // front lets us hand the folder to openWad so a fresh mount
+        // lands directly at the right place instead of root.
+        const targetFolder =
+            navRequest.mode === 'folder'
+                ? lowerSub
+                : lowerSub.includes('/')
+                    ? lowerSub.slice(0, lowerSub.lastIndexOf('/'))
+                    : '';
+        // Need the requested WAD mounted before we can navigate inside it.
+        if (!mountInfo || mountInfo.path !== navRequest.wadPath) {
+            void openWad(navRequest.wadPath, targetFolder);
+            return; // re-runs when mountInfo flips
+        }
+        if (wadEntries.length === 0) return; // wait for entries
+        if (navRequest.mode === 'folder') {
+            setWadCurrentDir(targetFolder);
+            setWadSelected(null);
+        } else {
+            setWadCurrentDir(targetFolder);
+            const entry = wadEntries.find((e) => e.path.toLowerCase() === lowerSub);
+            if (entry) setWadSelected(entry);
+        }
+        onNavConsumed();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [navRequest, mountInfo?.path, wadEntries.length]);
 
     const startExtraction = async (overrideHashes?: string[]) => {
         if (!mountInfo) return;
@@ -977,22 +1833,25 @@ function ExtractView({
         const sel = overrideHashes !== undefined
             ? overrideHashes
             : effectiveSelection;
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const picked = await open({ directory: true, multiple: false });
-        if (typeof picked !== 'string') return;
+        const picked = await resolveExtractTarget();
+        if (picked === null) return;
 
-        // Always nest the WAD's contents under a folder named after the
-        // WAD itself, so picking `test/` for `aatrox.wad.client` produces
-        // `test/aatrox/assets/...` instead of dumping `assets/` straight
-        // into `test/`. Mirrors Quartz's default extract layout.
+        // Nest the WAD's contents under a folder named after the WAD
+        // itself (`test/aatrox/assets/...`) when preserving structure
+        // *and* the "create WAD-name folder" setting is on. Flat mode or
+        // a disabled toggle extracts straight into the picked directory.
+        const flatten = extractMode === 'flat';
         const wadStem = mountInfo.name
             .replace(/\.wad\.client$/i, '')
             .replace(/\.wad\.mobile$/i, '')
             .replace(/\.wad$/i, '');
         const sep = picked.includes('\\') ? '\\' : '/';
-        const targetDir = picked.endsWith(sep)
-            ? `${picked}${wadStem}`
-            : `${picked}${sep}${wadStem}`;
+        const nestUnderWad = !flatten && makeWadFolder;
+        const targetDir = !nestUnderWad
+            ? picked
+            : picked.endsWith(sep)
+                ? `${picked}${wadStem}`
+                : `${picked}${sep}${wadStem}`;
 
         const actionId = `extract-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         extractActionRef.current = actionId;
@@ -1005,6 +1864,7 @@ function ExtractView({
                 actionId,
                 selectedHashes: sel.length > 0 ? sel : null,
                 useRename: useRenamePattern,
+                flatten,
             });
             // Final summary already covered by the progress event; keep
             // this for cases where the event might lag the result.
@@ -1031,6 +1891,10 @@ function ExtractView({
      *  a tagged payload; we listen on the global event API so this works
      *  regardless of which webview window the file was dropped on. */
     useEffect(() => {
+        // Only the foreground Extract view claims dropped WADs — when
+        // parked behind a BIN editor the app's global drag-drop handler
+        // should win instead.
+        if (!active) return;
         let unlistenDrop: (() => void) | undefined;
         let unlistenHover: (() => void) | undefined;
         let unlistenCancel: (() => void) | undefined;
@@ -1062,9 +1926,9 @@ function ExtractView({
         };
     // openWad is stable enough across renders for our purposes; we don't
     // want to tear-down/re-register the global listener every time the
-    // user clicks a file.
+    // user clicks a file — only when the view's foreground state flips.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [active]);
 
     const cancelExtraction = async () => {
         // Stop the multi-WAD loop from picking the next WAD.
@@ -1156,9 +2020,8 @@ function ExtractView({
      *  WADs" instead of the noisy per-file numbers. */
     const startDiskWadsExtraction = async (wadPaths: string[]) => {
         if (wadPaths.length === 0) return;
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const picked = await open({ directory: true, multiple: false });
-        if (typeof picked !== 'string') return;
+        const picked = await resolveExtractTarget();
+        if (picked === null) return;
 
         cancelRef.current = false;
         multiWadActiveRef.current = true;
@@ -1250,9 +2113,16 @@ function ExtractView({
                     .replace(/\.wad\.client$/i, '')
                     .replace(/\.wad\.mobile$/i, '')
                     .replace(/\.wad$/i, '');
-                const targetDir = picked.endsWith(sep)
-                    ? `${picked}${wadStem}`
-                    : `${picked}${sep}${wadStem}`;
+                // In flat mode every WAD's files merge into the picked dir.
+                // With the WAD-folder toggle off, structure is extracted
+                // straight into the picked dir (WADs can overwrite each
+                // other) — that's the user's explicit choice.
+                const nestUnderWad = extractMode !== 'flat' && makeWadFolder;
+                const targetDir = !nestUnderWad
+                    ? picked
+                    : picked.endsWith(sep)
+                        ? `${picked}${wadStem}`
+                        : `${picked}${sep}${wadStem}`;
 
                 onExtractStatus(`Processing ${i + 1} of ${totalWads} WAD${totalWads === 1 ? '' : 's'}`);
 
@@ -1266,6 +2136,7 @@ function ExtractView({
                         actionId,
                         selectedHashes: null,
                         useRename: useRenamePattern,
+                        flatten: extractMode === 'flat',
                     });
                     totalWritten += result.written;
                     totalErrors += result.errors;
@@ -1351,10 +2222,16 @@ function ExtractView({
         });
     };
 
-    // Reset the search box whenever the current location changes — picking
-    // a new directory (or stepping inside a WAD) should start fresh, not
-    // keep filtering by a query that was meant for the previous level.
-    useEffect(() => { setSearch(''); }, [currentPath, mountInfo?.id, wadCurrentDir]);
+    // Reset the search box whenever the current location changes —
+    // picking a new directory or stepping inside a WAD should start
+    // fresh. Exception: returning to a disk path we previously left
+    // (to open a WAD) restores the saved query so the user keeps
+    // their filter through a Zac → WAD → back-to-Zac round trip.
+    useEffect(() => {
+        const key = buildBrowseKey(mountInfo, currentPath, wadCurrentDir);
+        const saved = browseMemoryRef.current.get(key);
+        setSearch(saved?.search ?? '');
+    }, [currentPath, mountInfo?.id, wadCurrentDir]);
 
     // Disk listing — only refetch on disk side. When mounted into a WAD
     // we render `wadEntries` instead of hitting the filesystem again.
@@ -1385,7 +2262,7 @@ function ExtractView({
         if (mountInfo) {
             if (wadCurrentDir) {
                 const idx = wadCurrentDir.lastIndexOf('/');
-                setWadCurrentDir(idx === -1 ? '' : wadCurrentDir.slice(0, idx));
+                navigateWadDir(idx === -1 ? '' : wadCurrentDir.slice(0, idx));
             } else {
                 // Closing from WAD root — drop the user back into the
                 // disk folder the WAD lived in, otherwise the file list
@@ -1515,8 +2392,18 @@ function ExtractView({
             // walk the tree to the current sub-path and project its
             // children into rows.
             if (q && wadSearchIndex) {
+                // Scope: by default we restrict matches to the current
+                // sub-folder + its descendants — the toggle next to the
+                // search input flips this back to "search the whole
+                // WAD" when the user wants to.
+                const scopePrefix = searchWholeWad
+                    ? ''
+                    : wadCurrentDir
+                        ? `${wadCurrentDir.toLowerCase()}/`
+                        : '';
                 const out: BrowseRow[] = [];
                 for (const { entry, lower } of wadSearchIndex) {
+                    if (scopePrefix && !lower.startsWith(scopePrefix)) continue;
                     if (lower.includes(q)) {
                         out.push({ kind: 'wad-file', entry });
                         if (out.length >= 1000) break;
@@ -1560,7 +2447,7 @@ function ExtractView({
             kind: entry.is_dir ? 'disk-folder' as const : 'disk-file' as const,
             entry,
         }));
-    }, [mountInfo, wadTree, wadSearchIndex, wadCurrentDir, entries, search]);
+    }, [mountInfo, wadTree, wadSearchIndex, wadCurrentDir, entries, search, searchWholeWad]);
 
     // Breadcrumb walks disk → WAD file → in-WAD path. Each segment is
     // clickable; clicking a disk segment while inside a WAD unmounts it
@@ -1591,13 +2478,13 @@ function ExtractView({
         if (mountInfo) {
             // WAD itself sits as a "folder" segment between disk and in-WAD
             // path. Clicking it returns to the WAD's root.
-            out.push({ label: mountInfo.name, onClick: () => setWadCurrentDir('') });
+            out.push({ label: mountInfo.name, onClick: () => navigateWadDir('') });
             const subParts = wadCurrentDir.split('/').filter(Boolean);
             let acc = '';
             for (const p of subParts) {
                 acc = acc ? `${acc}/${p}` : p;
                 const path = acc;
-                out.push({ label: p, onClick: () => setWadCurrentDir(path) });
+                out.push({ label: p, onClick: () => navigateWadDir(path) });
             }
         }
         return out;
@@ -1640,9 +2527,10 @@ function ExtractView({
         const isDDS = ext === '.dds';
         const isTEX = ext === '.tex';
         const isBrowserImg = ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.bmp';
-        // BIN preview is wad-only — disk-side .bin opens in the editor
-        // so re-routing it through the preview pane would be confusing.
-        const isBIN = !!wadSelected && (ext === '.bin' || ext === '.py');
+        // BIN preview works the same for WAD chunks and disk files —
+        // the only difference is the byte source (`source.fetchB64`
+        // already covers both).
+        const isBIN = ext === '.bin' || ext === '.py';
         if (!isDDS && !isTEX && !isBrowserImg && !isBIN) { reset(); return; }
 
         let cancelled = false;
@@ -1659,17 +2547,50 @@ function ExtractView({
                 for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 
                 if (isDDS) {
-                    const { dataURL, width, height, ddsFormat } = ddsBufferToDataURL(bytes.buffer, 512);
-                    if (!cancelled) setPreviewState({
-                        loading: false, dataUrl: dataURL, error: null,
-                        format: ddsFormatName(ddsFormat), width, height, binText: null,
-                    });
+                    try {
+                        const { dataURL, width, height, ddsFormat } = ddsBufferToDataURL(bytes.buffer, 512);
+                        if (!cancelled) setPreviewState({
+                            loading: false, dataUrl: dataURL, error: null,
+                            format: ddsFormatName(ddsFormat), width, height, binText: null,
+                        });
+                    } catch (jsErr) {
+                        // The TS DDS decoder only handles DXT1/DXT5/BGRA8 +
+                        // RGBA8 right now. Anything else (BC5/BC7/etc.) gets
+                        // routed through the Rust decoder which covers them.
+                        const fallback = await invoke<{
+                            data_url: string; width: number; height: number;
+                            format: string; has_alpha: boolean;
+                        }>('decode_texture_bytes_to_png', { bytesB64: b64 });
+                        if (!cancelled) setPreviewState({
+                            loading: false, dataUrl: fallback.data_url, error: null,
+                            format: fallback.format, width: fallback.width,
+                            height: fallback.height, binText: null,
+                        });
+                        // Log so the in-browser-decode-failed path is visible
+                        // in devtools but not surfaced to the user.
+                        console.debug('[preview] DDS via Rust fallback:', jsErr);
+                    }
                 } else if (isTEX) {
-                    const { dataURL, width, height, format } = texBufferToDataURL(bytes.buffer, 512);
-                    if (!cancelled) setPreviewState({
-                        loading: false, dataUrl: dataURL, error: null,
-                        format: texFormatName(format), width, height, binText: null,
-                    });
+                    try {
+                        const { dataURL, width, height, format } = texBufferToDataURL(bytes.buffer, 512);
+                        if (!cancelled) setPreviewState({
+                            loading: false, dataUrl: dataURL, error: null,
+                            format: texFormatName(format), width, height, binText: null,
+                        });
+                    } catch (jsErr) {
+                        // Same fallback as DDS: TS decoder is DXT1/DXT5/BGRA8
+                        // only. BC5 / BC7 / anything newer goes through Rust.
+                        const fallback = await invoke<{
+                            data_url: string; width: number; height: number;
+                            format: string; has_alpha: boolean;
+                        }>('decode_texture_bytes_to_png', { bytesB64: b64 });
+                        if (!cancelled) setPreviewState({
+                            loading: false, dataUrl: fallback.data_url, error: null,
+                            format: fallback.format, width: fallback.width,
+                            height: fallback.height, binText: null,
+                        });
+                        console.debug('[preview] TEX via Rust fallback:', jsErr);
+                    }
                 } else if (isBIN) {
                     // Magic-byte gate so we don't waste a converter call
                     // on `.bin` chunks that aren't actually League BINs.
@@ -1785,9 +2706,29 @@ function ExtractView({
             if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
         };
     }, []);
-    // Reset scroll when the row set changes — otherwise the user lands
-    // mid-list when navigating into a new folder.
+    // Reset scroll when the row set changes — except when we're
+    // returning to a key (disk path OR in-WAD folder) we previously
+    // visited AND the active search matches the saved one, in which
+    // case restore the saved scroll position. The same map handles
+    // both: disk transitions get `disk:<path>`, in-WAD transitions
+    // get `wad:<mountId>:<folder>` (saved by `navigateWadDir`).
     useEffect(() => {
+        const key = buildBrowseKey(mountInfo, currentPath, wadCurrentDir);
+        const saved = browseMemoryRef.current.get(key);
+        const matchesSavedQuery = saved !== undefined && saved.search === search;
+        if (matchesSavedQuery) {
+            // Two RAF wait so the row list has committed before we set
+            // scrollTop — without it the assignment runs against an
+            // empty container and silently no-ops.
+            const top = saved.scrollTop;
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    setListScrollTop(top);
+                    if (listRef.current) listRef.current.scrollTop = top;
+                });
+            });
+            return;
+        }
         setListScrollTop(0);
         if (listRef.current) listRef.current.scrollTop = 0;
     }, [currentPath, mountInfo?.id, wadCurrentDir, search]);
@@ -1822,7 +2763,7 @@ function ExtractView({
             return;
         }
         if (row.kind === 'wad-folder') {
-            setWadCurrentDir(row.subPath);
+            navigateWadDir(row.subPath);
             setWadSelected(null);
             return;
         }
@@ -1932,6 +2873,212 @@ function ExtractView({
     // "Extract Selected" set is just the checkbox state — no separate
     // click-pin layer to merge.
     const effectiveSelection = useMemo(() => Array.from(selectedHashes), [selectedHashes]);
+
+    // Build the list of SKNs the user could plausibly extract as a
+    // skin mod. A SKN qualifies only if its sibling skin BIN exists
+    // in the same WAD — that's our cross-check so we don't offer
+    // entries the BIN-walk wouldn't be able to root on. Path pattern:
+    //   assets/<…>/characters/<champ>/skins/<skinFolder>/<champ>.skn
+    //   data/<…>/characters/<champ>/skins/skin<N>.bin (or skin<NN>)
+    // `base` ↔ skin0; `skinN` ↔ skinN; `skinNN` is accepted as a
+    // variant that maps to the same N.
+    interface SknCandidate {
+        hash: string;
+        path: string;
+        champion: string;
+        skinId: number;
+        label: string;
+    }
+    const skinModCandidates = useMemo<SknCandidate[]>(() => {
+        if (!mountInfo || wadEntries.length === 0) return [];
+        const binPaths = new Set<string>();
+        for (const e of wadEntries) {
+            const lower = e.path.toLowerCase();
+            if (lower.endsWith('.bin')) binPaths.add(lower);
+        }
+        const out: SknCandidate[] = [];
+        for (const e of wadEntries) {
+            const lower = e.path.toLowerCase();
+            if (!lower.endsWith('.skn')) continue;
+            const m = lower.match(/\/characters\/([^/]+)\/skins\/([^/]+)\/[^/]+\.skn$/);
+            if (!m) continue;
+            const [, champ, skinFolder] = m;
+            let skinId: number | null = null;
+            if (skinFolder === 'base') skinId = 0;
+            else {
+                const sm = skinFolder.match(/^skin(\d+)$/);
+                if (sm) skinId = parseInt(sm[1], 10);
+            }
+            if (skinId === null) continue;
+            // BIN naming: `skin<N>.bin` (most common). `skin<NN>.bin`
+            // (zero-padded for single digits) also accepted — Riot
+            // has shipped both historically.
+            const padded = `skin${String(skinId).padStart(2, '0')}.bin`;
+            const unpadded = `skin${skinId}.bin`;
+            const expected = [
+                `data/characters/${champ}/skins/${unpadded}`,
+                `data/characters/${champ}/skins/${padded}`,
+            ];
+            const hasBin = expected.some(p => binPaths.has(p));
+            if (!hasBin) continue;
+            const champTitle = champ.charAt(0).toUpperCase() + champ.slice(1);
+            out.push({
+                hash: e.path_hash_hex,
+                path: e.path,
+                champion: champ,
+                skinId,
+                label: skinId === 0
+                    ? `${champTitle} — Base`
+                    : `${champTitle} — Skin ${skinId}`,
+            });
+        }
+        out.sort((a, b) => a.champion.localeCompare(b.champion) || a.skinId - b.skinId);
+        return out;
+    }, [mountInfo, wadEntries]);
+
+    // Currently-selected SKN inside the modal. Defaults to the first
+    // ticked SKN candidate, falling back to the first one in the list.
+    const [skinModSelectedHash, setSkinModSelectedHash] = useState<string | null>(null);
+    // Pick a sensible default when the modal opens / candidates change.
+    useEffect(() => {
+        if (skinModCandidates.length === 0) {
+            setSkinModSelectedHash(null);
+            return;
+        }
+        // If a SKN is ticked in the file list, prefer it.
+        const ticked = skinModCandidates.find(c => selectedHashes.has(c.hash));
+        if (ticked) {
+            setSkinModSelectedHash(ticked.hash);
+            return;
+        }
+        setSkinModSelectedHash(prev => prev && skinModCandidates.some(c => c.hash === prev)
+            ? prev
+            : skinModCandidates[0].hash);
+    }, [skinModCandidates, selectedHashes]);
+
+    const skinModSelected = useMemo(
+        () => skinModCandidates.find(c => c.hash === skinModSelectedHash) ?? null,
+        [skinModCandidates, skinModSelectedHash],
+    );
+
+    // Persistent state for the per-extract options modal — closed by
+    // default. Defaults mirror the Viewer's: repath off, merge off,
+    // HUD off, skip SFX on, export VO off.
+    const [skinModOpen, setSkinModOpen] = useState(false);
+    const [skinModFlags, setSkinModFlags] = useState({
+        repath: false,
+        mergeLinked: false,
+        preserveHud: false,
+        skipSfx: true,
+        exportVo: false,
+    });
+    const [skinModBusy, setSkinModBusy] = useState(false);
+
+    /** Kick off the BIN-walk extraction. Mirrors `exportSkinFiles` in
+     *  ModelViewerStage.tsx — same Rust command, same VO locale-WAD
+     *  discovery + mount/unmount dance, same status flow. */
+    const runSkinModExtract = async () => {
+        if (!mountInfo || !skinModSelected) return;
+        const { open: openDialog } = await import('@tauri-apps/plugin-dialog');
+        const picked = await openDialog({ directory: true, multiple: false, title: 'Choose output folder' });
+        if (!picked || typeof picked !== 'string') return;
+        setSkinModBusy(true);
+        let voMountId: number | null = null;
+        try {
+            // Pull persisted prefs same way the Viewer does.
+            let prefix = 'jade';
+            let makeWadFolder = true;
+            try {
+                const [vPrefix, vWad] = await Promise.all([
+                    invoke<string>('get_preference', { key: 'WadRepathPrefix', defaultValue: 'jade' }),
+                    invoke<string>('get_preference', { key: 'WadMakeWadFolder', defaultValue: 'True' }),
+                ]);
+                prefix = (vPrefix || 'jade').trim();
+                makeWadFolder = vWad === 'True';
+            } catch { /* keep defaults */ }
+            const wadFolderName = makeWadFolder
+                ? (mountInfo.name.replace(/\.wad(?:\.client|\.mobile)?$/i, '') || 'mod').toLowerCase()
+                : null;
+
+            // VO locale-WAD discovery — same `<base>.<locale>.<ext>`
+            // sibling lookup used by the Viewer's Export VO and by the
+            // WelcomeScreen VO switcher.
+            if (skinModFlags.exportVo) {
+                try {
+                    const mainPath = mountInfo.path;
+                    const norm = mainPath.replace(/\\/g, '/');
+                    const slash = norm.lastIndexOf('/');
+                    const dir = slash === -1 ? '' : mainPath.slice(0, slash);
+                    const baseName = slash === -1 ? mainPath : mainPath.slice(slash + 1);
+                    const tailMatch = baseName.match(/(\.wad(?:\.(?:client|mobile))?)$/i);
+                    if (tailMatch) {
+                        const stem = baseName.slice(0, baseName.length - tailMatch[1].length);
+                        const tail = tailMatch[1];
+                        const prefix2 = `${stem}.`;
+                        const entries = await invoke<{ name: string; is_dir: boolean; path: string }[]>(
+                            'list_directory', { path: dir },
+                        ).catch(() => []);
+                        let localePath: string | null = null;
+                        for (const e of entries) {
+                            if (e.is_dir || !e.name.startsWith(prefix2) || !e.name.endsWith(tail)) continue;
+                            const inner = e.name.slice(prefix2.length, e.name.length - tail.length);
+                            if (/^[a-z]{2}_[a-z]{2}$/i.test(inner)) { localePath = e.path; break; }
+                        }
+                        if (localePath) {
+                            const opened = await invoke<{ id: number }>('wad_open', { path: localePath });
+                            voMountId = opened.id;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[extract] export VO locale WAD lookup failed:', e);
+                }
+            }
+
+            const actionId = `extract-skin-${Date.now()}`;
+            onExtractStatus(`Extracting skin mod${skinModFlags.repath ? ' (repath)' : ''}…`);
+            const result = await invoke<{
+                written: number;
+                errors: number;
+                error_messages: string[];
+                renames: { original: string; renamed: string }[];
+            }>('wad_extract_skin_assets', {
+                id: mountInfo.id,
+                outputDir: picked,
+                actionId,
+                sknChunkHashHex: skinModSelected.hash,
+                repath: skinModFlags.repath,
+                repathPrefix: prefix,
+                wadFolderName,
+                mergeLinked: skinModFlags.mergeLinked,
+                preserveHudIcons: skinModFlags.preserveHud,
+                skipSfxRepath: skinModFlags.skipSfx,
+                exportVo: skinModFlags.exportVo,
+                voMountId,
+            });
+            const errTail = result.errors > 0 ? ` (${result.errors} errors)` : '';
+            onExtractStatus(`Extracted ${result.written} file${result.written === 1 ? '' : 's'}${errTail}`);
+            if (result.error_messages?.length) {
+                console.group(`[extract] skin mod — ${result.error_messages.length} errors`);
+                for (const m of result.error_messages) console.warn(m);
+                console.groupEnd();
+            }
+            if (result.renames?.length) {
+                console.group(`[extract] skin mod — ${result.renames.length} long-path renames`);
+                for (const { original, renamed } of result.renames) console.info(`${original}  →  ${renamed}`);
+                console.groupEnd();
+            }
+            setSkinModOpen(false);
+        } catch (e) {
+            onExtractStatus(`Extract failed: ${e}`);
+            console.warn('[extract] skin mod failed:', e);
+            setTimeout(() => onExtractStatus(null), 6000);
+        } finally {
+            if (voMountId !== null) {
+                invoke('wad_close', { id: voMountId }).catch(() => {});
+            }
+            setSkinModBusy(false);
+        }
+    };
     // Total queued items, mode-aware: WAD-mode counts files in the
     // mount, disk-mode counts ticked `.wad.client` paths.
     const totalSelectedFiles = mountInfo
@@ -2107,7 +3254,7 @@ function ExtractView({
                             className={`welcome-source-row${(!mountInfo && currentPath === home) ? ' active' : ''}`}
                             onClick={() => goToSource(home)}
                         >
-                            <HomeIcon size={20} />
+                            <House size={20} />
                             <span className="welcome-source-row-text">
                                 <span className="welcome-source-row-label">User folder</span>
                                 <span className="welcome-source-row-path" title={home}>{home}</span>
@@ -2189,7 +3336,126 @@ function ExtractView({
                     onUseRenamePatternChange={toggleRenamePattern}
                     autoCheckOnClick={autoCheckOnClick}
                     onAutoCheckOnClickChange={toggleAutoCheckOnClick}
+                    extractMode={extractMode}
+                    onExtractModeChange={changeExtractMode}
+                    makeWadFolder={makeWadFolder}
+                    onMakeWadFolderChange={toggleMakeWadFolder}
+                    useDefaultLocation={useDefaultLocation}
+                    onUseDefaultLocationChange={toggleUseDefaultLocation}
+                    defaultLocation={defaultExtractLocation}
+                    onPickDefaultLocation={pickDefaultLocation}
+                    repathPrefix={repathPrefix}
+                    onRepathPrefixChange={changeRepathPrefix}
                 />
+
+                {/* "Extract as skin mod" popup — same toggles the Viewer
+                    exposes in its Advanced section, scoped to this one
+                    extract action. Per-extract; defaults are reset on open. */}
+                {skinModOpen && (
+                    <div className="welcome-skinmod-overlay" onClick={() => !skinModBusy && setSkinModOpen(false)}>
+                        <div className="welcome-skinmod-modal" onClick={(e) => e.stopPropagation()}>
+                            <div className="welcome-skinmod-head">
+                                <span className="welcome-skinmod-title">Extract as skin mod</span>
+                                <button
+                                    type="button"
+                                    className="welcome-skinmod-close"
+                                    onClick={() => !skinModBusy && setSkinModOpen(false)}
+                                    aria-label="Close"
+                                >×</button>
+                            </div>
+
+                            {/* Skin picker — dropdown of every SKN whose
+                                sibling BIN was actually found in the WAD. */}
+                            <div className="welcome-skinmod-section-label">Skin</div>
+                            <PortalDropdown
+                                options={skinModCandidates.map(c => ({ value: c.hash, label: c.label }))}
+                                value={skinModSelectedHash}
+                                onChange={(v) => setSkinModSelectedHash(v)}
+                                placeholder={skinModCandidates.length === 0 ? 'No valid skins in this WAD' : 'Pick a skin…'}
+                                searchable={skinModCandidates.length > 8}
+                                className="welcome-skinmod-dropdown"
+                            />
+                            {skinModSelected && (
+                                <div
+                                    className="welcome-skinmod-skn-path"
+                                    title={skinModSelected.path}
+                                >
+                                    {skinModSelected.path}
+                                </div>
+                            )}
+
+                            <div className="welcome-skinmod-section-label welcome-skinmod-section-label-mt">Options</div>
+                            <div className="welcome-skinmod-options">
+                                {([
+                                    {
+                                        key: 'repath',
+                                        title: 'Repath',
+                                        sub: 'Insert prefix under assets/ and rewrite BIN refs.',
+                                        icon: <FolderDownIcon size={16} />,
+                                    },
+                                    {
+                                        key: 'mergeLinked',
+                                        title: 'Merge linked BINs',
+                                        sub: 'Fold every linked dep into the primary skin BIN.',
+                                        icon: <SaveAllIcon size={16} />,
+                                    },
+                                    {
+                                        key: 'preserveHud',
+                                        title: 'Preserve HUD icons',
+                                        sub: 'Include /hud/icons2d/ and keep their BIN refs canonical.',
+                                        icon: <Aperture size={16} />,
+                                    },
+                                    {
+                                        key: 'skipSfx',
+                                        title: 'Skip SFX',
+                                        sub: 'Don’t extract /sounds/. Game uses Riot’s installed audio.',
+                                        icon: <ToolCaseIcon size={16} />,
+                                    },
+                                    {
+                                        key: 'exportVo',
+                                        title: 'Export VO',
+                                        sub: 'Pull this skin’s voiceover from the locale WAD.',
+                                        icon: <MicIcon size={16} />,
+                                    },
+                                ] as const).map(opt => {
+                                    const on = skinModFlags[opt.key];
+                                    return (
+                                        <button
+                                            type="button"
+                                            key={opt.key}
+                                            className={`welcome-skinmod-opt${on ? ' on' : ''}`}
+                                            onClick={() => setSkinModFlags(f => ({ ...f, [opt.key]: !f[opt.key] }))}
+                                        >
+                                            <span className="welcome-skinmod-opt-icon">{opt.icon}</span>
+                                            <span className="welcome-skinmod-opt-text">
+                                                <span className="welcome-skinmod-opt-title">{opt.title}</span>
+                                                <span className="welcome-skinmod-opt-sub">{opt.sub}</span>
+                                            </span>
+                                            <span className={`welcome-skinmod-opt-pill${on ? ' on' : ''}`}>
+                                                {on ? 'On' : 'Off'}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+
+                            <div className="welcome-skinmod-actions">
+                                <button
+                                    type="button"
+                                    className="welcome-skinmod-cancel"
+                                    onClick={() => !skinModBusy && setSkinModOpen(false)}
+                                    disabled={skinModBusy}
+                                >Cancel</button>
+                                <button
+                                    type="button"
+                                    className="welcome-skinmod-go"
+                                    onClick={runSkinModExtract}
+                                    disabled={skinModBusy || !skinModSelected}
+                                >{skinModBusy ? 'Extracting…' : 'Extract'}</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* Drop overlay — dimmed sheet across the whole Extract
                     view while a `.wad.client` is being dragged in. */}
@@ -2214,7 +3480,7 @@ function ExtractView({
                                 ? (wadCurrentDir ? 'Up one folder (inside WAD)' : 'Close WAD')
                                 : 'Up one folder'}
                         >
-                            <ArrowUpIcon size={16} />
+                            <ArrowUpLucide size={16} />
                         </button>
                         <button
                             type="button"
@@ -2227,7 +3493,7 @@ function ExtractView({
                             disabled={!currentPath || !!mountInfo}
                             title="Reveal current folder in Explorer"
                         >
-                            <FolderRevealIcon size={16} />
+                            <LucideFolderOpen size={16} />
                         </button>
                         <div className="welcome-breadcrumb" ref={breadcrumbRef}>
                             {breadcrumb.length === 0 && (
@@ -2248,6 +3514,41 @@ function ExtractView({
                                 </span>
                             ))}
                         </div>
+                        {/* Copy-path button — copies the address of the
+                            currently-browsed location to the clipboard.
+                            Disk mode copies the OS path; WAD mode copies
+                            the in-WAD sub-path so the value is shareable
+                            with other modders / mods. */}
+                        {(currentPath || mountInfo) && (
+                            <button
+                                type="button"
+                                className="welcome-tool-btn"
+                                onClick={() => {
+                                    const path = mountInfo
+                                        ? (wadCurrentDir || mountInfo.path)
+                                        : currentPath;
+                                    if (!path) return;
+                                    navigator.clipboard.writeText(path).then(
+                                        () => {
+                                            setCopyHint('Copied');
+                                            setTimeout(() => setCopyHint(null), 1400);
+                                        },
+                                        () => {
+                                            setCopyHint('Copy failed');
+                                            setTimeout(() => setCopyHint(null), 1400);
+                                        },
+                                    );
+                                }}
+                                title="Copy current path to clipboard"
+                                aria-label="Copy current path"
+                            >
+                                {copyHint ? (
+                                    <span className="welcome-tool-btn-text">{copyHint}</span>
+                                ) : (
+                                    <CopyIcon size={16} />
+                                )}
+                            </button>
+                        )}
                         {/* Hash-scan button — only visible when a WAD is
                             mounted. Walks every chunk for embedded asset
                             paths + submesh names, merges discoveries into
@@ -2265,14 +3566,15 @@ function ExtractView({
                                     : 'Scan this WAD for embedded asset paths to recover unknown hashes'}
                                 aria-label="Scan hashes"
                             >
-                                <ScanHashesIcon size={16} />
+                                <ScanSearchLucide size={16} />
                             </button>
                         )}
                     </div>
 
-                    {/* Search filters the current directory's entries by
-                        substring — Word's "Search" box behavior. Inside
-                        a WAD it becomes a whole-WAD substring search. */}
+                    {/* Search filters by substring. Disk mode walks the
+                        current dir's listing; WAD mode walks the WAD's
+                        chunk index with a scope filter — see the toggle
+                        button to the right of the input. */}
                     <div className="welcome-extract-search">
                         <span className="welcome-extract-search-icon">
                             <SearchIcon size={14} />
@@ -2281,12 +3583,59 @@ function ExtractView({
                             type="text"
                             className="welcome-extract-search-input"
                             placeholder={mountInfo
-                                ? 'Search this WAD…'
+                                ? (searchWholeWad
+                                    ? 'Search this WAD…'
+                                    : wadCurrentDir
+                                        ? `Search ${wadCurrentDir} and below…`
+                                        : 'Search this WAD…')
                                 : (currentPath ? 'Search this folder…' : 'Pick a location first')}
                             value={search}
                             onChange={e => setSearch(e.target.value)}
                             disabled={!currentPath && !mountInfo}
                         />
+                        {mountInfo && (
+                            <button
+                                type="button"
+                                className={`welcome-search-scope-btn${searchWholeWad ? ' on' : ''}`}
+                                onClick={() => setSearchWholeWad(s => !s)}
+                                title={searchWholeWad
+                                    ? 'Searching the whole WAD — click to limit to current folder + children'
+                                    : 'Searching current folder + children — click to broaden to the whole WAD'}
+                                aria-label="Toggle search scope"
+                            >
+                                <RefreshCwIcon size={14} />
+                            </button>
+                        )}
+                        {mountInfo && (() => {
+                            // Detect locale-style VO WAD by re-running
+                            // the same matcher we use to compute the
+                            // counterpart — keeps the truth single-
+                            // sourced.
+                            const isVo = /\.[a-z]{2}_[A-Z]{2}\.wad(?:\.(?:client|mobile))?$/.test(mountInfo.path);
+                            const enabled = !!wadCounterpartPath;
+                            const dest = isVo ? 'main' : 'VO';
+                            const title = enabled
+                                ? (isVo
+                                    ? 'Switch to the main WAD'
+                                    : 'Switch to a VO (locale) WAD')
+                                : (isVo
+                                    ? 'No main WAD found next to this VO'
+                                    : 'No locale VO WAD found for this champion');
+                            return (
+                                <button
+                                    type="button"
+                                    className="welcome-search-scope-btn"
+                                    onClick={() => { void switchToWadCounterpart(); }}
+                                    disabled={!enabled}
+                                    title={title}
+                                    aria-label={`Switch to ${dest} WAD`}
+                                >
+                                    {isVo
+                                        ? <ToolCaseIcon size={14} />
+                                        : <MicIcon size={14} />}
+                                </button>
+                            );
+                        })()}
                     </div>
 
                     <div className={`welcome-extract-table${mountInfo ? ' wad-mode' : ' disk-mode'}`}>
@@ -2406,6 +3755,7 @@ function ExtractView({
                                         type="button"
                                         className={`welcome-extract-row${isSelected ? ' selected' : ''}${isWad ? ' wad-file' : ''}${isWadChecked ? ' has-selection' : ''}`}
                                         onClick={() => handleRowClick(row)}
+                                        onContextMenu={(ev) => openContextMenu(ev, row)}
                                         onDoubleClick={() => row.kind === 'disk-folder' && setCurrentPath(e.path)}
                                         title={e.path}
                                     >
@@ -2434,7 +3784,7 @@ function ExtractView({
                                                 ? <FolderIcon size={16} />
                                                 : isWad
                                                     ? <WadIcon size={16} isOpen={mountInfo?.path === e.path} />
-                                                    : iconForExtension(e.extension)}
+                                                    : iconForExtension(e.extension, e.name)}
                                         </span>
                                         <span className="welcome-extract-row-name">{e.name}</span>
                                         <span className="welcome-extract-row-meta">
@@ -2458,6 +3808,7 @@ function ExtractView({
                                         type="button"
                                         className={`welcome-extract-row${partiallySelected || fullySelected ? ' has-selection' : ''}`}
                                         onClick={() => handleRowClick(row)}
+                                        onContextMenu={(ev) => openContextMenu(ev, row)}
                                         title={row.subPath}
                                     >
                                         <span
@@ -2495,6 +3846,7 @@ function ExtractView({
                                     type="button"
                                     className={`welcome-extract-row${isPinned ? ' selected' : ''}${isChecked ? ' has-selection' : ''}${f.unknown ? ' wad-unknown' : ''}`}
                                     onClick={() => handleRowClick(row)}
+                                    onContextMenu={(ev) => openContextMenu(ev, row)}
                                     title={f.path}
                                 >
                                     <span
@@ -2510,7 +3862,7 @@ function ExtractView({
                                         />
                                     </span>
                                     <span className="welcome-extract-row-icon">
-                                        {iconForExtension(fext.replace(/^\./, ''))}
+                                        {iconForExtension(fext.replace(/^\./, ''), fname)}
                                     </span>
                                     <span className="welcome-extract-row-name">
                                         {search.trim() ? f.path : fname}
@@ -2591,19 +3943,35 @@ function ExtractView({
                                 <div
                                     className="welcome-preview-image"
                                     onWheel={onImageWheel}
-                                    title="Scroll to zoom"
+                                    onMouseDown={onImageMouseDown}
+                                    onMouseMove={onImageMouseMove}
+                                    onMouseUp={onImageMouseUp}
+                                    onMouseLeave={onImageMouseUp}
+                                    onDoubleClick={onImageDoubleClick}
+                                    title="Scroll to zoom · drag to pan · double-click to reset"
+                                    style={{
+                                        cursor: panning ? 'grabbing' : 'grab',
+                                        // Block native browser image-drag/select
+                                        // so a stray mousedown can't kidnap our
+                                        // drag with a ghost preview.
+                                        userSelect: 'none',
+                                    }}
                                 >
                                     <img
                                         src={previewState.dataUrl}
                                         alt={previewItem.name}
                                         style={{
-                                            transform: `scale(${imageZoom})`,
+                                            transform: `translate(${imagePan.x}px, ${imagePan.y}px) scale(${imageZoom})`,
                                             // Fast-path nearest-neighbour for
                                             // textures so pixels stay sharp on
                                             // zoom-in instead of going blurry.
                                             imageRendering: imageZoom >= 1.5 ? 'pixelated' : 'auto',
                                             transformOrigin: 'center center',
-                                            transition: 'transform 0.05s linear',
+                                            // Don't animate while the user is
+                                            // dragging — the lerp lag makes the
+                                            // image trail behind the cursor.
+                                            transition: panning ? 'none' : 'transform 0.05s linear',
+                                            pointerEvents: 'none',
                                         }}
                                         draggable={false}
                                     />
@@ -2787,6 +4155,21 @@ function ExtractView({
                         </button>
                         <button
                             type="button"
+                            className="welcome-source-action-btn"
+                            onClick={() => setSkinModOpen(true)}
+                            disabled={!mountInfo || skinModCandidates.length === 0 || extracting}
+                            title={
+                                !mountInfo
+                                    ? 'Open a WAD first'
+                                    : skinModCandidates.length === 0
+                                        ? 'No skins with a matching BIN found in this WAD'
+                                        : `Pick from ${skinModCandidates.length} skin${skinModCandidates.length === 1 ? '' : 's'} found in this WAD\nBIN-walk extraction with repath / merge / HUD / SFX-VO / VO export options.`
+                            }
+                        >
+                            Extract as skin mod
+                        </button>
+                        <button
+                            type="button"
                             className="welcome-source-action-btn primary"
                             onClick={() => startExtraction([])}
                             disabled={!mountInfo || extracting}
@@ -2825,6 +4208,113 @@ function ExtractView({
                     </div>
                 </aside>
             </div>
+
+            {contextMenu && (
+                <div
+                    className="welcome-extract-ctxmenu"
+                    style={{ top: contextMenu.y, left: contextMenu.x }}
+                    role="menu"
+                    onClick={(e) => e.stopPropagation()}
+                    onContextMenu={(e) => e.preventDefault()}
+                >
+                    {/* Copy name — disabled when the user has multiple
+                        rows selected, since picking which row's name to
+                        copy is ambiguous. Lives above "Copy path". */}
+                    <button
+                        type="button"
+                        className="welcome-extract-ctxitem"
+                        onClick={() => handleCopyRowName(contextMenu.row)}
+                        disabled={selectedHashes.size > 1}
+                    >
+                        <FilesIcon size={14} className="welcome-extract-ctxicon" />
+                        <span className="welcome-extract-ctxlabel">Copy name</span>
+                    </button>
+                    <button
+                        type="button"
+                        className="welcome-extract-ctxitem"
+                        onClick={() => handleCopyRowPath(contextMenu.row)}
+                    >
+                        <CopyIcon size={14} className="welcome-extract-ctxicon" />
+                        <span className="welcome-extract-ctxlabel">Copy path</span>
+                    </button>
+                    {(contextMenu.row.kind === 'wad-file'
+                        || contextMenu.row.kind === 'wad-folder'
+                        || (mountInfo && selectedHashes.size > 0)) && (
+                        <div className="welcome-extract-ctxsep" />
+                    )}
+                    {/* Send BIN(s) to editor — three flavors:
+                        - WAD-side single `.bin`/`.py` → byte-convert path
+                        - WAD-side multi-select with bins in it → batch convert
+                        - Disk-side single `.bin`/`.py` → open the file directly
+                          since it's already on disk (no bytes round-trip). */}
+                    {(() => {
+                        // Disk file path takes precedence — if the user
+                        // right-clicked a disk row, never offer the WAD flow.
+                        const diskPath = collectDiskBinPathForRow(contextMenu.row);
+                        if (diskPath) {
+                            if (!onOpenRecentFile) return null;
+                            return (
+                                <button
+                                    type="button"
+                                    className="welcome-extract-ctxitem"
+                                    onClick={() => handleSendDiskBinToEditor(contextMenu.row)}
+                                >
+                                    <SquareArrowRightEnter size={14} className="welcome-extract-ctxicon" />
+                                    <span className="welcome-extract-ctxlabel">Send to editor</span>
+                                </button>
+                            );
+                        }
+                        if (!onOpenSkinBinAsText) return null;
+                        const binEntries = collectBinEntriesForRow(contextMenu.row);
+                        if (binEntries.length === 0) return null;
+                        const label = binEntries.length === 1
+                            ? 'Send to editor'
+                            : `Send ${binEntries.length} bins to editor`;
+                        return (
+                            <button
+                                type="button"
+                                className="welcome-extract-ctxitem"
+                                onClick={() => handleSendBinToEditor(contextMenu.row)}
+                            >
+                                <SquareArrowRightEnter size={14} className="welcome-extract-ctxicon" />
+                                <span className="welcome-extract-ctxlabel">{label}</span>
+                            </button>
+                        );
+                    })()}
+                    {contextMenu.row.kind === 'wad-file' && (
+                        <button
+                            type="button"
+                            className="welcome-extract-ctxitem"
+                            onClick={() => handleSaveSingleWadFile(contextMenu.row.kind === 'wad-file' ? contextMenu.row.entry : (null as never))}
+                        >
+                            <SaveIcon size={14} className="welcome-extract-ctxicon" />
+                            <span className="welcome-extract-ctxlabel">Save file as…</span>
+                        </button>
+                    )}
+                    {contextMenu.row.kind === 'wad-folder' && (
+                        <button
+                            type="button"
+                            className="welcome-extract-ctxitem"
+                            onClick={() => handleSaveFolderFlat(contextMenu.row.kind === 'wad-folder' ? contextMenu.row.subPath : '')}
+                        >
+                            <FolderDownIcon size={14} className="welcome-extract-ctxicon" />
+                            <span className="welcome-extract-ctxlabel">Save folder (flat)…</span>
+                        </button>
+                    )}
+                    {mountInfo && selectedHashes.size > 0 && (
+                        <button
+                            type="button"
+                            className="welcome-extract-ctxitem"
+                            onClick={handleSaveSelectedFlat}
+                        >
+                            <SaveAllIcon size={14} className="welcome-extract-ctxicon" />
+                            <span className="welcome-extract-ctxlabel">
+                                {`Save ${selectedHashes.size} selected (flat)…`}
+                            </span>
+                        </button>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
@@ -2834,25 +4324,6 @@ function ExtractView({
    SettingsIcon (the other icons we use). The ribbon's filled Fluent
    DocIcon / FolderIcon would clash visually, so we don't reuse
    those here. All draw in currentColor only — no accent fills. */
-function HomeIcon({ size = 20 }: { size?: number }) {
-    return (
-        <svg
-            width={size}
-            height={size}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <path d="M3 11.5 12 4l9 7.5" />
-            <path d="M5 10v10h14V10" />
-            <path d="M10 20v-6h4v6" />
-        </svg>
-    );
-}
-
 function DocIcon({ size = 20 }: { size?: number }) {
     return (
         <svg
@@ -2924,11 +4395,49 @@ function TextureIcon({ size = 16 }: { size?: number }) {
     );
 }
 
+/* Extensions Jade treats as "source code" — beyond the BIN family,
+   these are languages a user might idly try to open in the editor. */
+const CODE_EXTENSIONS = new Set([
+    'py', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'rs', 'go', 'java',
+    'js', 'jsx', 'ts', 'tsx', 'lua', 'rb', 'php', 'sh', 'ps1',
+    'css', 'scss', 'html', 'xml', 'toml', 'yaml', 'yml',
+]);
+const TEXT_EXTENSIONS = new Set(['txt', 'log', 'ini', 'cfg', 'csv']);
+
+/** Pick a lucide file glyph for a recent-files row. Studio scenes get
+ *  a camera, BIN / code files a code glyph, Markdown a download arrow,
+ *  plain JSON braces, text files a type glyph, everything else the
+ *  generic file outline. */
+function recentFileIcon(filePath: string, ext: string): React.ReactElement {
+    const name = filePath.replace(/\\/g, '/').split('/').pop()?.toLowerCase() || '';
+    const lower = (ext || '').toLowerCase();
+    const size = 32;
+    if (name.endsWith('.studio.json')) return <FileAxis3d size={size} />;
+    if (lower === 'bin' || CODE_EXTENSIONS.has(lower)) return <FileCode size={size} />;
+    if (lower === 'md' || lower === 'markdown') return <FileDown size={size} />;
+    if (lower === 'json') return <FileBraces size={size} />;
+    if (TEXT_EXTENSIONS.has(lower)) return <FileType size={size} />;
+    return <LucideFile size={size} />;
+}
+
 /** Pick the right outlined glyph for a file row by extension. WAD
  *  package files are handled separately (caller checks `isWadFileName`)
- *  because their extension is `.client` rather than `.wad`. */
-function iconForExtension(ext: string): React.ReactElement {
+ *  because their extension is `.client` rather than `.wad`. Pass the
+ *  filename when available so VO/SFX `.bnk` and `.wpk` containers get
+ *  the role-specific mic / book-audio / volume icons instead of the
+ *  generic page outline. */
+function iconForExtension(ext: string, fileName?: string): React.ReactElement {
     const lower = (ext || '').toLowerCase();
+    // Filename-driven audio icon — VO vs SFX vs events can't be
+    // distinguished by the bare `.bnk` extension, so check the
+    // basename first.
+    if (fileName) {
+        const audio = getAudioIconForFileName(fileName);
+        if (audio) {
+            const Glyph = audio;
+            return <Glyph size={16} strokeWidth={1.8} aria-hidden="true" />;
+        }
+    }
     if (lower === 'dds' || lower === 'tex' || lower === 'png' || lower === 'jpg' || lower === 'jpeg' || lower === 'bmp') {
         return <TextureIcon size={16} />;
     }
@@ -2941,58 +4450,3 @@ function iconForExtension(ext: string): React.ReactElement {
     return <DocIcon size={16} />;
 }
 
-function ArrowUpIcon({ size = 16 }: { size?: number }) {
-    return (
-        <svg
-            width={size}
-            height={size}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <path d="M12 19V5" />
-            <path d="M5 12l7-7 7 7" />
-        </svg>
-    );
-}
-
-/* Magnifier-over-hash glyph for the "Scan hashes" toolbar button. */
-function ScanHashesIcon({ size = 14 }: { size?: number }) {
-    return (
-        <svg
-            width={size}
-            height={size}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <circle cx="10" cy="10" r="6" />
-            <path d="M14.5 14.5 20 20" />
-            <path d="M8 8h4M8 12h4" />
-        </svg>
-    );
-}
-
-/* Plain folder — "reveal this folder in the OS file manager". */
-function FolderRevealIcon({ size = 16 }: { size?: number }) {
-    return (
-        <svg
-            width={size}
-            height={size}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <path d="M20 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-        </svg>
-    );
-}

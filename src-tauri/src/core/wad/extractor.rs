@@ -108,6 +108,10 @@ pub fn cancel_extraction(action_id: &str) -> bool {
 /// re-allocate the existing file's extents. When false, falls back to
 /// a direct `File::create` + write (slower in-place overwrite, but
 /// leaves no temp files behind on cancel).
+/// `flatten`: when true, every file is written directly into
+/// `output_dir` using just its basename (the WAD's folder tree is
+/// discarded). Name collisions get a `_2`, `_3`… suffix. When false,
+/// the resolved directory layout is recreated under `output_dir`.
 pub fn extract_to_dir(
     app: &tauri::AppHandle,
     mount_id: u64,
@@ -115,16 +119,20 @@ pub fn extract_to_dir(
     output_dir: &Path,
     action_id: &str,
     use_rename: bool,
+    flatten: bool,
 ) -> Result<ExtractResult> {
     let started = Instant::now();
     let cancel = register_cancel(action_id);
-    let result = extract_inner(app, mount_id, selected, output_dir, action_id, &cancel, use_rename);
+    let result = extract_inner(
+        app, mount_id, selected, output_dir, action_id, &cancel, use_rename, flatten,
+    );
     deregister_cancel(action_id);
     let mut summary = result?;
     summary.elapsed_ms = started.elapsed().as_millis() as u64;
     Ok(summary)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn extract_inner(
     app: &tauri::AppHandle,
     mount_id: u64,
@@ -133,6 +141,7 @@ fn extract_inner(
     action_id: &str,
     cancel: &Arc<AtomicBool>,
     use_rename: bool,
+    flatten: bool,
 ) -> Result<ExtractResult> {
     // Snapshot the chunks + resolved paths under the read lock so workers
     // can run without blocking other commands. We copy chunk metadata
@@ -163,7 +172,23 @@ fn extract_inner(
         path: None,
     })?;
 
-    let (wad_path, plan) = plan;
+    let (wad_path, mut plan) = plan;
+
+    // Flat mode: collapse every entry's path down to its basename.
+    // Name clashes (same filename in different WAD folders) deliberately
+    // overwrite — the "fast overwrite" setting governs how that write
+    // happens; the user opted into a flat dump knowing collisions land
+    // on top of each other.
+    if flatten {
+        for entry in &mut plan {
+            entry.path = Path::new(&entry.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&entry.hex)
+                .to_string();
+        }
+    }
+
     let total = plan.len() as u64;
 
     emit(

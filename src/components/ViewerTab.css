@@ -1,0 +1,692 @@
+/* Viewer tab — Khada-style 3-stage browser. Stage 1: champion gallery. */
+
+.viewer-tab {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--vscode-foreground, #ddd);
+}
+
+/* ---------- header ---------- */
+
+.viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border-color, #3e3e42);
+  background: transparent;
+}
+
+[data-ui-mode="modern"] .viewer-header {
+  border-bottom-color: var(--modern-glass-border);
+}
+
+.viewer-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.viewer-search {
+  position: relative;
+  flex: 1 1 auto;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+}
+
+.viewer-search-icon {
+  position: absolute;
+  left: 8px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.viewer-search input {
+  width: 100%;
+  padding: 6px 10px 6px 28px;
+  border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+  background: var(--vscode-input-background, rgba(255, 255, 255, 0.04));
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  border-radius: 6px;
+  outline: none;
+}
+
+.viewer-search input:focus {
+  border-color: var(--jade-accent);
+}
+
+/* Source picker (Live / PBE / Custom) */
+
+.viewer-source-picker {
+  position: relative;
+  margin-left: auto;
+}
+
+.viewer-source-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  background: var(--vscode-input-background, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.viewer-source-btn:hover {
+  border-color: var(--jade-accent);
+}
+
+.viewer-source-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 280px;
+  max-width: 480px;
+  background: var(--vscode-menu-background, #1f1f1f);
+  border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+
+.viewer-source-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.viewer-source-item:hover {
+  background: var(--modern-accent-12, rgba(255, 255, 255, 0.06));
+}
+
+.viewer-source-item.active {
+  background: var(--modern-accent-15, rgba(255, 255, 255, 0.08));
+}
+
+.viewer-source-kind {
+  flex: 0 0 auto;
+  width: 48px;
+  font-weight: 600;
+  color: var(--jade-accent);
+}
+
+.viewer-source-path {
+  flex: 1 1 auto;
+  opacity: 0.7;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-source-item-pick {
+  border-top: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+  margin-top: 4px;
+  padding-top: 8px;
+}
+
+/* ---------- body / states ---------- */
+
+.viewer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.viewer-loading,
+.viewer-empty,
+.viewer-error {
+  padding: 24px;
+  text-align: center;
+  opacity: 0.7;
+  font-size: 13px;
+}
+
+.viewer-error {
+  color: #e07070;
+  opacity: 1;
+}
+
+.viewer-no-install {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  text-align: center;
+  gap: 12px;
+}
+
+.viewer-no-install h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.viewer-no-install p {
+  margin: 0;
+  max-width: 480px;
+  opacity: 0.75;
+  font-size: 13px;
+}
+
+.viewer-no-install code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  background: var(--vscode-textCodeBlock-background, rgba(255, 255, 255, 0.06));
+  border-radius: 3px;
+}
+
+.viewer-pick-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 13px;
+  color: white;
+  background: var(--jade-accent);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.viewer-pick-btn:hover {
+  filter: brightness(1.1);
+}
+
+/* ---------- gallery (grid + A–Z rail) ---------- */
+
+.viewer-gallery {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  height: 100%;
+  min-height: 0;
+  /* Anchor for the floating scroll-letter overlay below. */
+  position: relative;
+}
+
+.viewer-gallery-grid {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px 20px 32px;
+  min-height: 0;
+}
+
+.viewer-section {
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border-color, #3e3e42);
+}
+
+.viewer-section:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+[data-ui-mode="modern"] .viewer-section {
+  border-bottom-color: var(--modern-glass-border);
+}
+
+.viewer-section-letter {
+  margin: 0 0 14px 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  color: var(--text-color, #cccccc);
+  opacity: 0.85;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.viewer-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 12px;
+}
+
+.viewer-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 6px 10px 6px;
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-color, #3e3e42);
+  border-radius: 8px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.viewer-tile:hover {
+  background: color-mix(in srgb, var(--jade-accent) 10%, var(--bg-secondary, rgba(255, 255, 255, 0.04)));
+  border-color: var(--jade-accent);
+  transform: translateY(-1px);
+}
+
+[data-ui-mode="modern"] .viewer-tile {
+  background: transparent;
+  border-color: var(--modern-glass-border);
+}
+
+[data-ui-mode="modern"] .viewer-tile:hover {
+  background: var(--modern-accent-10);
+  border-color: var(--modern-accent);
+}
+
+.viewer-tile-circle {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.05));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 0 transparent;
+  transition: box-shadow 140ms ease;
+}
+
+.viewer-tile:hover .viewer-tile-circle {
+  box-shadow: 0 0 0 2px var(--jade-accent),
+    0 0 16px color-mix(in srgb, var(--jade-accent) 60%, transparent);
+}
+
+.viewer-tile-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.viewer-tile-letter {
+  font-size: 18px;
+  font-weight: 600;
+  opacity: 0.55;
+}
+
+.viewer-tile-name {
+  font-size: 11px;
+  text-align: center;
+  max-width: 92px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-color, #cccccc);
+}
+
+/* ---------- A–Z jump rail ---------- */
+
+.viewer-az-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Spread the 26 letters across the full column height. Pads top/
+     bottom slightly so the first / last letter aren't kissing the
+     edge. */
+  justify-content: space-between;
+  padding: 10px 8px;
+  border-left: 1px solid var(--border-color, #3e3e42);
+  flex: 0 0 auto;
+  user-select: none;
+  min-width: 28px;
+}
+
+[data-ui-mode="modern"] .viewer-az-rail {
+  border-left-color: var(--modern-glass-border);
+}
+
+.viewer-az-letter {
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted, #8a8a8a);
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 90ms ease, color 90ms ease;
+}
+
+.viewer-az-letter:hover:not(.empty) {
+  background: color-mix(in srgb, var(--jade-accent) 15%, transparent);
+  color: var(--jade-accent);
+}
+
+[data-ui-mode="modern"] .viewer-az-letter:hover:not(.empty) {
+  background: var(--modern-accent-15);
+}
+
+.viewer-az-letter.empty {
+  opacity: 0.25;
+  cursor: default;
+}
+
+/* ---------- Floating "you're at X" scroll indicator ---------- */
+
+.viewer-scroll-letter {
+  position: absolute;
+  /* `top` is set inline from JS so the overlay follows the scrollbar
+     thumb (iOS-Contacts style). The transform centers it vertically
+     around the computed y. */
+  top: 0;
+  right: 56px; /* clear of the A–Z rail */
+  transform: translate(0, -50%) scale(0.96);
+  pointer-events: none;
+  font-size: 56px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--text-color, #cccccc);
+  background: color-mix(in srgb, var(--bg-secondary, rgba(0, 0, 0, 0.6)) 95%, transparent);
+  border: 1px solid var(--border-color, #3e3e42);
+  border-radius: 12px;
+  padding: 14px 22px;
+  min-width: 92px;
+  text-align: center;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transition: opacity 160ms ease, transform 160ms ease;
+  z-index: 5;
+  will-change: top;
+}
+
+.viewer-scroll-letter.visible {
+  opacity: 1;
+  transform: translate(0, -50%) scale(1);
+}
+
+[data-ui-mode="modern"] .viewer-scroll-letter {
+  background: color-mix(in srgb, var(--modern-glass-bg) 92%, black);
+  border-color: var(--modern-glass-border);
+  backdrop-filter: var(--modern-blur);
+  -webkit-backdrop-filter: var(--modern-blur);
+}
+
+/* =====================================================================
+   Stage 2 — skin gallery (left-aligned, no centering)
+   ===================================================================== */
+
+.viewer-header-detail {
+  gap: 10px;
+}
+
+.viewer-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  /* Wider + min-width so the two stage-level back buttons
+     ("Champions" / "Skins") render the same size — the row
+     reads as a stable rail rather than two different shapes. */
+  min-width: 120px;
+  padding: 6px 12px 6px 10px;
+  border: 1px solid var(--border-color, #3e3e42);
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-color, #cccccc);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.viewer-back-btn:hover {
+  border-color: var(--jade-accent);
+  color: var(--jade-accent);
+}
+
+[data-ui-mode="modern"] .viewer-back-btn {
+  background: transparent;
+  border-color: var(--modern-glass-border);
+}
+
+[data-ui-mode="modern"] .viewer-back-btn:hover {
+  background: var(--modern-accent-10);
+  border-color: var(--modern-accent);
+}
+
+.viewer-breadcrumb-sep {
+  color: var(--text-muted, #8a8a8a);
+}
+
+.viewer-breadcrumb-current {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-color, #cccccc);
+}
+
+/* Inert chip showing the current champion / skin. Mirrors the back
+   button's height/border so the row aligns, but uses a softer fill
+   + no hover affordance to read as a tag rather than another action. */
+.viewer-breadcrumb-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 12px;
+  border: 1px solid var(--border-color, #3e3e42);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-color, #e0e0e0);
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-ui-mode="modern"] .viewer-breadcrumb-pill {
+  background: var(--modern-accent-08, rgba(255, 255, 255, 0.04));
+  border-color: var(--modern-glass-border);
+}
+
+.viewer-body-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.viewer-detail {
+  padding: 20px 24px 40px 24px;
+}
+
+/* Bio block — portrait left, text right (no big centered hero). */
+.viewer-bio {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 28px;
+}
+
+.viewer-bio-portrait {
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--vscode-input-background, rgba(255, 255, 255, 0.05));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  box-shadow:
+    0 0 0 2px var(--modern-accent-25, rgba(255, 255, 255, 0.12)),
+    0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.viewer-bio-portrait .viewer-tile-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.viewer-bio-portrait .viewer-tile-letter {
+  font-size: 50px;
+}
+
+.viewer-bio-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.viewer-bio-name {
+  margin: 0 0 2px 0;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.viewer-bio-title {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.viewer-bio-blurb {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  line-height: 1.55;
+  opacity: 0.9;
+}
+
+.viewer-bio-wad {
+  margin: 6px 0 0 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  opacity: 0.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* Skins grid */
+
+.viewer-skins-heading {
+  margin: 0 0 12px 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.viewer-skin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.viewer-skin-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.viewer-skin-art {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--vscode-input-background, rgba(255, 255, 255, 0.04));
+  box-shadow: 0 0 0 1px transparent;
+  transition: box-shadow 140ms ease, transform 140ms ease;
+}
+
+.viewer-skin-tile:hover .viewer-skin-art {
+  box-shadow: 0 0 0 2px var(--jade-accent),
+    0 6px 18px color-mix(in srgb, var(--jade-accent) 30%, transparent);
+  transform: translateY(-2px);
+}
+
+.viewer-skin-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.viewer-skin-art-fallback {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    135deg,
+    var(--modern-accent-10, rgba(255, 255, 255, 0.05)),
+    transparent
+  );
+}
+
+.viewer-skin-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.viewer-skin-name {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-skin-id {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  opacity: 0.55;
+  flex: 0 0 auto;
+}
+
+/* Disabled champion tile (no CDragon match — can't load skins). */
+.viewer-tile:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.viewer-tile:disabled:hover .viewer-tile-circle {
+  box-shadow: none;
+}

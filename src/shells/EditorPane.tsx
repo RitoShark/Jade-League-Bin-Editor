@@ -6,10 +6,13 @@ import { getFileExtension } from '../lib/binOperations';
 import { getFileName } from '../components/TabBar';
 import GeneralEditPanel from '../components/GeneralEditPanel';
 import ParticleEditorPanel from '../components/ParticleEditorPanel';
+import BinNavPanel from '../components/BinNavPanel';
 import MarkdownPreview from '../components/MarkdownPreview';
 import MarkdownEditPanel from '../components/MarkdownEditPanel';
 import TexturePreviewTab from '../components/TexturePreviewTab';
 import QuartzDiffTab from '../components/QuartzDiffTab';
+import CompareTab from '../components/CompareTab';
+import StudioTab from '../components/StudioTab';
 import SecondaryPaneView from './SecondaryPaneView';
 import { useShell, type PerfMode } from './ShellContext';
 
@@ -125,6 +128,64 @@ export default function EditorPane() {
             {activeTab?.tabType === 'markdown-preview' && (
                 <MarkdownPreview content={s.mdPreviewContent} />
             )}
+            {/* Studio tabs render ALL at once (one per studio tab) and
+                hide the inactive ones via display:none. Unmounting on
+                tab-switch would dispose the Babylon scene and force
+                the user to re-drop their model — keeping them mounted
+                preserves the scene, animation player, manually-linked
+                textures, etc. for the lifetime of the tab. */}
+            {s.tabs.filter(t => t.tabType === 'studio').map(studioTab => (
+                <div
+                    key={studioTab.id}
+                    style={{
+                        flex: '1 1 auto',
+                        minHeight: 0,
+                        position: 'relative',
+                        display: activeTab?.id === studioTab.id ? 'block' : 'none',
+                    }}
+                >
+                    <StudioTab tabId={studioTab.id} />
+                </div>
+            ))}
+            {/* Compare tabs render all-at-once with `display:none` for
+                inactive ones, mirroring the Studio-tab strategy.
+                Unmounting on every switch was disposing the DiffEditor's
+                TextModels mid-event, which fired the
+                "TextModel got disposed before DiffEditorWidget model got
+                reset" + "Invoking deltaDecorations recursively" cascade
+                visible in the console, and forced Monaco to recompute
+                the diff from scratch every time the user revisits the
+                tab. Keeping them mounted preserves the diff state and
+                kills the spam. */}
+            {s.tabs.filter(t => t.tabType === 'compare').map(cmpTab => {
+                const leftSrc = s.tabs.find(t => t.id === cmpTab.compareLeftTabId);
+                const rightSrc = s.tabs.find(t => t.id === cmpTab.compareRightTabId);
+                const lineHeightPx = editorLineHeight > 0
+                    ? Math.round(editorFontSize * editorLineHeight)
+                    : 0;
+                return (
+                    <div
+                        key={cmpTab.id}
+                        style={{
+                            flex: '1 1 auto',
+                            minHeight: 0,
+                            display: activeTab?.id === cmpTab.id ? 'flex' : 'none',
+                            flexDirection: 'column',
+                        }}
+                    >
+                        <CompareTab
+                            leftName={leftSrc?.fileName ?? '(missing)'}
+                            rightName={rightSrc?.fileName ?? '(missing)'}
+                            leftContent={leftSrc?.content ?? ''}
+                            rightContent={rightSrc?.content ?? ''}
+                            fontFamily={s.editorFontFamily || undefined}
+                            fontSize={editorFontSize}
+                            lineHeight={lineHeightPx}
+                            onSwap={() => s.swapCompareTabSides(cmpTab.id)}
+                        />
+                    </div>
+                );
+            })}
             {activeTab?.tabType === 'quartz-diff' && (
                 <QuartzDiffTab
                     fileName={activeTab.diffSourceFilePath ? getFileName(activeTab.diffSourceFilePath) : activeTab.fileName}
@@ -368,6 +429,14 @@ export default function EditorPane() {
                         onContentChange={s.handleGeneralEditContentChange}
                         onScrollToLine={s.handleScrollToLine}
                         onStatusUpdate={s.setStatusMessage}
+                    />
+                )}
+                {!dockPanels && activeTab && s.isEditorTab(activeTab) && (
+                    <BinNavPanel
+                        isOpen={s.binNavOpen}
+                        onClose={() => s.setBinNavOpen(false)}
+                        editorContent={s.editorRef.current?.getValue() || activeTab.content}
+                        onScrollToLine={s.handleScrollToLine}
                     />
                 )}
             </div>

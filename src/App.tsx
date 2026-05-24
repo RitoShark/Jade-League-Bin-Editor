@@ -2,7 +2,8 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ask as askDialog } from "@tauri-apps/plugin-dialog";
+import { ask as askDialog, save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+import type { StudioSceneData } from "./lib/babylon/studioScene";
 import { Monaco } from "@monaco-editor/react";
 import type * as MonacoType from 'monaco-editor';
 import { registerRitobinLanguage, registerRitobinTheme, RITOBIN_LANGUAGE_ID, RITOBIN_THEME_ID } from "./lib/ritobinLanguage";
@@ -15,8 +16,10 @@ import {
 import { loadSavedTheme } from "./lib/themeApplicator";
 import { checkSyntax, suggestType } from "./lib/syntaxChecker";
 import { texBufferToDataURL, ddsBufferToDataURL, ddsFormatName } from "./lib/texFormat";
-import { EditorTab, createQuartzDiffTab, createMarkdownPreviewTab, createTab, createTexPreviewTab, getFileName } from "./components/TabBar";
-import { ShellProvider, type ShellContextValue, type PerfMode, type PerfKey, type HashSyncToastState, type ShellVariant } from "./shells/ShellContext";
+import { EditorTab, createQuartzDiffTab, createMarkdownPreviewTab, createStudioTab, createTab, createTexPreviewTab, createCompareTab, getFileName } from "./components/TabBar";
+import type { StudioScene } from "./lib/babylon/studioScene";
+import { ShellProvider, type ShellContextValue, type PerfMode, type PerfKey, type HashSyncToastState, type ShellVariant, type FileExplorerRoot } from "./shells/ShellContext";
+import FetchAnimationsDialog from "./components/FetchAnimationsDialog";
 import ShellHost from "./shells/ShellHost";
 import { findAndOpenLinkedBins, LinkedBinResult } from "./lib/linkedBinParser";
 import "./App.css";
@@ -142,14 +145,17 @@ function App() {
     selectionHighlight: 'auto', lineHighlight: 'auto', folding: 'auto',
     stopRenderingLine: 'auto',
   };
-  const BIG_FILE_LINES = 75_000;
+  const BIG_FILE_LINES = 125_000;
   const [perfPrefs, setPerfPrefs] = useState<Record<PerfKey, PerfMode>>(PERF_DEFAULTS);
+  const [showGuideOverlay, setShowGuideOverlay] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
   const [showThemesDialog, setShowThemesDialog] = useState(false);
   const [showMaterialLibrary, setShowMaterialLibrary] = useState(false);
   const [showPreferencesDialog, setShowPreferencesDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [showQuartzInstallModal, setShowQuartzInstallModal] = useState(false);
+  const [comparePicker, setComparePicker] = useState<{ leftId: string; rightId: string } | null>(null);
+  const [assetGalleryTabId, setAssetGalleryTabId] = useState<string | null>(null);
   const [updateToastVersion, setUpdateToastVersion] = useState<string | null>(null);
   const [hashSyncToast, setHashSyncToast] = useState<HashSyncToastState | null>(null);
   // When the startup fingerprint check finds an update *and* hashes are
@@ -169,6 +175,7 @@ function App() {
   const [particlePanelOpen, setParticlePanelOpen] = useState(false);
   const [textureInsertOpen, setTextureInsertOpen] = useState(false);
   const [materialInsertOpen, setMaterialInsertOpen] = useState(false);
+  const [binNavOpen, setBinNavOpen] = useState(false);
   const [mdPreviewContent, setMdPreviewContent] = useState<string>('');
   const [showNewFileDialog, setShowNewFileDialog] = useState(false);
   const [particleDialogOpen, setParticleDialogOpen] = useState(false);
@@ -446,12 +453,18 @@ function App() {
   // Stable refs so Tauri/DOM event listeners (registered once) always call the
   // latest version of these callbacks rather than stale closure captures.
   const openFileFromPathRef = useRef<((path: string) => Promise<void>) | null>(null);
+  // Set late (studioOpenSceneFromPath is defined far below) so the
+  // early path-open + drag-drop code can route `.studio.json` to the
+  // studio loader instead of the text editor.
+  const studioOpenSceneFromPathRef = useRef<((path: string) => Promise<void>) | null>(null);
+  const isStudioScenePath = (p: string) => /\.studio\.json$/i.test(p);
   const openingFilesRef = useRef<Set<string>>(new Set()); // prevents duplicate concurrent opens
   const handleTabCloseRef = useRef<((tabId: string) => void) | null>(null);
   const handleNewRef = useRef<(() => void) | null>(null);
   const handleOpenRef = useRef<(() => void) | null>(null);
   const handleSaveRef = useRef<(() => void) | null>(null);
   const handleSaveAsRef = useRef<(() => void) | null>(null);
+  const handleSaveAllRef = useRef<(() => void) | null>(null);
   const handleFindRef = useRef<(() => void) | null>(null);
   const handleReplaceRef = useRef<(() => void) | null>(null);
   const handleCompareRef = useRef<(() => void) | null>(null);
@@ -484,6 +497,23 @@ function App() {
   activeTabIdRef.current = activeTabId;
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
+
+  // Close editor-only floating widgets when the user switches to a tab
+  // that doesn't host them. The Find / Replace / General-edit / Bin-nav
+  // /Particle panels live above the editor pane — when the active tab
+  // is a Studio scene or a texture preview those panels have nothing
+  // to attach to, so leaving them open strands the user (no editor in
+  // sight to receive the Esc / close action).
+  useEffect(() => {
+    if (!isEditorTab(activeTab)) {
+      if (findWidgetOpen) setFindWidgetOpen(false);
+      if (replaceWidgetOpen) setReplaceWidgetOpen(false);
+      if (generalEditPanelOpen) setGeneralEditPanelOpen(false);
+      if (particlePanelOpen) setParticlePanelOpen(false);
+      if (binNavOpen) setBinNavOpen(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab?.id, activeTab?.tabType]);
 
   // Ref to track if we should allow hash preload status updates
   // This prevents hash preload status from overriding important messages like "Opened file"
@@ -613,17 +643,24 @@ function App() {
     invoke<string>('get_preference', { key: 'SyntaxChecking', defaultValue: 'True' })
       .then(val => { syntaxCheckingEnabled.current = val !== 'False'; })
       .catch(() => {});
-    // One-time migration: nudge existing users onto the new Studio
-    // layout so they get to try it. Stamped via the `StudioMigrated`
-    // pref, so subsequent launches respect whatever they end up
-    // choosing. No-op for first-run installs (defaults are vscode →
-    // we still flip to visualstudio and stamp).
+    // First-launch guide — show if the user has never completed it.
+    invoke<string>('get_preference', { key: 'GuideCompleted', defaultValue: 'False' })
+      .then(val => { if (val !== 'True') setShowGuideOverlay(true); })
+      .catch(() => {});
+
+    // Studio-shell migration. Bumped from `StudioMigrated` to
+    // `StudioMigratedV2` for this release because the previous round
+    // missed users who'd already stamped V1 while still on vscode /
+    // word — we want everyone re-flipped to visualstudio (the only
+    // shell that currently has the full Studio feature set). Anyone
+    // already on visualstudio is a no-op write; users can still
+    // change shells in Settings after the flip.
     (async () => {
       try {
-        const migrated = await invoke<string>('get_preference', { key: 'StudioMigrated', defaultValue: 'False' });
+        const migrated = await invoke<string>('get_preference', { key: 'StudioMigratedV2', defaultValue: 'False' });
         if (migrated !== 'True') {
           await invoke('set_preference', { key: 'UiShell', value: 'visualstudio' });
-          await invoke('set_preference', { key: 'StudioMigrated', value: 'True' });
+          await invoke('set_preference', { key: 'StudioMigratedV2', value: 'True' });
           setShellVariant('visualstudio');
           window.dispatchEvent(new CustomEvent('shell-changed', { detail: 'visualstudio' }));
           return;
@@ -764,6 +801,7 @@ function App() {
     const handleAppOpen = () => handleOpenRef.current?.();
     const handleAppSave = () => handleSaveRef.current?.();
     const handleAppSaveAs = () => handleSaveAsRef.current?.();
+    const handleAppSaveAll = () => handleSaveAllRef.current?.();
     const handleAppFind = () => handleFindRef.current?.();
     const handleAppReplace = () => handleReplaceRef.current?.();
     const handleAppCompare = () => handleCompareRef.current?.();
@@ -804,6 +842,7 @@ function App() {
     window.addEventListener('app-open', handleAppOpen);
     window.addEventListener('app-save', handleAppSave);
     window.addEventListener('app-save-as', handleAppSaveAs);
+    window.addEventListener('app-save-all', handleAppSaveAll);
     window.addEventListener('app-find', handleAppFind);
     window.addEventListener('app-replace', handleAppReplace);
     window.addEventListener('app-compare', handleAppCompare);
@@ -829,8 +868,10 @@ function App() {
         return;
       }
 
-      // Ctrl+S - Save file
-      if (e.ctrlKey && e.key === 's' && !e.shiftKey) {
+      // Ctrl+S - Save file. Guard on `!e.altKey` so Ctrl+Alt+S
+      // (Save All, handler below) doesn't match this branch first
+      // and quietly do a single-file save instead.
+      if (e.ctrlKey && e.key === 's' && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         // Trigger save - handleSave is defined elsewhere, use a custom event
         window.dispatchEvent(new CustomEvent('app-save'));
@@ -838,9 +879,16 @@ function App() {
       }
 
       // Ctrl+Shift+S - Save As
-      if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+      if (e.ctrlKey && e.shiftKey && e.key === 'S' && !e.altKey) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent('app-save-as'));
+        return;
+      }
+
+      // Ctrl+Alt+S - Save All (every modified editor tab in one shot)
+      if (e.ctrlKey && e.altKey && (e.key === 's' || e.key === 'S') && !e.shiftKey) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('app-save-all'));
         return;
       }
 
@@ -1025,11 +1073,21 @@ function App() {
 
         for (const filePath of event.payload.paths) {
           console.log('Dropped file:', filePath);
+          // `.studio.json` opens as a Photo Studio scene. Checked
+          // before the plain-text branch since `.json` would
+          // otherwise route to the text editor.
+          if (isStudioScenePath(filePath)) {
+            await studioOpenSceneFromPathRef.current?.(filePath);
+            continue;
+          }
           // Accept any file Jade knows how to open: bin/.py go through
-          // the bin pipeline, the curated plain-text list opens as raw
+          // the bin pipeline, .troybin / .inibin go to the dedicated
+          // troybin tab, and the curated plain-text list opens as raw
           // text. Unknown extensions are ignored so dropping (say) a
           // .exe doesn't try to render binary garbage.
-          if (isBinLikePath(filePath) || isPlainTextPath(filePath)) {
+          const lower = filePath.toLowerCase();
+          const isTroybin = lower.endsWith('.troybin') || lower.endsWith('.inibin');
+          if (isTroybin || isBinLikePath(filePath) || isPlainTextPath(filePath)) {
             await openFileFromPathRef.current?.(filePath);
           }
         }
@@ -1068,6 +1126,7 @@ function App() {
       window.removeEventListener('app-open', handleAppOpen);
       window.removeEventListener('app-save', handleAppSave);
       window.removeEventListener('app-save-as', handleAppSaveAs);
+      window.removeEventListener('app-save-all', handleAppSaveAll);
       window.removeEventListener('app-find', handleAppFind);
       window.removeEventListener('app-replace', handleAppReplace);
       window.removeEventListener('app-compare', handleAppCompare);
@@ -1199,16 +1258,12 @@ function App() {
         key: 'HashUpdateMode',
         defaultValue: 'every_3_days'
       }).catch(() => 'every_3_days');
-      // Default schedule is 'every_3_days'. Existing users on the
-      // older 'every_launch' or 'every_7_days' settings get bumped
-      // to it silently — every_launch is too aggressive for most
-      // people, and 'every_7_days' was an earlier name for what is
-      // now 'every_3_days'. Both silently migrate. The user can
-      // still re-select 'every_launch' from Settings if they want.
-      const mode =
-        rawMode === 'every_7_days' || rawMode === 'every_launch'
-          ? 'every_3_days'
-          : rawMode;
+      // Migrate the legacy `every_7_days` value silently — the
+      // schedule is now expressed in 3-day windows. `every_launch`
+      // is a valid user choice (was previously force-migrated here,
+      // which made it impossible to actually enable from Settings —
+      // every restart would flip it right back to every_3_days).
+      const mode = rawMode === 'every_7_days' ? 'every_3_days' : rawMode;
       if (mode !== rawMode) {
         await invoke('set_preference', { key: 'HashUpdateMode', value: 'every_3_days' }).catch(() => {});
       }
@@ -1648,6 +1703,87 @@ function App() {
   }, []);
 
   const openFileFromPath = async (filePath: string) => {
+    // `.studio.json` scene files go to the Photo Studio loader, not
+    // the text editor — route them out before the normal pipeline.
+    if (isStudioScenePath(filePath)) {
+      await studioOpenSceneFromPathRef.current?.(filePath);
+      return;
+    }
+    // Legacy `.troybin` / `.inibin` files get converted to a
+    // modern BIN on the fly — drag-drop / File→Open / argv all funnel
+    // here, the Rust pipeline writes a `<stem>.bin` sibling, and we
+    // recurse with the produced BIN path so the user lands on the
+    // editable BIN immediately. No intermediate tab or prompt.
+    const lowerExt = filePath.toLowerCase().slice(filePath.lastIndexOf('.'));
+    if (lowerExt === '.troybin' || lowerExt === '.inibin') {
+      const normalised = filePath.toLowerCase();
+      console.log('[troybin] open requested:', filePath);
+      // OS / Tauri sometimes fires the drag-drop event twice for a
+      // single drop — without this guard we'd convert the same file
+      // back-to-back.
+      if (openingFilesRef.current.has(normalised)) {
+        console.log('[troybin] already opening, skipping duplicate');
+        return;
+      }
+      openingFilesRef.current.add(normalised);
+      try {
+        setStatusMessage(`Converting ${getFileName(filePath)}…`);
+        const r = await invoke<{ output_path: string }>('troybin_convert_to_bin', { path: filePath });
+        console.log('[troybin] converted to:', r.output_path);
+        openingFilesRef.current.delete(normalised);
+        // Hand the produced BIN back through the normal open path —
+        // routes through the BIN editor, marks the file recent, etc.
+        await openFileFromPath(r.output_path);
+      } catch (err) {
+        openingFilesRef.current.delete(normalised);
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[troybin] convert failed:', err);
+        setStatusMessage(`Convert troybin failed: ${msg}`);
+      }
+      return;
+    }
+    // Image / texture files → dedicated texture-preview tab so the
+    // user gets the in-app viewer (and the Edit-in-image-editor +
+    // Reveal-in-Explorer buttons that go with it). Without this, an
+    // explorer double-click on a .tex would try to load it as text
+    // and dump binary garbage into Monaco.
+    const ext = lowerExt.replace(/^\./, '');
+    if (ext === 'tex' || ext === 'dds' || ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'bmp' || ext === 'webp' || ext === 'gif') {
+      const existingTex = tabs.find(t => t.filePath === filePath && t.tabType === 'texture-preview');
+      if (existingTex) {
+        setActiveTabId(existingTex.id);
+        setWelcomeOverride('hide');
+        return;
+      }
+      saveCurrentViewState();
+      const texTab = createTexPreviewTab(filePath);
+      setTabs(prev => [...prev, texTab]);
+      setActiveTabId(texTab.id);
+      setWelcomeOverride('hide');
+      loadTextureIntoTab(texTab.id, filePath);
+      addToRecentFiles(filePath).catch(() => {});
+      return;
+    }
+    // 3D-asset family → a fresh Photo Studio tab with the disk path
+    // queued for `addModelFromDisk`. Mirrors the Viewer's
+    // send-to-Studio handoff, minus the WAD extraction step.
+    if (ext === 'skn' || ext === 'skl' || ext === 'sco' || ext === 'scb' || ext === 'anm') {
+      saveCurrentViewState();
+      ensureStudioShell();
+      const newTab = createStudioTab();
+      pendingStudioModelLoadsRef.current.set(newTab.id, filePath);
+      setTabs(prev => [...prev, newTab]);
+      setActiveTabId(newTab.id);
+      setStudioAnimOpen(true);
+      setStudioBgOpen(true);
+      setStudioActionsOpen(true);
+      setStudioMeshOpen(true);
+      setStudioObjectsOpen(true);
+      setWelcomeOverride('hide');
+      setStatusMessage(`Loading ${getFileName(filePath)} in Photo Studio…`);
+      addToRecentFiles(filePath).catch(() => {});
+      return;
+    }
     // Prevent duplicate concurrent opens (e.g. Tauri drag-drop firing twice,
     // or rapid re-drops of the same file before the first open completes).
     const normalizedPath = filePath.toLowerCase();
@@ -1735,11 +1871,28 @@ function App() {
   // Tab operations. `setActiveTabId` itself routes to the correct
   // pane via the tab's `pane` field, so this handler is now just
   // about view-state preservation.
+  // Switch the shell to Visual Studio if it isn't already. Photo
+  // Studio panels are only wired into the VS shell for now, so a
+  // studio tab opened under Classic / Word would render a bare
+  // viewport with no controls. Auto-switching keeps the feature
+  // usable until the other shells get their own panel host.
+  const ensureStudioShell = useCallback(() => {
+    if (shellVariantRef.current === 'visualstudio') return;
+    setShellVariant('visualstudio');
+    shellVariantRef.current = 'visualstudio';
+    window.dispatchEvent(new CustomEvent('shell-changed', { detail: 'visualstudio' }));
+    invoke('set_preference', { key: 'UiShell', value: 'visualstudio' }).catch(() => {});
+  }, []);
+
   const handleTabSelect = useCallback((tabId: string) => {
     if (tabId === activeTabId) return;
     saveCurrentViewState();
+    // Selecting a studio tab forces the VS shell — its panels are
+    // the only place the studio controls live for now.
+    const selected = tabsRef.current.find(t => t.id === tabId);
+    if (selected?.tabType === 'studio') ensureStudioShell();
     setActiveTabId(tabId);
-  }, [activeTabId, saveCurrentViewState, setActiveTabId]);
+  }, [activeTabId, saveCurrentViewState, setActiveTabId, ensureStudioShell]);
 
   const handleTabClose = useCallback(async (tabId: string) => {
     const recentlyRejected = lastRejectedTabCloseRef.current;
@@ -1754,11 +1907,34 @@ function App() {
     const tabToClose = tabs.find(t => t.id === tabId);
     if (!tabToClose) return;
 
-    // Prompt BEFORE removing the tab. The previous code used the
-    // browser's `window.confirm()`, which Tauri's webview treats as
-    // non-blocking — the close proceeded and the popup appeared as a
-    // useless artifact. Tauri's `ask` is a real native modal.
-    if (tabToClose.isModified) {
+    // Studio tabs get a save-offering prompt rather than the plain
+    // "close anyway?" — composing a scene is real work and there's
+    // a real file format to save it to.
+    if (tabToClose.tabType === 'studio' && tabToClose.isModified) {
+      const save = await askDialog(
+        `Save changes to "${tabToClose.fileName}" before closing?`,
+        { title: 'Unsaved studio scene', kind: 'warning' },
+      );
+      if (save) {
+        // Make the tab active so studioSaveActiveTab targets it,
+        // then save. If the user backs out of the Save As dialog
+        // (save returns false), abort the close so work isn't lost.
+        if (activeTabIdRef.current !== tabId) {
+          setActiveTabId(tabId);
+          await new Promise((r) => setTimeout(r, 0));
+        }
+        const saved = await studioSaveActiveTab(false);
+        if (!saved) {
+          lastRejectedTabCloseRef.current = { tabId, at: Date.now() };
+          return;
+        }
+      }
+      // `save === false` → discard and close. Fall through.
+    } else if (tabToClose.isModified) {
+      // Prompt BEFORE removing the tab. The previous code used the
+      // browser's `window.confirm()`, which Tauri's webview treats as
+      // non-blocking — the close proceeded and the popup appeared as a
+      // useless artifact. Tauri's `ask` is a real native modal.
       const proceed = await askDialog(
         `"${tabToClose.fileName}" has unsaved changes. Close anyway?`,
         { title: 'Unsaved changes', kind: 'warning' },
@@ -1798,6 +1974,21 @@ function App() {
     // Remove view state and LRU entry
     viewStatesRef.current.delete(tabId);
     modelLruRef.current = modelLruRef.current.filter(id => id !== tabId);
+    // Real close — now it's safe to drop the studio scene's
+    // pending-load entry (kept alive across StrictMode remounts).
+    if (tabToClose.tabType === 'studio') {
+      pendingStudioLoadsRef.current.delete(tabId);
+      pendingStudioModelLoadsRef.current.delete(tabId);
+      // Wipe the borrowed-animations temp folder we created for
+      // this scene (if any). Best-effort — failures are logged but
+      // don't block the close.
+      const borrow = borrowedAnimDirsRef.current.get(tabId);
+      if (borrow) {
+        borrowedAnimDirsRef.current.delete(tabId);
+        invoke('cleanup_anim_borrow_dir', { borrowDir: borrow })
+          .catch(e => console.warn('[anim-borrow] cleanup failed:', e));
+      }
+    }
     if (tabToClose.tabType === 'quartz-diff' && tabToClose.diffSourceFilePath) {
       const sourceKey = tabToClose.diffSourceFilePath.toLowerCase();
       setQuartzHistoryEntries(prev => prev.filter(entry => entry.filePath.toLowerCase() !== sourceKey));
@@ -1823,6 +2014,14 @@ function App() {
     // nothing to show.
     if (tabToClose.tabType !== 'markdown-preview') {
       newTabs = newTabs.filter(t => !(t.tabType === 'markdown-preview' && t.sourceTabId === tabId));
+    }
+    // Same rule for compare tabs: if either side's source closes the
+    // diff has nothing to render, so we drop the compare tab too.
+    if (tabToClose.tabType !== 'compare') {
+      newTabs = newTabs.filter(t => !(
+        t.tabType === 'compare' &&
+        (t.compareLeftTabId === tabId || t.compareRightTabId === tabId)
+      ));
     }
     let nextActiveId: string | null = null;
     if (tabId === activeTabId) {
@@ -1963,6 +2162,33 @@ function App() {
     }
     return newTab;
   }, [tabs, saveCurrentViewState, ensureTrackedBinSession]);
+
+  /** Batch-add multiple files as tabs in a single React commit
+   *  WITHOUT activating any of them. Used by the linked-BIN auto-open
+   *  flow so loading a parent BIN with 30 dependencies doesn't fire
+   *  30 separate `setActiveTabId` calls (each one swaps the Monaco
+   *  model — that's the real source of the multi-open lag). The user
+   *  stays on whatever tab they explicitly opened. De-duplicates
+   *  against already-open files by path. */
+  const addTabsBatch = useCallback((files: { filePath: string; content: string }[]): EditorTab[] => {
+    if (files.length === 0) return [];
+    // Filter out paths that are already open. Compare current `tabs`
+    // PLUS the running new-tab list so two passes of the same path
+    // in `files` don't create duplicates either.
+    const openPaths = new Set(tabs.map(t => t.filePath).filter((p): p is string => !!p));
+    const fresh: EditorTab[] = [];
+    for (const f of files) {
+      if (openPaths.has(f.filePath)) continue;
+      openPaths.add(f.filePath);
+      fresh.push(createTab(f.filePath, f.content));
+    }
+    if (fresh.length === 0) return [];
+    setTabs(prevTabs => [...prevTabs, ...fresh]);
+    for (const t of fresh) {
+      if (t.filePath) ensureTrackedBinSession(t.filePath, t.content, 'paint');
+    }
+    return fresh;
+  }, [tabs, ensureTrackedBinSession]);
 
   // Monaco handlers
   function handleBeforeMount(monaco: Monaco) {
@@ -2492,6 +2718,29 @@ function App() {
     return bytes;
   }
 
+  // Pick the right base file for `resolve_asset_path`. Normally this
+  // is the active editor tab's own filePath (the BIN we're hovering
+  // swatches in). For in-memory asset-list reports the tab has no
+  // filePath, so we fall back to a sentinel inside the mod root the
+  // report embeds in its header (`Mod root: \`<abs path>\``). That
+  // lets the hover popup resolve assets against the mod root we
+  // already know — same trick the gallery dialog uses.
+  const popupBaseForActiveTab = (): string | null => {
+    const tab = activeTabRef.current;
+    if (!tab) return null;
+    if (tab.filePath) return tab.filePath;
+    if (!isEditorTab(tab)) return null;
+    const text = (activeTabIdRef.current === tab.id && editorRef.current?.getValue())
+      || tab.content
+      || '';
+    const m = /^Mod root:\s+`([^`]+)`/m.exec(text);
+    if (!m) return null;
+    // `resolve_asset_path` accepts a directory or a file path; passing
+    // a non-existent sentinel under the directory matches how the
+    // gallery dialog does it.
+    return `${m[1].replace(/\\/g, '/').replace(/\/+$/, '')}/.jade-popup-base`;
+  };
+
   const loadTextureForPopup = useCallback(async (rawPath: string, baseFile: string | null) => {
     try {
       const resolved: string | null = baseFile
@@ -2664,15 +2913,12 @@ function App() {
 
     // The syntax checker is bin/ritobin-specific. Skip it for plain-text
     // tabs (json, md, txt, etc.) so we don't paint nonsense errors on
-    // unrelated formats.
-    const modelUriPath = model.uri.path || '';
-    const isRitobinTab = (() => {
-      const ext = getFileExtension(modelUriPath);
-      // Untitled buffers have no extension — treat as ritobin so the
-      // existing default-language behavior is preserved.
-      if (!ext) return true;
-      return ext === 'bin' || ext === 'py';
-    })();
+    // unrelated formats. Gate on the model's *language id* rather than
+    // its URI path — new/untitled buffers get an `inmemory://tab/<id>`
+    // URI with no extension, but their language is still set correctly
+    // from the tab's filename at creation (see getMonacoLanguageForPath),
+    // so a fresh `.md` file reads as 'markdown' and is left alone.
+    const isRitobinTab = model.getLanguageId() === RITOBIN_LANGUAGE_ID;
 
     if (!syntaxCheckingEnabled.current || !isRitobinTab) {
       monaco.editor.setModelMarkers(model, 'syntax-checker', []);
@@ -2766,7 +3012,11 @@ function App() {
     };
     refreshImg();
     disposables.push(editor.onDidChangeModelContent(() => debouncedRefreshImg()));
-    disposables.push(editor.onDidChangeModel(() => refreshImg()));
+    // Defer model-swap refreshes to a microtask so we don't call
+    // `deltaDecorations` while Monaco is already mid-`deltaDecorations`
+    // on a chained event delivery — that's what Monaco's "Invoking
+    // deltaDecorations recursively" warning catches.
+    disposables.push(editor.onDidChangeModel(() => queueMicrotask(refreshImg)));
     disposables.push({
       dispose: () => {
         if (imgDecDebounce) clearTimeout(imgDecDebounce);
@@ -2777,10 +3027,23 @@ function App() {
     // -- Material jump arrows --
     let matJumpDecorations: string[] = [];
     let matJumpDebounce: ReturnType<typeof setTimeout> | null = null;
+    // `editor.deltaDecorations` synchronously fires Monaco's
+    // model-decoration change event, and at least one of our other
+    // listeners ends up re-entering this refresher under the
+    // resulting fire chain. The recursive call trips Monaco's
+    // "Invoking deltaDecorations recursively could lead to leaking
+    // decorations" warning. This flag silently bails on re-entry.
+    let matJumpRefreshing = false;
     const refreshMatJump = () => {
+      if (matJumpRefreshing) return;
       const m = editor.getModel();
       if (!m) return;
-      matJumpDecorations = editor.deltaDecorations(matJumpDecorations, findMaterialJumpDecorations(m));
+      matJumpRefreshing = true;
+      try {
+        matJumpDecorations = editor.deltaDecorations(matJumpDecorations, findMaterialJumpDecorations(m));
+      } finally {
+        matJumpRefreshing = false;
+      }
     };
     const debouncedRefreshMatJump = () => {
       if (matJumpDebounce) clearTimeout(matJumpDebounce);
@@ -2788,7 +3051,8 @@ function App() {
     };
     refreshMatJump();
     disposables.push(editor.onDidChangeModelContent(() => debouncedRefreshMatJump()));
-    disposables.push(editor.onDidChangeModel(() => refreshMatJump()));
+    // Microtask-defer: see refreshImg above for rationale.
+    disposables.push(editor.onDidChangeModel(() => queueMicrotask(refreshMatJump)));
     disposables.push({
       dispose: () => {
         if (matJumpDebounce) clearTimeout(matJumpDebounce);
@@ -2854,8 +3118,7 @@ function App() {
         formatNum: 0,
         error: null,
       });
-      const baseFile = activeTabRef.current?.filePath ?? null;
-      loadTextureForPopup(imgMatch.path, baseFile);
+      loadTextureForPopup(imgMatch.path, popupBaseForActiveTab());
     };
 
     // Click → toggle popup.
@@ -2901,7 +3164,13 @@ function App() {
       hoveredSwatchEl = target;
       swatchHoverTimeout = setTimeout(() => {
         swatchHoverTimeout = null;
-        if (hoveredSwatchEl === target && !texPopupRef.current) {
+        // No `!texPopupRef.current` gate here — if a popup is already
+        // open for a different swatch, `openPopupFromSwatch` will
+        // overwrite it with the new path (it only toggles off when
+        // the incoming path matches the current one). The earlier gate
+        // left stale popups visible when the mouse hopped between
+        // swatches without ever leaving the swatch region.
+        if (hoveredSwatchEl === target) {
           openPopupFromSwatch(target);
         }
       }, 400);
@@ -3038,7 +3307,6 @@ function App() {
 
       const anchor = computeAnchorFromSwatch(swatchEl);
 
-      const baseFile = activeTabRef.current?.filePath ?? null;
       setTexPopup({
         top: anchor.top,
         left: anchor.left,
@@ -3052,7 +3320,7 @@ function App() {
         formatNum: 0,
         error: null,
       });
-      loadTextureForPopup(match.path, baseFile);
+      loadTextureForPopup(match.path, popupBaseForActiveTab());
     };
 
     // Click on swatch to open popup
@@ -3099,7 +3367,10 @@ function App() {
       hoveredSwatchEl = browserTarget;
       swatchHoverTimeout = setTimeout(() => {
         swatchHoverTimeout = null;
-        if (hoveredSwatchEl === browserTarget && !texPopupRef.current) {
+        // See the left-pane handler — no `!texPopupRef.current` gate
+        // so hovering from one swatch to another swaps the popup
+        // instead of leaving the stale one onscreen.
+        if (hoveredSwatchEl === browserTarget) {
           openPopupFromSwatch(browserTarget);
         }
       }, 400);
@@ -3137,7 +3408,11 @@ function App() {
     // Apply on mount and debounce on content changes
     refreshImagePathDecorations();
     const imgDecContentDisposable = editor.onDidChangeModelContent(() => { debouncedRefreshImagePathDecorations(); });
-    const imgDecModelDisposable = editor.onDidChangeModel(() => { refreshImagePathDecorations(); });
+    // Microtask-defer the model-swap refresh so we don't enter
+    // `deltaDecorations` while Monaco is mid-`deltaDecorations` on
+    // a chained event delivery (the "Invoking deltaDecorations
+    // recursively" warning).
+    const imgDecModelDisposable = editor.onDidChangeModel(() => { queueMicrotask(refreshImagePathDecorations); });
     editorDisposablesRef.current.push(imgDecContentDisposable, imgDecModelDisposable);
     editorDisposablesRef.current.push({ dispose: () => { if (imgDecDebounce) clearTimeout(imgDecDebounce); editor.deltaDecorations(imgPathDecorations, []); } });
     // â”€â”€ End image path decorations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -3145,10 +3420,21 @@ function App() {
     // Material jump arrows (link <-> StaticMaterialDef)
     let matJumpDecorations: string[] = [];
     let matJumpDebounce: ReturnType<typeof setTimeout> | null = null;
+    // See `setupRightEditor` for the re-entrancy rationale —
+    // Monaco's deltaDecorations fires events synchronously and
+    // a listener somewhere in our chain calls back into this
+    // refresher before the first call has returned. Guard it.
+    let matJumpRefreshing = false;
     const refreshMatJumpDecorations = () => {
+      if (matJumpRefreshing) return;
       const model = editor.getModel();
       if (!model) return;
-      matJumpDecorations = editor.deltaDecorations(matJumpDecorations, findMaterialJumpDecorations(model));
+      matJumpRefreshing = true;
+      try {
+        matJumpDecorations = editor.deltaDecorations(matJumpDecorations, findMaterialJumpDecorations(model));
+      } finally {
+        matJumpRefreshing = false;
+      }
     };
     const debouncedRefreshMatJumpDecorations = () => {
       if (matJumpDebounce) clearTimeout(matJumpDebounce);
@@ -3156,7 +3442,8 @@ function App() {
     };
     refreshMatJumpDecorations();
     const matJumpContentDisposable = editor.onDidChangeModelContent(() => { debouncedRefreshMatJumpDecorations(); });
-    const matJumpModelDisposable = editor.onDidChangeModel(() => { refreshMatJumpDecorations(); });
+    // Microtask-defer: see refreshImagePathDecorations above for rationale.
+    const matJumpModelDisposable = editor.onDidChangeModel(() => { queueMicrotask(refreshMatJumpDecorations); });
     editorDisposablesRef.current.push(matJumpContentDisposable, matJumpModelDisposable);
     editorDisposablesRef.current.push({ dispose: () => { if (matJumpDebounce) clearTimeout(matJumpDebounce); editor.deltaDecorations(matJumpDecorations, []); } });
 
@@ -3424,6 +3711,7 @@ function App() {
       particle: particlePanelOpen,
       texture:  textureInsertOpen,
       material: materialInsertOpen,
+      binnav:   binNavOpen,
     };
     try {
       window.localStorage.setItem(VS_OPEN_TOOLS_KEY, JSON.stringify(snapshot));
@@ -3433,6 +3721,7 @@ function App() {
     findWidgetOpen, replaceWidgetOpen,
     generalEditPanelOpen, particlePanelOpen,
     textureInsertOpen, materialInsertOpen,
+    binNavOpen,
   ]);
 
   // Restore tool open state when the VS shell becomes active (app
@@ -3450,6 +3739,7 @@ function App() {
         const parsed = JSON.parse(raw) as Partial<{
           find: boolean; replace: boolean; general: boolean;
           particle: boolean; texture: boolean; material: boolean;
+          binnav: boolean;
         }>;
         if (parsed.find)     setFindWidgetOpen(true);
         if (parsed.replace)  setReplaceWidgetOpen(true);
@@ -3457,6 +3747,7 @@ function App() {
         if (parsed.particle) setParticlePanelOpen(true);
         if (parsed.texture)  setTextureInsertOpen(true);
         if (parsed.material) setMaterialInsertOpen(true);
+        if (parsed.binnav)   setBinNavOpen(true);
       }
     } catch { /* parse failure — ignore */ }
     vsToolsRestoredRef.current = true;
@@ -3475,6 +3766,7 @@ function App() {
     setParticlePanelOpen(false);
     setTextureInsertOpen(false);
     setMaterialInsertOpen(false);
+    setBinNavOpen(false);
   }, [shellVariant]);
 
   // Cleanup subscriptions only on component unmount (editor no longer remounts on tab change)
@@ -3614,6 +3906,480 @@ function App() {
     return true;
   }, []);
 
+  // -- Photo Studio panel open/closed state. Defaults to true so the
+  //    user sees the controls the moment they open a studio scene.
+  //    Dismissing a panel hides it for the current session; switching
+  //    away from the studio tab also hides them (handled in the shell
+  //    via the active-tab check).
+  const [studioAnimOpen, setStudioAnimOpen] = useState(true);
+  const [studioBgOpen, setStudioBgOpen] = useState(true);
+  const [studioActionsOpen, setStudioActionsOpen] = useState(true);
+  const [studioMeshOpen, setStudioMeshOpen] = useState(true);
+  const [studioObjectsOpen, setStudioObjectsOpen] = useState(true);
+  const [studioSpotlightOpen, setStudioSpotlightOpen] = useState(true);
+
+  // -- File Explorer pane state.
+  //    Lives at the shell level so the pane survives tab switches
+  //    and persists its last folder root across app restarts via
+  //    localStorage. Studio shell is the only one that renders the
+  //    pane (other shells lack a dock system).
+  const [fileExplorerOpen, setFileExplorerOpen] = useState<boolean>(() => {
+    try { return window.localStorage.getItem('file-explorer-open') === '1'; } catch { return false; }
+  });
+  const [fileExplorerRoot, setFileExplorerRoot] = useState<FileExplorerRoot | null>(() => {
+    try {
+      // Only folder roots are persisted across sessions — WAD mounts
+      // are session-bound (Rust unmounts everything on shutdown). On
+      // load, hydrate the saved folder path into a structured root.
+      const raw = window.localStorage.getItem('file-explorer-root');
+      if (!raw) return null;
+      return { kind: 'folder', path: raw };
+    } catch { return null; }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('file-explorer-open', fileExplorerOpen ? '1' : '0');
+    } catch { /* ignore */ }
+  }, [fileExplorerOpen]);
+  useEffect(() => {
+    try {
+      if (fileExplorerRoot && fileExplorerRoot.kind === 'folder') {
+        window.localStorage.setItem('file-explorer-root', fileExplorerRoot.path);
+      } else {
+        window.localStorage.removeItem('file-explorer-root');
+      }
+    } catch { /* ignore */ }
+  }, [fileExplorerRoot]);
+
+  const handleOpenFolder = useCallback(async () => {
+    try {
+      const { open: openDialog } = await import('@tauri-apps/plugin-dialog');
+      const picked = await openDialog({ directory: true, multiple: false });
+      if (typeof picked === 'string') {
+        // Close any previously-mounted WAD root before switching.
+        setFileExplorerRoot(prev => {
+          if (prev?.kind === 'wad') {
+            invoke('wad_close', { id: prev.mountId }).catch(() => {});
+          }
+          return { kind: 'folder', path: picked };
+        });
+        setFileExplorerOpen(true);
+        setWelcomeOverride('hide');
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setStatusMessage(`Open folder failed: ${msg}`);
+    }
+  }, []);
+
+  // ── Fetch-Vanilla-Animations dialog state ────────────────────
+  // The picker is mounted at the App level so it overlays everything
+  // (studio canvas / dock panes / floating windows). The promise
+  // resolver pattern lets `openFetchAnimationsDialog` await the
+  // user's confirm/cancel from the call site (Pose panel button)
+  // without React-pushing the resolver through props.
+  const [fetchAnimDialog, setFetchAnimDialog] = useState<{
+    open: boolean;
+    sknPath: string;
+    champion: string | null;
+    skinNum: number | null;
+    reason: string;
+  } | null>(null);
+  const fetchAnimResolveRef = useRef<((count: number) => void) | null>(null);
+
+  // Per-studio-tab map of borrowed-animation directories returned by
+  // `fetch_vanilla_animations`. The reload call passes the borrowed
+  // dir to the disk-anim Tauri command so the extra ANMs show up in
+  // the Pose panel, and tab close fires `cleanup_anim_borrow_dir` so
+  // the temp folder doesn't accumulate under the config dir.
+  const borrowedAnimDirsRef = useRef<Map<string, string>>(new Map());
+
+  const runFetchVanillaAnimations = useCallback(async (
+    sknPath: string,
+    champion: string,
+    skinNum: number,
+    usePbe: boolean,
+  ): Promise<number> => {
+    try {
+      setStatusMessage(`Fetching ${champion} skin${skinNum} animations…`);
+      const result = await invoke<{
+        borrowed_dir: string;
+        final_count: number;
+        base_layer_included: boolean;
+        wad_name: string;
+      }>('fetch_vanilla_animations', {
+        sknDiskPath: sknPath,
+        champion,
+        skinNum,
+        usePbe,
+      });
+      // Track the borrowed dir against the active studio tab so the
+      // reload reads it and tab-close can clean it up. If a previous
+      // borrow already existed for this tab, schedule its cleanup —
+      // a fresh fetch supersedes the old set.
+      const tabId = activeTabIdRef.current ?? '';
+      if (tabId) {
+        const prior = borrowedAnimDirsRef.current.get(tabId);
+        if (prior && prior !== result.borrowed_dir) {
+          invoke('cleanup_anim_borrow_dir', { borrowDir: prior }).catch(() => {});
+        }
+        borrowedAnimDirsRef.current.set(tabId, result.borrowed_dir);
+      }
+      // Refresh the active SKN's animation listing so the new ANMs
+      // appear in the Pose panel without a model reload. Pass the
+      // borrowed dir so the Tauri command merges it into the result.
+      try {
+        const scene = studioScenesRef.current.get(tabId);
+        await scene?.reloadActiveObjectAnimations(result.borrowed_dir);
+      } catch (e) {
+        console.warn('[fetch-animations] scene reload failed:', e);
+      }
+      const layered = result.base_layer_included
+        ? ' (base + skin overrides)'
+        : '';
+      setStatusMessage(
+        `Loaded ${result.final_count} animations from ${result.wad_name}${layered}`,
+      );
+      return result.final_count;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setStatusMessage(`Fetch animations failed: ${msg}`);
+      return 0;
+    }
+  }, []);
+
+  const handleOpenFetchAnimationsDialog = useCallback(async (sknPath: string): Promise<number> => {
+    const { detectChampionAndSkin } = await import('./lib/fetchAnimDetect');
+    const detected = detectChampionAndSkin(sknPath);
+    // Skip the picker when both fields are known — most mod folders
+    // give us enough signal. We still confirm via the status toast.
+    if (detected.confident && detected.champion && detected.skinNum !== null) {
+      return runFetchVanillaAnimations(sknPath, detected.champion, detected.skinNum, false);
+    }
+    return new Promise<number>(resolve => {
+      fetchAnimResolveRef.current = resolve;
+      setFetchAnimDialog({
+        open: true,
+        sknPath,
+        champion: detected.champion,
+        skinNum: detected.skinNum,
+        reason: detected.reason,
+      });
+    });
+  }, [runFetchVanillaAnimations]);
+
+  const handleRevealInExplorer = useCallback((filePath: string) => {
+    if (!filePath) return;
+    const norm = filePath.replace(/\\/g, '/');
+    const idx = norm.lastIndexOf('/');
+    if (idx <= 0) return;
+    const parent = norm.slice(0, idx);
+    // If the file is already under the current FOLDER root we keep
+    // that root (so expanded state survives); otherwise switch to
+    // the file's parent folder. WAD roots can't host on-disk reveal,
+    // so we always swap them out for the parent folder.
+    setFileExplorerRoot(prev => {
+      if (prev?.kind === 'folder') {
+        const prevNorm = prev.path.replace(/\\/g, '/');
+        if (norm.startsWith(prevNorm + '/')) return prev;
+      }
+      if (prev?.kind === 'wad') {
+        invoke('wad_close', { id: prev.mountId }).catch(() => {});
+      }
+      return { kind: 'folder', path: parent };
+    });
+    setFileExplorerOpen(true);
+    // Tell the pane to select + scroll to the target. It already
+    // listens to localStorage `file-explorer-selected` for hydration,
+    // so writing here lands cleanly even when the pane is mid-mount.
+    try { window.localStorage.setItem('file-explorer-selected', norm); } catch { /* ignore */ }
+    // Also stash an "expand-and-reveal" pulse so the pane knows to
+    // open every ancestor between root and target.
+    try {
+      window.localStorage.setItem('file-explorer-reveal-pulse', `${Date.now()}|${norm}`);
+      window.dispatchEvent(new Event('file-explorer-reveal'));
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleOpenWadInExplorer = useCallback(async () => {
+    try {
+      const { open: openDialog } = await import('@tauri-apps/plugin-dialog');
+      const picked = await openDialog({
+        multiple: false,
+        filters: [{ name: 'WAD archive', extensions: ['wad', 'client'] }],
+      });
+      if (typeof picked !== 'string') return;
+      // `wad_open` returns the mount id + display name. Stash that in
+      // the structured root so the pane knows to fetch via
+      // `wad_list_entries` instead of `list_directory`.
+      const info = await invoke<{ id: number; name: string; path: string }>('wad_open', { path: picked });
+      setFileExplorerRoot(prev => {
+        if (prev?.kind === 'wad' && prev.mountId !== info.id) {
+          invoke('wad_close', { id: prev.mountId }).catch(() => {});
+        }
+        return { kind: 'wad', mountId: info.id, wadPath: info.path, label: info.name };
+      });
+      setFileExplorerOpen(true);
+      setWelcomeOverride('hide');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setStatusMessage(`Open WAD failed: ${msg}`);
+    }
+  }, []);
+
+  const [studioPhotoWidth, setStudioPhotoWidth] = useState(1024);
+  const [studioPhotoHeight, setStudioPhotoHeight] = useState(1024);
+
+  // -- Photo Studio scene registry.
+  //    Each StudioTab mounts a Babylon scene and registers its handle
+  //    here keyed by tab id. The dock panels (anim picker, background
+  //    switcher, photo capture) pull the active studio's scene from
+  //    this map by tabId so they can mutate without prop-drilling.
+  const studioScenesRef = useRef<Map<string, StudioScene>>(new Map());
+  // Scene data waiting for its StudioTab to mount + register. `Open`
+  // creates the tab synchronously but the Babylon scene is built in
+  // the StudioTab's mount effect — so we stash the parsed data here
+  // and apply it the moment `registerStudioScene` fires for that id.
+  const pendingStudioLoadsRef = useRef<Map<string, StudioSceneData>>(new Map());
+  // Per-tab queue of disk paths the Viewer asked us to load into a
+  // fresh studio scene. Picked up by `registerStudioScene` once the
+  // scene mounts. Same lifecycle rules as `pendingStudioLoadsRef` —
+  // entry stays put across StrictMode's double-mount, cleared in
+  // `handleTabClose`.
+  const pendingStudioModelLoadsRef = useRef<Map<string, string>>(new Map());
+  const registerStudioScene = useCallback((tabId: string, scene: StudioScene) => {
+    studioScenesRef.current.set(tabId, scene);
+    const pending = pendingStudioLoadsRef.current.get(tabId);
+    if (pending) {
+      // Do NOT delete the pending entry here. React StrictMode in
+      // dev double-invokes mount effects (mount → unmount → mount):
+      // the first, throwaway scene would consume + delete the entry,
+      // then get disposed, leaving the real second scene with
+      // nothing to load. Keeping the entry lets the lasting scene
+      // pick it up too. It's cleared for real in `handleTabClose`.
+      scene.loadFromData(pending)
+        .then(() => {
+          // Fresh load: not dirty, and undo can't reach past it.
+          scene.resetUndoHistory();
+          scene.markSaved();
+        })
+        .catch((e) => console.warn('[Studio] scene load failed:', e));
+    }
+    const pendingModelPath = pendingStudioModelLoadsRef.current.get(tabId);
+    if (pendingModelPath) {
+      scene
+        .addModelFromDisk(pendingModelPath)
+        .then(() => scene.markSaved())
+        .catch((e) => console.warn('[Studio] viewer-handoff load failed:', e));
+    }
+  }, []);
+  const unregisterStudioScene = useCallback((tabId: string) => {
+    studioScenesRef.current.delete(tabId);
+    // Pending load is intentionally NOT cleared here — `unregister`
+    // fires on StrictMode's throwaway unmount too. Cleared on real
+    // tab close (`handleTabClose`).
+  }, []);
+  const getStudioScene = useCallback((tabId: string): StudioScene | null => {
+    return studioScenesRef.current.get(tabId) ?? null;
+  }, []);
+
+  // StudioTab subscribes to its scene's change events and calls this
+  // so the tab's `isModified` flag tracks the scene's dirty state —
+  // which drives the tab-bar dot and the save-before-close prompt.
+  const notifyStudioDirty = useCallback((tabId: string, dirty: boolean) => {
+    setTabs(prev => {
+      const tab = prev.find(t => t.id === tabId);
+      if (!tab || tab.isModified === dirty) return prev;
+      return prev.map(t => (t.id === tabId ? { ...t, isModified: dirty } : t));
+    });
+  }, []);
+
+  // Serialize the active studio scene to a `.studio.json` file.
+  // `saveAs` (or a tab with no path yet) routes through the save
+  // dialog; otherwise it writes straight to the tab's existing path.
+  const studioSaveActiveTab = useCallback(async (saveAs: boolean): Promise<boolean> => {
+    const tab = tabsRef.current.find(t => t.id === activeTabIdRef.current);
+    if (!tab || tab.tabType !== 'studio') return false;
+    const scene = studioScenesRef.current.get(tab.id);
+    if (!scene) return false;
+    let path = tab.filePath;
+    if (saveAs || !path) {
+      const baseName = (tab.fileName || 'studio-scene').replace(/\.studio\.json$/i, '');
+      const picked = await saveDialog({
+        defaultPath: `${baseName}.studio.json`,
+        filters: [{ name: 'Jade Studio Scene', extensions: ['studio.json'] }],
+      });
+      if (!picked) return false;
+      path = picked;
+    }
+    try {
+      const data = scene.serialize();
+      await invoke('write_text_file', { path, content: JSON.stringify(data, null, 2) });
+      scene.markSaved();
+      const fileName = path.split(/[\\/]/).pop() ?? tab.fileName;
+      setTabs(prev => prev.map(t =>
+        t.id === tab.id ? { ...t, filePath: path, fileName, isModified: false } : t,
+      ));
+      setStatusMessage(`Saved ${path}`);
+      statusMessageRef.current = `Saved ${path}`;
+      return true;
+    } catch (e) {
+      setStatusMessage(`Studio save failed: ${e}`);
+      return false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Open a `.studio.json` from a known path into a new studio tab.
+  // The actual scene rebuild is deferred to `registerStudioScene`
+  // via the pending-loads map. Shared by the menu's "Open Studio
+  // Scene…", drag-drop, and the file-association open path.
+  const studioOpenSceneFromPath = useCallback(async (picked: string) => {
+    let data: StudioSceneData;
+    try {
+      const content = await invoke<string>('read_text_file', { path: picked });
+      data = JSON.parse(content) as StudioSceneData;
+    } catch (e) {
+      setStatusMessage(`Studio: couldn't read scene — ${e}`);
+      return;
+    }
+    if (!data || !Array.isArray(data.objects)) {
+      setStatusMessage('Studio: not a valid .studio.json');
+      return;
+    }
+    // If the scene's already open in a tab, just focus it.
+    const existing = tabsRef.current.find(
+      t => t.tabType === 'studio' && t.filePath?.toLowerCase() === picked.toLowerCase(),
+    );
+    if (existing) {
+      ensureStudioShell();
+      setActiveTabId(existing.id);
+      return;
+    }
+    saveCurrentViewState();
+    ensureStudioShell();
+    const fileName = picked.split(/[\\/]/).pop() ?? 'Studio';
+    const newTab: EditorTab = { ...createStudioTab(), filePath: picked, fileName };
+    pendingStudioLoadsRef.current.set(newTab.id, data);
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+    setStudioAnimOpen(true);
+    setStudioBgOpen(true);
+    setStudioActionsOpen(true);
+    setStudioMeshOpen(true);
+    setStudioObjectsOpen(true);
+    setStatusMessage(`Opened ${picked}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ensureStudioShell, saveCurrentViewState]);
+
+  // Stable ref so the early-defined `openFileFromPath` + drag-drop
+  // listener can route `.studio.json` here without a forward-decl.
+  studioOpenSceneFromPathRef.current = studioOpenSceneFromPath;
+
+  // Menu / shell entry — pops the open dialog, then delegates.
+  const studioOpenScene = useCallback(async () => {
+    const picked = await openDialog({
+      filters: [{ name: 'Jade Studio Scene', extensions: ['studio.json', 'json'] }],
+    });
+    if (!picked || Array.isArray(picked)) return;
+    await studioOpenSceneFromPath(picked);
+  }, [studioOpenSceneFromPath]);
+
+  const onNewStudioScene = useCallback(() => {
+    saveCurrentViewState();
+    ensureStudioShell();
+    const newTab = createStudioTab();
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+    // Re-open the panels so a fresh scene always shows the full UI,
+    // even if the user dismissed some panels in a previous studio tab.
+    setStudioAnimOpen(true);
+    setStudioBgOpen(true);
+    setStudioActionsOpen(true);
+    setStudioMeshOpen(true);
+    setStudioObjectsOpen(true);
+    setStatusMessage(`New ${newTab.fileName}`);
+    statusMessageRef.current = `New ${newTab.fileName}`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ensureStudioShell]);
+
+  // Viewer's "Open in BIN editor" handler. Receives ritobin text +
+  // the BIN's filename, creates a fresh editor tab with that content,
+  // and dismisses the welcome overlay. The tab has no filePath because
+  // the BIN lives inside a WAD chunk, not on disk — Save / Save As
+  // will prompt for a destination if the user wants to persist edits.
+  const handleOpenSkinBinAsText = useCallback(
+    (text: string, displayName: string) => {
+      saveCurrentViewState();
+      const newTab: EditorTab = {
+        ...createTab(null, text),
+        fileName: displayName,
+      };
+      setTabs((prev) => [...prev, newTab]);
+      setActiveTabId(newTab.id);
+      setWelcomeOverride('hide');
+      setStatusMessage(`Opened ${displayName} from Viewer`);
+      statusMessageRef.current = `Opened ${displayName} from Viewer`;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [],
+  );
+
+  // Viewer's "Send to Photo Studio" handler. Extracts the skin's
+  // entire folder (SKN, SKL, BIN, textures, particles) to a temp disk
+  // dir, then opens a new studio scene that picks up the model via the
+  // pending-load queue. We pre-extract instead of teaching the Studio
+  // to read WADs — `read_skn_textures_disk` does the rest as if the
+  // user had pointed Studio at a vanilla extracted mod tree.
+  const handleSendMeshToStudio = useCallback(
+    async (
+      mountId: number,
+      sknChunkHashHex: string,
+      champion: string,
+      skinNum: number,
+      label: string,
+      shadowForm: boolean,
+      chromaSkinNum: number | null,
+      textureBindings: Array<{ submeshName: string; chunkHashHex: string | null }> | null,
+    ) => {
+      try {
+        const sknDiskPath = await invoke<string>('viewer_extract_for_studio', {
+          id: mountId,
+          champion,
+          skinNum,
+          sknChunkHashHex,
+          shadowForm,
+          chromaSkinNum,
+          // Authoritative per-submesh binding the viewer resolved
+          // (and we know renders correctly). Rust writes it as a
+          // sidecar JSON in the extracted folder; the studio reads
+          // it on load instead of re-deriving from the disk BIN.
+          textureBindings,
+        });
+        // Spin up a fresh studio tab + queue the disk load against it.
+        saveCurrentViewState();
+        ensureStudioShell();
+        const newTab = createStudioTab();
+        pendingStudioModelLoadsRef.current.set(newTab.id, sknDiskPath);
+        setTabs((prev) => [...prev, newTab]);
+        setActiveTabId(newTab.id);
+        setStudioAnimOpen(true);
+        setStudioBgOpen(true);
+        setStudioActionsOpen(true);
+        setStudioMeshOpen(true);
+        setStudioObjectsOpen(true);
+        setWelcomeOverride('hide');
+        setStatusMessage(`Sent ${label} to Photo Studio`);
+        statusMessageRef.current = `Sent ${label} to Photo Studio`;
+      } catch (e) {
+        console.warn('[viewer] send-to-photo-studio failed:', e);
+        setStatusMessage(`Send to Photo Studio failed: ${e}`);
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [ensureStudioShell],
+  );
+
   const handleCreateNewFile = (fileName: string) => {
     // Build an unsaved tab with the chosen name. filePath stays null
     // (the file isn't on disk yet), but tab.fileName carries the
@@ -3637,6 +4403,14 @@ function App() {
       allowHashStatusUpdateRef.current = false;
       const result = await openAnyEditorFile();
       if (result) {
+        // Troybin / inibin sources skip the text-content path — route
+        // through `openFileFromPath` which builds the dedicated tab.
+        const lowerExt = result.path.toLowerCase().slice(result.path.lastIndexOf('.'));
+        if (lowerExt === '.troybin' || lowerExt === '.inibin') {
+          await openFileFromPath(result.path);
+          allowHashStatusUpdateRef.current = true;
+          return;
+        }
         setFileLoading({ name: getFileName(result.path) });
         try {
           // Bin and .py sidecars run through the bin pipeline (which also
@@ -3701,14 +4475,23 @@ function App() {
       setStatusMessage('Loading linked files...');
       statusMessageRef.current = 'Loading linked files...';
 
+      // Accumulate results from the recursive walker and flush them
+      // into the tab list as a single batch. The per-result callback
+      // used to call `addTab` directly, which switched the active
+      // tab N times in a row (each one swapping the Monaco model →
+      // measurable lag on big BINs with 20-30 dependencies).
+      const collected: LinkedBinResult[] = [];
       const linkedResults = await findAndOpenLinkedBins(
         filePath,
         content,
         recursiveEnabled,
         (result: LinkedBinResult) => {
-          addTab(result.path, result.content);
+          collected.push(result);
         }
       );
+      if (collected.length > 0) {
+        addTabsBatch(collected.map(r => ({ filePath: r.path, content: r.content })));
+      }
 
       if (linkedResults.length > 0) {
         setStatusMessage(`Loaded ${linkedResults.length} linked file(s)`);
@@ -3725,6 +4508,12 @@ function App() {
   };
 
   const handleSave = async () => {
+    // Studio tabs serialize their Babylon scene to `.studio.json`
+    // rather than going through the text/BIN save path.
+    if (activeTab?.tabType === 'studio') {
+      void studioSaveActiveTab(false);
+      return;
+    }
     if (!activeTab || !isEditorTab(activeTab)) return;
 
     try {
@@ -3775,6 +4564,8 @@ function App() {
         // Saved successfully — the jadelib texture inserts tracked for
         // this bin are now persisted references, no cleanup needed.
         jadelibInsertsRef.current.delete(activeTab.filePath);
+        // Keep this path fresh at the top of the recent-files list.
+        await addToRecentFiles(activeTab.filePath);
         setStatusMessage(`Saved ${activeTab.filePath}`);
         statusMessageRef.current = `Saved ${activeTab.filePath}`;
         // Re-enable hash status updates after save
@@ -3796,6 +4587,10 @@ function App() {
   };
 
   const handleSaveAs = async () => {
+    if (activeTab?.tabType === 'studio') {
+      void studioSaveActiveTab(true);
+      return;
+    }
     if (!activeTab || !isEditorTab(activeTab)) return;
 
     try {
@@ -3852,6 +4647,10 @@ function App() {
             } : t
           )
         );
+        // Save-As is the first time a freshly-created file lands on
+        // disk — register it in recents so it shows up alongside opened
+        // files (and bump recency for an existing path saved elsewhere).
+        await addToRecentFiles(newPath);
         setStatusMessage(`Saved ${newPath}`);
         statusMessageRef.current = `Saved ${newPath}`;
         // Re-enable hash status updates after save
@@ -3868,6 +4667,102 @@ function App() {
         allowHashStatusUpdateRef.current = true;
       }, 2000);
     }
+  };
+
+  // Save every editor tab that has a file path and unsaved changes.
+  // Tabs without a file path (untitled) and studio tabs are skipped —
+  // those need the Save-As / save-scene dialog flow which can't be
+  // batched silently. Reads each tab's latest content from its Monaco
+  // model (only the active tab is bound to the visible editor; other
+  // models stay live in `monacoModelsRef`) and falls back to the
+  // tab's stored `content` if the model was disposed.
+  const handleSaveAll = async () => {
+    const targets = tabsRef.current.filter(t =>
+      isEditorTab(t) && t.filePath && t.isModified,
+    );
+    if (targets.length === 0) {
+      setStatusMessage('Nothing to save.');
+      return;
+    }
+    allowHashStatusUpdateRef.current = false;
+    let savedCount = 0;
+    const failures: string[] = [];
+    for (const tab of targets) {
+      if (!tab.filePath) continue;
+      try {
+        // Active tab reads from the live editor (covers in-flight
+        // edits the model has but the tab.content field hasn't
+        // synced yet); inactive tabs come straight off their model.
+        const fromModel = monacoModelsRef.current.get(tab.id);
+        const content = tab.id === activeTabIdRef.current
+          ? (editorRef.current?.getValue() ?? fromModel?.getValue() ?? tab.content)
+          : (fromModel?.getValue() ?? tab.content);
+        const isBin = isBinLikePath(tab.filePath);
+        if (isBin) {
+          await persistPySidecarIfNeeded(tab.filePath, content);
+        }
+        await saveAnyFileToPath(content, tab.filePath);
+        try {
+          if (isBin && quartzInteropEnabled) {
+            const session = quartzSessionsRef.current.get(tab.filePath.toLowerCase());
+            const mode = session?.mode || 'paint';
+            await invoke('notify_quartz_bin_updated', {
+              binPath: tab.filePath,
+              mode,
+            });
+          }
+        } catch (interopErr) {
+          console.warn('[QuartzInterop][Jade] notify_quartz_bin_updated failed on save-all:', interopErr);
+        }
+        // Keep mtime poller from re-triggering on our own write.
+        try {
+          const savedMtime = await invoke<number>('get_file_mtime', { path: tab.filePath });
+          editorMtimeRef.current.set(tab.id, savedMtime);
+          const quartzKey = tab.filePath.toLowerCase();
+          const quartzSession = quartzSessionsRef.current.get(quartzKey);
+          if (quartzSession) {
+            quartzSessionsRef.current.set(quartzKey, {
+              ...quartzSession,
+              lastSeenMtime: savedMtime,
+              snapshotContent: content,
+              forceContentCheck: false,
+            });
+          }
+        } catch { /* ignore */ }
+        // Snapshot the saved content + clear the dirty flag for this
+        // tab. We batch all tab updates into a single setTabs call
+        // below to avoid N renders.
+        tab.content = content;
+        jadelibInsertsRef.current.delete(tab.filePath);
+        savedCount += 1;
+      } catch (error) {
+        console.error(`Failed to save ${tab.filePath}:`, error);
+        failures.push(`${getFileName(tab.filePath)}: ${error}`);
+      }
+    }
+    // Single state flip — mark every successfully-saved tab clean
+    // (those whose content was mutated above). Failures keep their
+    // dirty flag.
+    const savedIds = new Set(
+      targets
+        .filter(t => !failures.some(f => f.startsWith(`${getFileName(t.filePath ?? '')}: `)))
+        .map(t => t.id),
+    );
+    setTabs(prevTabs =>
+      prevTabs.map(t => savedIds.has(t.id) ? { ...t, isModified: false } : t),
+    );
+    if (failures.length === 0) {
+      setStatusMessage(`Saved ${savedCount} file${savedCount === 1 ? '' : 's'}`);
+      statusMessageRef.current = `Saved ${savedCount} file${savedCount === 1 ? '' : 's'}`;
+    } else {
+      const detail = failures.slice(0, 2).join('; ');
+      const more = failures.length > 2 ? `, +${failures.length - 2} more` : '';
+      setStatusMessage(`Saved ${savedCount}, ${failures.length} failed (${detail}${more})`);
+      statusMessageRef.current = `Saved ${savedCount}, ${failures.length} failed`;
+    }
+    setTimeout(() => {
+      allowHashStatusUpdateRef.current = true;
+    }, 2000);
   };
 
   // Edit Operations
@@ -3897,23 +4792,11 @@ function App() {
   // via the model.findMatches API. We skip Monaco's native find widget
   // so the two UIs don't fight. In VS, opening find leaves general /
   // particle docks open — they live in different docks.
-  const handleFind = () => {
-    if (!isEditorTab(activeTabRef.current)) return;
-    const useNativeWidget = shellVariant === 'vscode';
-    const stackTools = shellVariant === 'visualstudio';
-    if (findWidgetOpen) {
-      if (useNativeWidget) editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
-      setFindWidgetOpen(false);
-    } else {
-      if (!stackTools) {
-        setGeneralEditPanelOpen(false);
-        setParticlePanelOpen(false);
-      }
-      if (useNativeWidget) editorRef.current?.trigger('keyboard', 'actions.find', null);
-      setFindWidgetOpen(true);
-      setReplaceWidgetOpen(false);
-    }
-  };
+  // The dedicated Find panel was redundant — Replace covers the same
+  // search use case plus the rewrite path. Routing the Find action
+  // (toolbar magnifier, menu entry, Ctrl+F) at `handleReplace` keeps
+  // the icon and shortcut familiar but always opens the combined panel.
+  const handleFind = () => { handleReplace(); };
 
   const handleReplace = () => {
     if (!isEditorTab(activeTabRef.current)) return;
@@ -3933,7 +4816,180 @@ function App() {
     }
   };
 
-  const handleCompareFiles = () => console.log('Compare Files');
+  // Open a compare diff between two editor tabs. With exactly two
+  // editor tabs open the picker is skipped — one click and the diff
+  // is up. With three or more we show a small picker so the user can
+  // pin which two to compare. Texture/studio/markdown-preview/etc.
+  // tabs are excluded since the diff only makes sense over text.
+  const openCompareTab = (leftId: string, rightId: string) => {
+    const left = tabsRef.current.find(t => t.id === leftId);
+    const right = tabsRef.current.find(t => t.id === rightId);
+    if (!left || !right || left.id === right.id) return;
+    const compareTab = createCompareTab(left.id, left.fileName, right.id, right.fileName);
+    setTabs(prev => [...prev, compareTab]);
+    setActiveTabId(compareTab.id);
+  };
+
+  const handleCompareFiles = () => {
+    const editorTabs = tabsRef.current.filter(isEditorTab);
+    if (editorTabs.length < 2) {
+      setStatusMessage('Compare Files needs at least two open editor tabs');
+      return;
+    }
+    if (editorTabs.length === 2) {
+      openCompareTab(editorTabs[0].id, editorTabs[1].id);
+      return;
+    }
+    // 3+: pre-seed with the active tab on the left and the most
+    // recently active OTHER editor tab on the right (falls back to
+    // the next-in-list if no other-active info is available).
+    const active = activeTabRef.current;
+    const activeId = active && isEditorTab(active) ? active.id : editorTabs[0].id;
+    const otherId = editorTabs.find(t => t.id !== activeId)?.id ?? editorTabs[0].id;
+    setComparePicker({ leftId: activeId, rightId: otherId });
+  };
+
+  const swapCompareTabSides = (tabId: string) => {
+    setTabs(prev => prev.map(t => {
+      if (t.id !== tabId || t.tabType !== 'compare') return t;
+      const leftId = t.compareLeftTabId;
+      const rightId = t.compareRightTabId;
+      const leftTab = prev.find(x => x.id === leftId);
+      const rightTab = prev.find(x => x.id === rightId);
+      const leftName = leftTab?.fileName ?? '(missing)';
+      const rightName = rightTab?.fileName ?? '(missing)';
+      return {
+        ...t,
+        compareLeftTabId: rightId,
+        compareRightTabId: leftId,
+        fileName: `Compare: ${rightName} ⇄ ${leftName}`,
+      };
+    }));
+  };
+
+  // Batch convert: pick an input folder of .troybin files, then an
+  // output folder. Rust walks the input non-recursively, converts
+  // each file through the full pipeline, and writes `<stem>.bin.py.txt`
+  // to the output. Used for corpus-validation runs.
+
+  // Walk the active BIN + every linked BIN it can find on disk, then
+  // open a pretty markdown report listing every asset path each BIN
+  // references. The frontmatter `jade-asset-list: true` keys the
+  // gallery-view button on these reports vs regular .md files.
+  const handleScanBinAssets = async () => {
+    const tab = activeTabRef.current;
+    if (!tab || !isEditorTab(tab) || !tab.filePath) {
+      setStatusMessage('Scan BIN Assets requires a saved BIN file');
+      return;
+    }
+    const lower = tab.filePath.toLowerCase();
+    if (!lower.endsWith('.bin')) {
+      setStatusMessage('Scan BIN Assets only works on .bin files');
+      return;
+    }
+    setStatusMessage('Scanning BIN assets…');
+    try {
+      // Rust struct uses snake_case; matches the rest of the
+      // codebase's convention (no `serde(rename_all = "camelCase")`
+      // on `BinAssetReport`).
+      type ReportBin = { label: string; assets: string[]; resolved: boolean };
+      type UnusedFile = { rel_path: string; abs_path: string; size_bytes: number };
+      type Report = {
+        root_label: string;
+        mod_root: string | null;
+        bins: ReportBin[];
+        unused_files: UnusedFile[];
+        disk_walked: boolean;
+      };
+      const report = await invoke<Report>('scan_bin_assets', { path: tab.filePath });
+
+      // Build a cross-reference: asset → list of BINs that reference
+      // it. The per-BIN sections also list everything verbatim, but
+      // the cross-ref makes "which BIN owns this texture" obvious.
+      const xref = new Map<string, string[]>();
+      for (const b of report.bins) {
+        for (const a of b.assets) {
+          const arr = xref.get(a) ?? [];
+          arr.push(b.label);
+          xref.set(a, arr);
+        }
+      }
+      const totalAssets = xref.size;
+      const totalBins = report.bins.length;
+      const unresolved = report.bins.filter(b => !b.resolved).length;
+
+      // Markdown body. Frontmatter marker first so the gallery-view
+      // toggle on the texture-insert button can detect these reports
+      // vs hand-written .md.
+      const lines: string[] = [];
+      lines.push('---');
+      lines.push('jade-asset-list: true');
+      lines.push('---');
+      lines.push('');
+      lines.push(`# BIN asset report`);
+      lines.push('');
+      lines.push(`Root BIN: \`${report.root_label}\``);
+      if (report.mod_root) lines.push(`Mod root: \`${report.mod_root}\``);
+      lines.push('');
+      lines.push(`- BINs scanned: **${totalBins}**${unresolved > 0 ? ` (${unresolved} unresolved)` : ''}`);
+      lines.push(`- Unique asset paths: **${totalAssets}**`);
+      lines.push('');
+
+      for (const b of report.bins) {
+        lines.push(`## \`${b.label}\`${b.resolved ? '' : '  _(unresolved — file not found)_'}`);
+        lines.push('');
+        if (b.assets.length === 0) {
+          lines.push(b.resolved ? '_No referenced asset paths._' : '_Dependency BIN not on disk — nothing scanned._');
+          lines.push('');
+          continue;
+        }
+        for (const a of b.assets) {
+          lines.push(`- "${a}"`);
+        }
+        lines.push('');
+      }
+
+      // Unused-files section. We only emit it when the Rust side
+      // actually walked the disk; otherwise the absence of unused
+      // entries would be misleading (could mean "no mod root" not
+      // "nothing unused").
+      if (report.disk_walked) {
+        const totalBytes = report.unused_files.reduce((s, f) => s + f.size_bytes, 0);
+        const humanSize = (n: number) => {
+          if (n < 1024) return `${n} B`;
+          if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+          if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+          return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+        };
+        lines.push(`## Unused files (${report.unused_files.length})${report.unused_files.length > 0 ? ` · ${humanSize(totalBytes)} on disk` : ''}`);
+        lines.push('');
+        if (report.unused_files.length === 0) {
+          lines.push('_Every file in the mod root is referenced by at least one BIN._');
+          lines.push('');
+        } else {
+          lines.push('Use the texture-insert button (image icon) in the toolbar to open the visual gallery — it has an "Unused only" filter and a bulk-delete button for these files.');
+          lines.push('');
+          for (const u of report.unused_files) {
+            lines.push(`- "${u.rel_path}"  _(${humanSize(u.size_bytes)})_`);
+          }
+          lines.push('');
+        }
+      }
+
+      const content = lines.join('\n');
+      const reportTab = createTab(null, content);
+      reportTab.fileName = `Assets: ${getFileName(tab.filePath)}.md`;
+      setTabs(prev => [...prev, reportTab]);
+      setActiveTabId(reportTab.id);
+      const unusedSuffix = report.disk_walked && report.unused_files.length > 0
+        ? ` · ${report.unused_files.length} unused`
+        : '';
+      setStatusMessage(`Scanned ${totalBins} BIN${totalBins === 1 ? '' : 's'} · ${totalAssets} unique asset${totalAssets === 1 ? '' : 's'}${unusedSuffix}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatusMessage(`Scan BIN Assets failed: ${msg}`);
+    }
+  };
 
   handleNewRef.current = handleNew;
   handleOpenRef.current = handleOpen;
@@ -3942,6 +4998,9 @@ function App() {
   };
   handleSaveAsRef.current = () => {
     void handleSaveAs();
+  };
+  handleSaveAllRef.current = () => {
+    void handleSaveAll();
   };
   handleFindRef.current = handleFind;
   handleReplaceRef.current = handleReplace;
@@ -4006,16 +5065,53 @@ function App() {
       setFindWidgetOpen(false);
       setReplaceWidgetOpen(false);
       setParticlePanelOpen(false);
+      setBinNavOpen(false);
       editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
     }
     setGeneralEditPanelOpen(!generalEditPanelOpen);
+  };
+
+  // Bin Navigation panel toggle. Like General Editing, the classic
+  // shells show one tool popup at a time so opening this closes the
+  // others; the VS shell stacks dock panes and keeps them all.
+  const handleBinNav = () => {
+    if (!isEditorTab(activeTabRef.current)) return;
+    if (shellVariant !== 'visualstudio') {
+      setFindWidgetOpen(false);
+      setReplaceWidgetOpen(false);
+      setGeneralEditPanelOpen(false);
+      setParticlePanelOpen(false);
+      editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
+    }
+    setBinNavOpen(prev => !prev);
+  };
+
+  // The scanned-assets markdown report carries a `jade-asset-list: true`
+  // frontmatter so the texture-insert button can flip behavior on it
+  // (gallery view instead of insert panel). Detect on the live editor
+  // content so user edits stay reflected.
+  const isAssetListTab = (tab: EditorTab | null | undefined): boolean => {
+    if (!tab || !isEditorTab(tab)) return false;
+    const text = (activeTabId === tab.id && editorRef.current?.getValue())
+      || tab.content
+      || '';
+    // Frontmatter must be at the very top — same shape the scanner
+    // emits. Be permissive on whitespace, exact on the key.
+    return /^---\s*\n\s*jade-asset-list\s*:\s*true\s*\n\s*---/i.test(text);
   };
 
   // VS-shell-only toggles for the lightweight material-override insert
   // tool windows. The classic in-General-Edit-panel modal still works
   // unchanged — these are the dockable panel variants.
   const handleTextureInsert = () => {
-    if (!isEditorTab(activeTabRef.current)) return;
+    const tab = activeTabRef.current;
+    if (!tab || !isEditorTab(tab)) return;
+    // Asset-list reports repurpose this button as "open visual gallery"
+    // — same icon, different action. Regular MD files stay blocked.
+    if (isAssetListTab(tab)) {
+      setAssetGalleryTabId(tab.id);
+      return;
+    }
     setTextureInsertOpen(prev => !prev);
   };
   const handleMaterialInsert = () => {
@@ -4119,6 +5215,7 @@ function App() {
       setFindWidgetOpen(false);
       setReplaceWidgetOpen(false);
       setGeneralEditPanelOpen(false);
+      setBinNavOpen(false);
       editorRef.current?.trigger('keyboard', 'closeFindWidget', null);
     }
     setParticlePanelOpen(prev => !prev);
@@ -4621,9 +5718,9 @@ function App() {
     // -- Panel state
     findWidgetOpen, replaceWidgetOpen,
     generalEditPanelOpen, particlePanelOpen,
-    textureInsertOpen, materialInsertOpen,
+    textureInsertOpen, materialInsertOpen, binNavOpen,
     setGeneralEditPanelOpen, setParticlePanelOpen,
-    setTextureInsertOpen, setMaterialInsertOpen,
+    setTextureInsertOpen, setMaterialInsertOpen, setBinNavOpen,
 
     // -- Recent files
     recentFiles, openFileDisabled, openFileFromPath,
@@ -4633,17 +5730,19 @@ function App() {
 
     // -- File ops
     onNew: handleNew, onOpen: handleOpen, onSave: handleSave,
-    onSaveAs: handleSaveAs, onOpenLog: handleOpenLog,
+    onSaveAs: handleSaveAs, onSaveAll: handleSaveAll, onOpenLog: handleOpenLog,
 
     // -- Edit ops
     onUndo: handleUndo, onRedo: handleRedo,
     onCut: handleCut, onCopy: handleCopy, onPaste: handlePaste,
     onFind: handleFind, onReplace: handleReplace,
-    onCompareFiles: handleCompareFiles, onSelectAll: handleSelectAll,
+    onCompareFiles: handleCompareFiles, onScanBinAssets: handleScanBinAssets,
+    isAssetListTab: () => isAssetListTab(activeTab), assetGalleryTabId, setAssetGalleryTabId, onSelectAll: handleSelectAll,
 
     // -- Tools
     onGeneralEdit: handleGeneralEdit, onParticlePanel: handleParticlePanel,
     onTextureInsert: handleTextureInsert, onMaterialInsert: handleMaterialInsert,
+    onBinNav: handleBinNav,
     onParticleEditor: handleParticleEditor, onMaterialLibrary: handleMaterialLibrary,
     onThemes: handleThemes, onSettings: handleSettings,
     onPreferences: handlePreferences, onAbout: handleAbout,
@@ -4659,12 +5758,35 @@ function App() {
     leftActiveTabId, rightActiveTabId, focusedPane, setFocusedPane,
     onTabSetPane, ensureModelForTab, setupRightEditor,
 
+    // -- Photo Studio
+    onNewStudioScene, onStudioOpen: studioOpenScene, notifyStudioDirty,
+    onOpenSkinBinAsText: handleOpenSkinBinAsText,
+    onSendMeshToStudio: handleSendMeshToStudio,
+    registerStudioScene, unregisterStudioScene, getStudioScene,
+    studioAnimOpen, studioBgOpen, studioActionsOpen, studioMeshOpen, studioObjectsOpen, studioSpotlightOpen,
+    setStudioAnimOpen, setStudioBgOpen, setStudioActionsOpen, setStudioMeshOpen, setStudioObjectsOpen, setStudioSpotlightOpen,
+    studioPhotoWidth, studioPhotoHeight, setStudioPhotoWidth, setStudioPhotoHeight,
+
+    // -- File Explorer
+    fileExplorerOpen, setFileExplorerOpen,
+    fileExplorerRoot, setFileExplorerRoot,
+    onOpenFolder: handleOpenFolder,
+    onOpenWadInExplorer: handleOpenWadInExplorer,
+    revealInExplorer: handleRevealInExplorer,
+    openFetchAnimationsDialog: handleOpenFetchAnimationsDialog,
+
     // -- Edit panel callbacks
     handleGeneralEditContentChange, handleScrollToLine,
     recordJadelibInsert, mdWrapSelection, mdPrefixLines, mdInsertAtCaret,
 
     // -- Markdown preview
     mdPreviewContent,
+
+    // -- Compare tab
+    swapCompareTabSides,
+    comparePicker,
+    setComparePicker,
+    openCompareTab,
 
     // -- Quartz diff
     activeDiffRevisionIndex,
@@ -4684,6 +5806,7 @@ function App() {
     foldAllEmitters, unfoldAllEmitters, hasEmitters,
 
     // -- Dialogs
+    showGuideOverlay, setShowGuideOverlay,
     showAboutDialog, setShowAboutDialog,
     showThemesDialog, setShowThemesDialog,
     showMaterialLibrary, setShowMaterialLibrary,
@@ -4707,6 +5830,24 @@ function App() {
   return (
     <ShellProvider value={shellCtx}>
       <ShellHost />
+      <FetchAnimationsDialog
+        open={!!fetchAnimDialog?.open}
+        initialChampion={fetchAnimDialog?.champion ?? null}
+        initialSkinNum={fetchAnimDialog?.skinNum ?? null}
+        initialReason={fetchAnimDialog?.reason ?? ''}
+        onCancel={() => {
+          fetchAnimResolveRef.current?.(0);
+          fetchAnimResolveRef.current = null;
+          setFetchAnimDialog(null);
+        }}
+        onConfirm={async (champion, skinNum, usePbe) => {
+          const sknPath = fetchAnimDialog?.sknPath ?? '';
+          setFetchAnimDialog(null);
+          const count = await runFetchVanillaAnimations(sknPath, champion, skinNum, usePbe);
+          fetchAnimResolveRef.current?.(count);
+          fetchAnimResolveRef.current = null;
+        }}
+      />
     </ShellProvider>
   );
 }

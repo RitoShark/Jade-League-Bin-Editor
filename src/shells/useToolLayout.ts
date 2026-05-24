@@ -1,6 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 
-export type ToolId = 'general' | 'particle' | 'markdown' | 'find' | 'texture' | 'material';
+export type ToolId =
+    | 'general' | 'particle' | 'markdown' | 'find' | 'texture' | 'material'
+    // Bin Navigation — jump shortcuts for animationGraphData /
+    // ResourceResolver / materialOverride.
+    | 'binnav'
+    // Photo Studio panels — only meaningful when a studio tab is active.
+    // Default-placed on the right edge so they stack alongside the
+    // existing edit panels.
+    | 'studio-anim' | 'studio-bg' | 'studio-actions' | 'studio-mesh' | 'studio-objects'
+    // Spotlight — shading / transparency / ground-shadow controls
+    // for the active studio scene.
+    | 'studio-spotlight'
+    // File Explorer — dockable folder/WAD browser with tree + grid
+    // views. Default-placed on the outer-left edge so it lives where
+    // a VS Code sidebar would.
+    | 'file-explorer';
 /**
  * Each cardinal side has two parallel lanes — `outer` sits at the
  * workspace edge, `inner` sits between outer and the editor. Tools in
@@ -54,6 +69,26 @@ const DEFAULT_LAYOUT: LayoutMap = {
     find:     { kind: 'dock', side: 'inner-bottom', group: 0 },
     texture:  { kind: 'dock', side: 'inner-right',  group: 0 },
     material: { kind: 'dock', side: 'inner-right',  group: 0 },
+    binnav:   { kind: 'dock', side: 'inner-right',  group: 0 },
+    'studio-anim':    { kind: 'dock', side: 'inner-right',  group: 0 },
+    'studio-bg':      { kind: 'dock', side: 'inner-bottom', group: 0 },
+    'studio-actions': { kind: 'dock', side: 'inner-right',  group: 1 },
+    // Textures + submeshes panel docks next to Background at the
+    // bottom (same side, same group — they tab together) so users see
+    // both surface controls in one horizontal strip.
+    'studio-mesh':    { kind: 'dock', side: 'inner-bottom', group: 0 },
+    // Objects list lives on the right above the photo panel so the
+    // user has both "what's in the scene" and "what to do with it"
+    // in their vertical sightline.
+    'studio-objects': { kind: 'dock', side: 'inner-right',  group: 1 },
+    // Spotlight panel — docks next to the Actions panel on the right
+    // so the rendering / lighting controls sit in the same column as
+    // the photo controls. Same group → they tab together.
+    'studio-spotlight': { kind: 'dock', side: 'inner-right',  group: 1 },
+    // File Explorer lives on the outer-left lane by default — the same
+    // edge VS Code / Cursor users expect a folder tree on. Doesn't fight
+    // for room with the right-side panels.
+    'file-explorer':    { kind: 'dock', side: 'outer-left',   group: 0 },
 };
 
 const STORAGE_KEY = 'vs-tool-layout';
@@ -133,40 +168,24 @@ export function useToolLayout() {
 
     /** Click action for the dock pane's split icon.
      *
-     *  - **Single group, multi-tab** → SPLIT: move `id` (the pane's
-     *    active tool) into the side's other group.
-     *  - **Two groups populated** → MERGE: collapse everything on this
-     *    side back into group 0. Group 0 wins the merge regardless of
-     *    which pane was clicked, so the priority slot's active tab is
-     *    what stays selected after the useEffect rebalances. */
+     *  Always moves `id` (the clicked pane's active tool) into the
+     *  side's *other* group — a per-tool toggle, not a side-wide
+     *  operation. This is what makes peeling tools off one at a time
+     *  work: with `[A,B,C]` stacked in group 0, splitting A sends A→1,
+     *  then splitting B sends B→1 (group 0 keeps `[C]`), and so on.
+     *  Pressing split on a tool that's already in group 1 sends it
+     *  back to group 0, so the same button merges it again. A side
+     *  collapses back to one group naturally once a group empties out.
+     *
+     *  The earlier implementation merged *everything* back to group 0
+     *  the moment both groups were populated, which made the 2nd split
+     *  in a row impossible. */
     const splitTool = useCallback((id: ToolId) => {
         setLayout(prev => {
             const cur = prev[id];
             if (cur.kind !== 'dock') return prev;
-            const side = cur.side;
-
-            const sideTools = (Object.keys(prev) as ToolId[]).filter(t => {
-                const p = prev[t];
-                return p.kind === 'dock' && p.side === side;
-            });
-            const hasG0 = sideTools.some(t => (prev[t] as DockPlacement).group === 0);
-            const hasG1 = sideTools.some(t => (prev[t] as DockPlacement).group === 1);
-
-            if (hasG0 && hasG1) {
-                // 2-group state — merge everything back into group 0.
-                const next = { ...prev };
-                sideTools.forEach(t => {
-                    const p = prev[t] as DockPlacement;
-                    if (p.group !== 0) {
-                        next[t] = { kind: 'dock', side, group: 0 };
-                    }
-                });
-                return next;
-            }
-
-            // 1-group state — split: move `id` to the other group.
             const otherGroup: DockGroup = cur.group === 0 ? 1 : 0;
-            return { ...prev, [id]: { kind: 'dock', side, group: otherGroup } };
+            return { ...prev, [id]: { kind: 'dock', side: cur.side, group: otherGroup } };
         });
     }, []);
 

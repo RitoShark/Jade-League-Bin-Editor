@@ -6,6 +6,7 @@ import { getFileName } from '../components/TabBar';
 import MarkdownPreview from '../components/MarkdownPreview';
 import TexturePreviewTab from '../components/TexturePreviewTab';
 import QuartzDiffTab from '../components/QuartzDiffTab';
+import StudioTab from '../components/StudioTab';
 import { useShell } from './ShellContext';
 
 /**
@@ -196,6 +197,13 @@ export default function SecondaryPaneView() {
         return (
             <div onMouseDown={focusRight} style={{ width: '100%', height: '100%' }}>
                 <MarkdownPreview content={mdContent} />
+            </div>
+        );
+    }
+    if (rightTab.tabType === 'studio') {
+        return (
+            <div onMouseDown={focusRight} style={{ width: '100%', height: '100%' }}>
+                <StudioTab tabId={rightTab.id} />
             </div>
         );
     }

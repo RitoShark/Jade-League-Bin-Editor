@@ -5,6 +5,7 @@ import { WelcomeScreenWithExit } from '../components/WelcomeScreen';
 import GeneralEditPanel from '../components/GeneralEditPanel';
 import ParticleEditorPanel from '../components/ParticleEditorPanel';
 import MarkdownEditPanel from '../components/MarkdownEditPanel';
+import BinNavPanel from '../components/BinNavPanel';
 import VSToolbar from './VSToolbar';
 import VSTitleBar from './VSTitleBar';
 import VSDockPane from './VSDockPane';
@@ -12,6 +13,13 @@ import VSDockGroup from './VSDockGroup';
 import FloatingEditorPane from './FloatingEditorPane';
 import MaterialOverridePanel from './MaterialOverridePanel';
 import EditorPane from './EditorPane';
+import StudioAnimPanel from '../components/StudioAnimPanel';
+import StudioBackgroundPanel from '../components/StudioBackgroundPanel';
+import StudioActionsPanel from '../components/StudioActionsPanel';
+import StudioMeshPanel from '../components/StudioMeshPanel';
+import StudioObjectsPanel from '../components/StudioObjectsPanel';
+import StudioSpotlightPanel from '../components/StudioSpotlightPanel';
+import FileExplorerPane from '../components/FileExplorerPane';
 import SharedDialogs from './SharedDialogs';
 import WordFindPane from './WordFindPane';
 import DockGuides, { hitTestGuides } from './DockGuides';
@@ -29,6 +37,14 @@ const TOOL_LABELS: Record<ToolId, string> = {
     find: 'Find Results',
     texture: 'Texture Insert',
     material: 'Material Insert',
+    binnav: 'Bin Navigation',
+    'studio-anim': 'Pose',
+    'studio-bg': 'Background',
+    'studio-actions': 'Photo',
+    'studio-mesh': 'Mesh',
+    'studio-objects': 'Objects',
+    'studio-spotlight': 'Lighting',
+    'file-explorer': 'Explorer',
 };
 
 const DOCK_DEFAULT_SIZE: Record<DockSide, number> = {
@@ -109,6 +125,12 @@ export default function VisualStudioShell() {
     const markdownOpen = s.generalEditPanelOpen && !!activeTab && s.isEditorTab(activeTab) && isMarkdown;
     const particleOpen = s.particlePanelOpen && !!activeTab && s.isEditorTab(activeTab);
 
+    // Studio panels only show when the active tab is a Photo Studio
+    // scene. Switching to a file tab hides them automatically; the
+    // user's dock placement persists in localStorage so coming back
+    // to the studio restores the customised layout.
+    const isStudio = activeTab?.tabType === 'studio';
+
     const isOpen: Record<ToolId, boolean> = {
         general:  generalOpen,
         particle: particleOpen,
@@ -116,6 +138,16 @@ export default function VisualStudioShell() {
         find:     findOpen,
         texture:  s.textureInsertOpen  && !!activeTab && s.isEditorTab(activeTab),
         material: s.materialInsertOpen && !!activeTab && s.isEditorTab(activeTab),
+        binnav:   s.binNavOpen         && !!activeTab && s.isEditorTab(activeTab),
+        'studio-anim':    isStudio && s.studioAnimOpen,
+        'studio-bg':      isStudio && s.studioBgOpen,
+        'studio-actions': isStudio && s.studioActionsOpen,
+        'studio-mesh':    isStudio && s.studioMeshOpen,
+        'studio-objects': isStudio && s.studioObjectsOpen,
+        'studio-spotlight': isStudio && s.studioSpotlightOpen,
+        // File Explorer is shell-wide (not bound to a particular tab type)
+        // and persists even when no tab is active.
+        'file-explorer': s.fileExplorerOpen,
     };
 
     const closeTool = useCallback((id: ToolId) => {
@@ -129,6 +161,33 @@ export default function VisualStudioShell() {
                 break;
             case 'texture':  s.setTextureInsertOpen(false); break;
             case 'material': s.setMaterialInsertOpen(false); break;
+            case 'binnav':   s.setBinNavOpen(false); break;
+            case 'studio-anim':    s.setStudioAnimOpen(false); break;
+            case 'studio-bg':      s.setStudioBgOpen(false); break;
+            case 'studio-actions': s.setStudioActionsOpen(false); break;
+            case 'studio-mesh':    s.setStudioMeshOpen(false); break;
+            case 'studio-objects': s.setStudioObjectsOpen(false); break;
+            case 'studio-spotlight': s.setStudioSpotlightOpen(false); break;
+            case 'file-explorer': {
+                // Closing the explorer while a WAD is mounted unmounts
+                // it. Confirm first so an accidental click doesn't
+                // close any open files backed by that mount.
+                const root = s.fileExplorerRoot;
+                if (root?.kind === 'wad') {
+                    const ok = window.confirm(
+                        `Closing the explorer will unmount "${root.label}". Any open files backed by this WAD won't reload. Continue?`,
+                    );
+                    if (!ok) break;
+                    // Best-effort unmount — Rust handles a missing id
+                    // gracefully so a failure here isn't fatal.
+                    import('@tauri-apps/api/core').then(({ invoke: inv }) => {
+                        inv('wad_close', { id: root.mountId }).catch(() => {});
+                    });
+                    s.setFileExplorerRoot(null);
+                }
+                s.setFileExplorerOpen(false);
+                break;
+            }
         }
     }, [s]);
 
@@ -393,6 +452,36 @@ export default function VisualStudioShell() {
 
     // ── Render helpers ──
     const renderToolBody = (id: ToolId): ReactNode => {
+        // File Explorer is shell-wide: it stays mounted regardless of
+        // whether a studio scene or an editor tab is active, so its
+        // case lives outside the studio / editor branches.
+        if (id === 'file-explorer') {
+            return (
+                <FileExplorerPane
+                    root={s.fileExplorerRoot}
+                    onPickFolder={s.onOpenFolder}
+                    onPickWad={s.onOpenWadInExplorer}
+                    onOpenFile={(p) => s.openFileFromPath(p)}
+                    setRoot={s.setFileExplorerRoot}
+                    setStatusMessage={s.setStatusMessage}
+                />
+            );
+        }
+        // Studio panels render on a studio tab, NOT an editor tab —
+        // their early-out path differs from the rest of the panels.
+        if (activeTab?.tabType === 'studio') {
+            switch (id) {
+                case 'studio-anim':    return <StudioAnimPanel studioTabId={activeTab.id} />;
+                case 'studio-bg':      return <StudioBackgroundPanel studioTabId={activeTab.id} />;
+                case 'studio-actions': return <StudioActionsPanel studioTabId={activeTab.id} />;
+                case 'studio-mesh':    return <StudioMeshPanel studioTabId={activeTab.id} />;
+                case 'studio-objects': return <StudioObjectsPanel studioTabId={activeTab.id} />;
+                case 'studio-spotlight': return <StudioSpotlightPanel studioTabId={activeTab.id} />;
+            }
+            // Non-studio tools cannot render on a studio tab (they'd
+            // have nothing meaningful to do without an editor).
+            return null;
+        }
         if (!activeTab || !s.isEditorTab(activeTab)) {
             // 'find' doesn't need an editor tab to render its UI, but it
             // does need an editor instance to drive — punt on rendering
@@ -444,6 +533,16 @@ export default function VisualStudioShell() {
                 return <MaterialOverridePanel entryType="texture" onClose={() => s.setTextureInsertOpen(false)} />;
             case 'material':
                 return <MaterialOverridePanel entryType="material" onClose={() => s.setMaterialInsertOpen(false)} />;
+            case 'binnav':
+                return (
+                    <BinNavPanel
+                        docked
+                        isOpen
+                        onClose={() => s.setBinNavOpen(false)}
+                        editorContent={s.editorRef.current?.getValue() || activeTab.content}
+                        onScrollToLine={s.handleScrollToLine}
+                    />
+                );
         }
     };
 
@@ -483,7 +582,23 @@ export default function VisualStudioShell() {
                 // user can rejoin them.
                 onSplit={
                     (otherGroupHasTools || ids.length >= 2)
-                        ? () => splitTool(active)
+                        ? () => {
+                            // Move THIS pane's active tool to the other
+                            // group, then keep that tool focused in its
+                            // new home — otherwise the rebalance effect
+                            // would surface whatever tool already sat in
+                            // the destination group, making it look like
+                            // the *other* tool was the one that moved.
+                            const destGroup: DockGroup = group === 0 ? 1 : 0;
+                            splitTool(active);
+                            setActiveBySideGroup(prev => {
+                                const cur = prev[side];
+                                const next: [ToolId | null, ToolId | null] = destGroup === 0
+                                    ? [active, cur[1]]
+                                    : [cur[0], active];
+                                return { ...prev, [side]: next };
+                            });
+                        }
                         : undefined
                 }
                 splitState={
@@ -571,6 +686,7 @@ export default function VisualStudioShell() {
                                         onTabClose={s.onTabClose}
                                         onTabCloseAll={s.onTabCloseAll}
                                         onTabPin={s.onTabPin}
+                                onRevealInExplorer={s.revealInExplorer}
                                         splitMode={s.splitMode}
                                         onToggleSplit={() => s.setSplitMode(!s.splitMode)}
                                         paneFilter="left"
@@ -591,6 +707,7 @@ export default function VisualStudioShell() {
                                         onTabClose={s.onTabClose}
                                         onTabCloseAll={s.onTabCloseAll}
                                         onTabPin={s.onTabPin}
+                                onRevealInExplorer={s.revealInExplorer}
                                         paneFilter="right"
                                         onDropTabIntoPane={s.onTabSetPane}
                                     />
@@ -604,6 +721,7 @@ export default function VisualStudioShell() {
                                 onTabClose={s.onTabClose}
                                 onTabCloseAll={s.onTabCloseAll}
                                 onTabPin={s.onTabPin}
+                                onRevealInExplorer={s.revealInExplorer}
                                 onTabPointerDown={e => startEditorDrag(e, 'pop')}
                                 splitMode={s.splitMode}
                                 onToggleSplit={() => s.setSplitMode(!s.splitMode)}
@@ -616,6 +734,7 @@ export default function VisualStudioShell() {
                         <WelcomeScreenWithExit
                             visible={welcomeVisible && !s.fileLoading}
                             onOpenFile={s.onOpen}
+                            onNewFile={s.onNew}
                             onContinueWithoutFile={() => s.setWelcomeOverride('hide')}
                             openFileDisabled={s.openFileDisabled}
                             recentFiles={s.recentFiles}
@@ -623,6 +742,11 @@ export default function VisualStudioShell() {
                             onMaterialLibrary={s.onMaterialLibrary}
                             onThemes={s.onThemes}
                             onSettings={s.onSettings}
+                            onAbout={s.onAbout}
+                            onNewStudioScene={s.onNewStudioScene}
+                            onOpenFolder={s.onOpenFolder}
+                            onOpenSkinBinAsText={s.onOpenSkinBinAsText}
+                            onSendMeshToStudio={s.onSendMeshToStudio}
                             appIcon={s.appIcon}
                             onMinimize={s.onMinimize}
                             onMaximize={s.onMaximize}

@@ -1,0 +1,841 @@
+/* Stage 3 — model viewer.
+ *
+ * Style targets parity with the Extract Files tab: same theme tokens
+ * (--text-color / --text-muted / --border-color / --bg-secondary),
+ * same panel proportions, same modern-UI glass treatment via
+ * `[data-ui-mode="modern"]`. The accordion rail mimics Extract's
+ * sources column; the canvas mimics Extract's preview column.
+ */
+
+.mv-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  /* Canvas on the left taking the bulk; rail at a fixed ~340px on the
+     right (matches Extract's preview column at full width). */
+  grid-template-columns: 1fr 340px;
+  gap: 18px;
+  padding: 18px;
+  overflow: hidden;
+}
+
+/* ── Canvas surface ─────────────────────────────────────────────── */
+
+.mv-canvas-wrap {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-color, #3e3e42);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+[data-ui-mode="modern"] .mv-canvas-wrap {
+  background: var(--modern-glass-bg);
+  backdrop-filter: var(--modern-blur);
+  -webkit-backdrop-filter: var(--modern-blur);
+  border-color: var(--modern-glass-border);
+  box-shadow: var(--modern-glass-shadow);
+}
+
+.mv-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+  touch-action: none;
+}
+
+.mv-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--text-muted, #8a8a8a);
+  text-align: center;
+  padding: 24px;
+}
+
+.mv-state-error {
+  color: #e07070;
+}
+
+/* ── Accordion rail (right column) ──────────────────────────────── */
+
+.mv-rail {
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-color, #3e3e42);
+  border-radius: 6px;
+  padding: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  color: var(--text-color, #cccccc);
+}
+
+[data-ui-mode="modern"] .mv-rail {
+  background: var(--modern-surface-bg);
+  backdrop-filter: var(--modern-blur);
+  -webkit-backdrop-filter: var(--modern-blur);
+  border-color: var(--modern-glass-border);
+  box-shadow: var(--modern-glass-shadow);
+}
+
+/* ── Information section body ───────────────────────────────────── */
+
+.mv-info {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.mv-info-portrait {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--border-color, #3e3e42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+[data-ui-mode="modern"] .mv-info-portrait {
+  border-color: var(--modern-glass-border);
+}
+
+.mv-info-portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mv-info-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mv-info-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-color, #cccccc);
+}
+
+.mv-info-id {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  color: var(--text-muted, #8a8a8a);
+}
+
+.mv-info-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+/* Shared "panel button" — used by Information actions, Show/Hide all,
+   etc. Matches the Extract Files source-action-btn vocabulary. */
+.mv-info-btn {
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-color, #cccccc);
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-color, #3e3e42);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.mv-info-btn:hover:not(:disabled) {
+  border-color: var(--jade-accent);
+  color: var(--jade-accent);
+}
+
+.mv-info-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+[data-ui-mode="modern"] .mv-info-btn {
+  background: transparent;
+  border-color: var(--modern-glass-border);
+}
+
+[data-ui-mode="modern"] .mv-info-btn:hover:not(:disabled) {
+  background: var(--modern-accent-10);
+  border-color: var(--modern-accent);
+}
+
+/* ── Placeholders (accordion sections still loading) ────────────── */
+
+.mv-placeholder {
+  font-size: 12px;
+  color: var(--text-muted, #8a8a8a);
+  font-style: italic;
+}
+
+/* ── Animations section ─────────────────────────────────────────── */
+
+.mv-anim-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-bottom: 6px;
+  /* Prevent the row from pushing wider than its accordion column when
+     the select holds a long clip name. Without `min-width: 0` on a
+     nested flex container the inner `<select>` refuses to shrink and
+     overflows the rail. */
+  min-width: 0;
+}
+
+.mv-anim-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  flex: 0 0 auto;
+  padding: 0;
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-color, #3e3e42);
+  border-radius: 4px;
+  color: var(--text-color, #cccccc);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.mv-anim-step:hover {
+  border-color: var(--jade-accent);
+  color: var(--jade-accent);
+}
+
+[data-ui-mode="modern"] .mv-anim-step {
+  background: transparent;
+  border-color: var(--modern-glass-border);
+}
+
+[data-ui-mode="modern"] .mv-anim-step:hover {
+  background: var(--modern-accent-10);
+  border-color: var(--modern-accent);
+}
+
+/* ───────────── Animation dropdown (custom, themed) ───────────── */
+.mv-anim-dd {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 0;
+}
+
+.mv-anim-dd-trigger {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 4px 6px 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-color, #3e3e42);
+  border-radius: 4px;
+  color: var(--text-color, #cccccc);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.mv-anim-dd-trigger:hover {
+  border-color: var(--jade-accent);
+}
+
+.mv-anim-dd-trigger.is-open {
+  border-color: var(--jade-accent);
+  background: rgba(0, 122, 204, 0.08);
+}
+
+.mv-anim-dd-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mv-anim-dd-caret {
+  flex-shrink: 0;
+  margin-left: 6px;
+  color: var(--text-muted, #8a8a8a);
+  transition: transform 120ms ease;
+}
+
+.mv-anim-dd-trigger.is-open .mv-anim-dd-caret {
+  transform: rotate(180deg);
+}
+
+[data-ui-mode="modern"] .mv-anim-dd-trigger {
+  background: transparent;
+  border-color: var(--modern-glass-border);
+}
+
+[data-ui-mode="modern"] .mv-anim-dd-trigger:hover,
+[data-ui-mode="modern"] .mv-anim-dd-trigger.is-open {
+  background: var(--modern-accent-05);
+  border-color: var(--modern-accent);
+}
+
+/* Popup menu — portal-rendered at the document body with fixed
+   positioning so the accordion's `overflow: hidden` can't clip it.
+   The component writes inline `top/left/width` based on the trigger's
+   bounding rect; this rule handles look + stacking. */
+.mv-anim-dd-menu {
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  background: var(--window-bg, #1f1f1f);
+  border: 1px solid var(--border-color, #3e3e42);
+  border-radius: 4px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  animation: mv-anim-dd-pop 110ms ease;
+}
+
+@keyframes mv-anim-dd-pop {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.mv-anim-dd-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
+}
+
+.mv-anim-dd-search-icon {
+  color: #8b8b8b;
+  flex-shrink: 0;
+}
+
+.mv-anim-dd-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font: inherit;
+  font-size: 12px;
+  color: #ffffff;
+}
+
+.mv-anim-dd-search-input::placeholder {
+  color: #6b6b6b;
+}
+
+.mv-anim-dd-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+
+.mv-anim-dd-item {
+  display: block;
+  width: 100%;
+  padding: 5px 12px;
+  background: transparent;
+  border: none;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-color, #cccccc);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mv-anim-dd-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+}
+
+.mv-anim-dd-item.is-selected {
+  background: var(--jade-accent, #007acc);
+  color: #ffffff;
+}
+
+.mv-anim-dd-item.is-selected:hover {
+  filter: brightness(1.1);
+  background: var(--jade-accent, #007acc);
+}
+
+.mv-anim-dd-empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 11.5px;
+  color: #6e6e6e;
+  font-style: italic;
+}
+
+.mv-anim-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.mv-anim-scrub {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 4px;
+  cursor: pointer;
+}
+
+.mv-anim-scrub:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mv-anim-time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-muted, #8a8a8a);
+  min-width: 80px;
+  text-align: right;
+}
+
+.mv-anim-speed {
+  flex: 0 0 auto;
+  min-width: 44px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-color, #cccccc);
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-color, #3e3e42);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.mv-anim-speed:hover {
+  border-color: var(--jade-accent);
+  color: var(--jade-accent);
+}
+
+[data-ui-mode="modern"] .mv-anim-speed {
+  background: transparent;
+  border-color: var(--modern-glass-border);
+}
+
+[data-ui-mode="modern"] .mv-anim-speed:hover {
+  background: var(--modern-accent-10);
+  border-color: var(--modern-accent);
+}
+
+.mv-anim-clear {
+  flex: 1 1 auto;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-muted, #8a8a8a);
+  background: transparent;
+  border: 1px solid var(--border-color, #3e3e42);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.mv-anim-clear:hover {
+  border-color: var(--jade-accent);
+  color: var(--jade-accent);
+}
+
+[data-ui-mode="modern"] .mv-anim-clear {
+  border-color: var(--modern-glass-border);
+}
+
+[data-ui-mode="modern"] .mv-anim-clear:hover {
+  background: var(--modern-accent-10);
+  border-color: var(--modern-accent);
+}
+
+/* ── Model Parts section ────────────────────────────────────────── */
+
+.mv-parts-list {
+  list-style: none;
+  margin: 0 0 8px 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.mv-parts-row {
+  margin: 0;
+  padding: 0;
+}
+
+.mv-parts-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-color, #cccccc);
+  user-select: none;
+  border-radius: 4px;
+  transition: background-color 120ms ease;
+}
+
+.mv-parts-label:hover {
+  background: color-mix(in srgb, var(--jade-accent) 8%, transparent);
+}
+
+[data-ui-mode="modern"] .mv-parts-label:hover {
+  background: var(--modern-accent-10);
+}
+
+.mv-parts-label input[type='checkbox'] {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--jade-accent);
+}
+
+.mv-parts-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mv-parts-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.mv-parts-actions .mv-info-btn {
+  flex: 1 1 auto;
+}
+
+/* ── Options section ────────────────────────────────────────────── */
+
+.mv-option-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--text-color, #cccccc);
+  cursor: pointer;
+  border-radius: 4px;
+  user-select: none;
+  transition: background-color 120ms ease;
+}
+
+.mv-option-row:hover {
+  background: color-mix(in srgb, var(--jade-accent) 8%, transparent);
+}
+
+[data-ui-mode="modern"] .mv-option-row:hover {
+  background: var(--modern-accent-10);
+}
+
+.mv-option-row input[type='checkbox'] {
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--jade-accent);
+}
+
+.mv-option-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 6px 8px 26px; /* indent under the parent checkbox */
+}
+
+.mv-option-slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted, #8a8a8a);
+}
+
+.mv-option-slider-value {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-color, #cccccc);
+}
+
+.mv-option-slider input[type='range'] {
+  width: 100%;
+  accent-color: var(--jade-accent);
+  margin: 0;
+}
+
+/* ── Chromas section ────────────────────────────────────────────── */
+
+.mv-chroma-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.mv-chroma-tile {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-color, #3e3e42);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.mv-chroma-tile:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--jade-accent) 60%, transparent);
+}
+
+.mv-chroma-tile.active {
+  border-color: var(--jade-accent);
+  box-shadow: 0 0 0 1px var(--jade-accent),
+    0 0 10px color-mix(in srgb, var(--jade-accent) 50%, transparent);
+}
+
+[data-ui-mode="modern"] .mv-chroma-tile {
+  background: transparent;
+  border-color: var(--modern-glass-border);
+}
+
+[data-ui-mode="modern"] .mv-chroma-tile:hover {
+  background: var(--modern-accent-10);
+}
+
+.mv-chroma-tile img,
+.mv-chroma-fallback {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.mv-chroma-fallback {
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+}
+
+.mv-chroma-note {
+  margin: 6px 0 0 0;
+  font-size: 10px;
+  color: var(--text-muted, #8a8a8a);
+  font-style: italic;
+  line-height: 1.4;
+}
+
+/* ── Export section ─────────────────────────────────────────────── */
+
+.mv-export-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mv-export-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+
+/* Side-by-side button row for the two Extract-jump entries — both
+   share one logical action (navigate to Extract) so they sit
+   horizontally instead of stacking with the heavier export entries. */
+.mv-export-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.mv-export-pair .mv-export-btn {
+  justify-content: center;
+}
+
+.mv-export-note {
+  margin: 8px 0 0 0;
+  font-size: 10px;
+  color: var(--text-muted, #8a8a8a);
+  font-style: italic;
+  line-height: 1.4;
+}
+
+.mv-export-repath {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 6px 12px;
+  font-size: 11px;
+  color: var(--text-muted, #8a8a8a);
+  user-select: none;
+  /* Sits under the Export skin files button as a sub-option. */
+}
+
+.mv-export-repath input[type='checkbox'] {
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--jade-accent);
+}
+
+.mv-export-repath input[type='checkbox']:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.mv-export-repath.on {
+  color: var(--text-color, #cccccc);
+}
+
+/* ── Advanced-options disclosure ─────────────────────────────────
+   Collapsible row hiding the three secondary export modifiers
+   (Merge / Preserve HUD / Skip SFX/VO) so the panel only shows the
+   primary Repath toggle by default. Persisted via localStorage so
+   users who keep it open stay open. */
+.mv-export-advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 8px;
+  margin-top: 2px;
+  background: transparent;
+  border: none;
+  color: color-mix(in srgb, var(--text-color, #cccccc) 55%, transparent);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  align-self: flex-start;
+  border-radius: 3px;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.mv-export-advanced-toggle:hover {
+  color: var(--text-color, #cccccc);
+  background: color-mix(in srgb, var(--text-color, #cccccc) 6%, transparent);
+}
+
+.mv-export-advanced-chevron {
+  transition: transform 0.15s ease;
+}
+
+.mv-export-advanced-toggle.open .mv-export-advanced-chevron {
+  transform: rotate(0deg);
+}
+
+.mv-export-advanced-toggle:not(.open) .mv-export-advanced-chevron {
+  transform: rotate(-90deg);
+}
+
+.mv-export-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Subtle left rail so the grouped sub-options read as a unit
+     under the disclosure header rather than floating beside the
+     buttons above. */
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--text-color, #cccccc) 10%, transparent);
+}
+
+.mv-export-advanced .mv-export-repath {
+  padding-left: 4px;
+}
+
+/* ── Splash lightbox ────────────────────────────────────────────── */
+
+.mv-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.mv-lightbox-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.mv-lightbox-stage img {
+  max-width: 100%;
+  max-height: calc(100vh - 120px);
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.mv-lightbox-caption {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  text-align: center;
+  letter-spacing: 0.2px;
+}
+
+.mv-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.4);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.mv-lightbox-close:hover {
+  background: var(--jade-accent);
+  border-color: var(--jade-accent);
+}
+
+/* ── Narrow layouts ─────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .mv-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+  }
+  .mv-rail {
+    max-height: 40vh;
+  }
+}

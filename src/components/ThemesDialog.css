@@ -118,9 +118,18 @@
 }
 
 .themes-nav-icon {
-    font-size: 15px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
     line-height: 1;
     flex-shrink: 0;
+    opacity: 0.85;
+}
+
+.themes-nav-icon svg {
+    display: block;
 }
 
 /* ── Content pane ── */

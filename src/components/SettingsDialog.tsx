@@ -2,8 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { marked } from 'marked';
-import { HashIcon, SettingsIcon, ArrowUpIcon, ConverterIcon, LibraryIcon, BoltIcon } from './Icons';
-import { Link2 } from 'lucide-react';
+import {
+    Hash as HashLucide,
+    ArrowRightLeft as ConverterLucide,
+    BrainCog as BehaviorLucide,
+    Link as LinkLucide,
+    Library as LibraryLucide,
+    Gauge as PerformanceLucide,
+    CloudDownload as UpdatesLucide,
+} from 'lucide-react';
 import './SettingsDialog.css';
 
 interface SettingsDialogProps {
@@ -42,13 +49,13 @@ type NavSection =
     | 'updates';
 
 const NAV_ITEMS: { id: NavSection; label: string; icon: React.ReactNode }[] = [
-    { id: 'hashes',       label: 'Hash Files',   icon: <HashIcon size={15} />     },
-    { id: 'converter',    label: 'Converter',    icon: <ConverterIcon size={15} /> },
-    { id: 'behavior',     label: 'App Behavior', icon: <SettingsIcon size={15} /> },
-    { id: 'registration', label: 'Registration', icon: <Link2 size={15} strokeWidth={1.8} /> },
-    { id: 'library',      label: 'Library',      icon: <LibraryIcon size={15} /> },
-    { id: 'performance',  label: 'Performance',  icon: <BoltIcon size={15} /> },
-    { id: 'updates',      label: 'Updates',      icon: <ArrowUpIcon size={15} /> },
+    { id: 'hashes',       label: 'Hash Files',   icon: <HashLucide size={16} />        },
+    { id: 'converter',    label: 'Converter',    icon: <ConverterLucide size={16} />   },
+    { id: 'behavior',     label: 'App Behavior', icon: <BehaviorLucide size={16} />    },
+    { id: 'registration', label: 'Registration', icon: <LinkLucide size={16} />        },
+    { id: 'library',      label: 'Library',      icon: <LibraryLucide size={16} />     },
+    { id: 'performance',  label: 'Performance',  icon: <PerformanceLucide size={16} /> },
+    { id: 'updates',      label: 'Updates',      icon: <UpdatesLucide size={16} />     },
 ];
 
 /* ── Performance prefs ──
@@ -201,6 +208,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
     const [converterEngine, setConverterEngine] = useState<string>('jade');
     const [engineChanged, setEngineChanged] = useState(false);
     const [materialMatchMode, setMaterialMatchMode] = useState<number>(3);
+    const [recentFilesLimit, setRecentFilesLimit] = useState<number>(10);
 
     // ── Material Library state ──
     const [libStatus, setLibStatus] = useState<LibraryStatus | null>(null);
@@ -272,6 +280,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             setSilentUpdate((await invoke<string>('get_preference', { key: 'SilentUpdate', defaultValue: 'False' })) === 'True');
             setConverterEngine(await invoke<string>('get_preference', { key: 'ConverterEngine', defaultValue: 'jade' }));
             setMaterialMatchMode(parseInt(await invoke<string>('get_preference', { key: 'MaterialMatchMode', defaultValue: '3' })) || 3);
+            const rawLimit = parseInt(await invoke<string>('get_preference', { key: 'RecentFilesLimit', defaultValue: '10' }));
+            setRecentFilesLimit(Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 10);
             setEngineChanged(false);
         } catch (e) { console.error(e); }
     };
@@ -625,6 +635,34 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                 }}
             />
 
+            <div className="settings-row">
+                <div className="settings-row-header">
+                    <span className="settings-row-title">Recent files to remember</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <input
+                        type="range"
+                        min={1}
+                        max={50}
+                        step={1}
+                        value={recentFilesLimit}
+                        onChange={async e => {
+                            const v = parseInt(e.target.value);
+                            setRecentFilesLimit(v);
+                            try { await invoke('set_preference', { key: 'RecentFilesLimit', value: String(v) }); }
+                            catch (err) { console.error(err); }
+                        }}
+                        style={{ flex: 1 }}
+                    />
+                    <span style={{ minWidth: 32, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        {recentFilesLimit}
+                    </span>
+                </div>
+                <p className="settings-row-desc">
+                    How many recently-opened files Jade keeps in the Start screen list. History on disk is preserved up to 100 entries — bumping this back up restores older items.
+                </p>
+            </div>
+
             <div className="settings-divider" />
 
             <h3 className="settings-section-title" style={{ fontSize: 16 }}>Material Override</h3>
@@ -929,7 +967,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             <h2 className="settings-section-title">Performance</h2>
             <p className="settings-section-subtitle">
                 Editor features have a cost on huge bin dumps. Each option below can be kept on,
-                automatically dropped on big files (over 75,000 lines), or always off.
+                automatically dropped on big files (over 125,000 lines), or always off.
             </p>
 
             {PERF_KEYS.map(key => (
