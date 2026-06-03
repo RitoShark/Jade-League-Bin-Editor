@@ -164,6 +164,28 @@
   cursor: not-allowed;
 }
 
+/* Form-cycle button — full-width row in the Options accordion. */
+.mv-form-cycle-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 8px;
+}
+.mv-form-cycle-label {
+  flex: 1 1 auto;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mv-form-cycle-count {
+  flex: 0 0 auto;
+  font-size: 10px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
 [data-ui-mode="modern"] .mv-info-btn {
   background: transparent;
   border-color: var(--modern-glass-border);

@@ -125,8 +125,24 @@ export default function StudioMeshPanel({ studioTabId }: StudioMeshPanelProps) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [model, autoResolved, revision]);
 
+    // Per-slot click lock — blocks re-fires while a previous toggle
+    // is still propagating. Without this, mashing the flip button
+    // produced visual stutter (Babylon's side-orientation change
+    // needs a full render to take effect; clicks faster than
+    // ~16ms-per-frame queued up and the UI showed the wrong state
+    // briefly between clicks). 80ms is comfortably above 60fps so
+    // a normal double-click goes through but spam is throttled.
+    const lockedSlotsRef = useRef<Set<number>>(new Set());
+    const lockSlot = (i: number): boolean => {
+        if (lockedSlotsRef.current.has(i)) return false;
+        lockedSlotsRef.current.add(i);
+        setTimeout(() => lockedSlotsRef.current.delete(i), 80);
+        return true;
+    };
+
     const toggleVisibility = (i: number) => {
         if (!model) return;
+        if (!lockSlot(i)) return;
         const slot = model.slots[i];
         if (!slot) return;
         slot.mesh.setEnabled(!slot.mesh.isEnabled());
@@ -136,6 +152,7 @@ export default function StudioMeshPanel({ studioTabId }: StudioMeshPanelProps) {
 
     const toggleFlip = (i: number) => {
         if (!model) return;
+        if (!lockSlot(i)) return;
         const slot = model.slots[i];
         if (!slot) return;
         setMeshFaceFlipped(slot.mesh, !isMeshFaceFlipped(slot.mesh));
@@ -222,22 +239,28 @@ export default function StudioMeshPanel({ studioTabId }: StudioMeshPanelProps) {
                     find scene-level appearance controls. */}
                 <div className="studio-mesh-grid">
                     {submeshes.map((sm) => (
-                        <div key={sm.index} className="studio-mesh-card">
-                            <label className="studio-mesh-vis">
-                                <input
-                                    type="checkbox"
-                                    checked={sm.visible}
-                                    onChange={() => toggleVisibility(sm.index)}
-                                />
-                                <span className="studio-mesh-name" title={sm.name}>{sm.name}</span>
-                            </label>
+                        <div
+                            key={sm.index}
+                            className={`studio-mesh-card ${sm.visible ? 'is-visible' : 'is-hidden'}`}
+                            onClick={() => toggleVisibility(sm.index)}
+                            title={sm.visible ? `Click to hide ${sm.name}` : `Click to show ${sm.name}`}
+                        >
+                            <div className="studio-mesh-name" title={sm.name}>{sm.name}</div>
                             <div className="studio-mesh-row">
                                 <div className={`studio-mesh-badge studio-mesh-badge-${sm.resolution}`}>
                                     {sm.resolution === 'auto' && 'auto-resolved'}
                                     {sm.resolution === 'manual' && 'manual'}
                                     {sm.resolution === 'missing' && 'no texture'}
                                 </div>
-                                <label className="studio-mesh-flip" title="Flip face winding for this submesh">
+                                {/* The flip toggle is a tiny stand-alone button INSIDE
+                                    the card. `stopPropagation` on its click handler
+                                    means flipping a face doesn't also toggle the
+                                    card's visibility. */}
+                                <label
+                                    className="studio-mesh-flip"
+                                    title="Flip face winding for this submesh"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
                                     <input
                                         type="checkbox"
                                         checked={sm.flipped}
@@ -256,7 +279,7 @@ export default function StudioMeshPanel({ studioTabId }: StudioMeshPanelProps) {
                                     {describeProceduralPattern(sm.pattern)}
                                 </div>
                             )}
-                            <div className="studio-mesh-actions">
+                            <div className="studio-mesh-actions" onClick={(e) => e.stopPropagation()}>
                                 <button
                                     type="button"
                                     className="mop-btn mop-btn-accept"
@@ -291,17 +314,21 @@ export default function StudioMeshPanel({ studioTabId }: StudioMeshPanelProps) {
                                 )}
                             </div>
                             {openProcIdx === sm.index && (
-                                <ProceduralEditor
-                                    current={sm.pattern}
-                                    onApply={(p) => applyPattern(sm.index, p)}
-                                    onClose={() => setOpenProcIdx(null)}
-                                />
+                                <div onClick={(e) => e.stopPropagation()}>
+                                    <ProceduralEditor
+                                        current={sm.pattern}
+                                        onApply={(p) => applyPattern(sm.index, p)}
+                                        onClose={() => setOpenProcIdx(null)}
+                                    />
+                                </div>
                             )}
                             {openUvIdx === sm.index && model && (
-                                <UvViewer
-                                    mesh={model.slots[sm.index]?.mesh}
-                                    onClose={() => setOpenUvIdx(null)}
-                                />
+                                <div onClick={(e) => e.stopPropagation()}>
+                                    <UvViewer
+                                        mesh={model.slots[sm.index]?.mesh}
+                                        onClose={() => setOpenUvIdx(null)}
+                                    />
+                                </div>
                             )}
                         </div>
                     ))}

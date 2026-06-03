@@ -290,6 +290,7 @@ async function applyDiskTextures(
     try {
         map = await invoke<SknTextureBindings | null>('read_skn_textures_disk', {
             sknPath,
+            submeshNames: skn.submeshes.map(s => s.name),
         });
     } catch {
         return;

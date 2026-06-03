@@ -12,6 +12,15 @@ export type ToolId =
     // Spotlight — shading / transparency / ground-shadow controls
     // for the active studio scene.
     | 'studio-spotlight'
+    // Animation Studio panels — only meaningful when an animstudio
+    // tab is active. Each is independently dockable / floatable /
+    // tab-stackable, same as Photo Studio's panels.
+    //   - animstudio-options: Source/Target picker + swap + retarget
+    //     toggles (rescale translations, rebase rotations).
+    //   - animstudio-mapping: per-bone source→target table with
+    //     filter chips + per-row override dropdown.
+    //   - animstudio-rig:     dual mini-viewport bone picker (Phase 5).
+    | 'animstudio-options' | 'animstudio-mapping' | 'animstudio-rig' | 'animstudio-guides' | 'animstudio-physics' | 'animstudio-mesh' | 'animstudio-export'
     // File Explorer — dockable folder/WAD browser with tree + grid
     // views. Default-placed on the outer-left edge so it lives where
     // a VS Code sidebar would.
@@ -85,6 +94,26 @@ const DEFAULT_LAYOUT: LayoutMap = {
     // so the rendering / lighting controls sit in the same column as
     // the photo controls. Same group → they tab together.
     'studio-spotlight': { kind: 'dock', side: 'inner-right',  group: 1 },
+    // Animation Studio defaults — Options sits at the bottom (small,
+    // wide row of toggles fits a bottom strip well), Mapping on the
+    // inner-right (tall scrollable list), Rig widget below it in the
+    // same column so they tab together.
+    'animstudio-options': { kind: 'dock', side: 'inner-bottom', group: 0 },
+    'animstudio-mapping': { kind: 'dock', side: 'inner-right',  group: 0 },
+    'animstudio-rig':     { kind: 'dock', side: 'inner-right',  group: 1 },
+    // Guides default to grouping with the mapping panel — both are
+    // per-bone editors, so users land them in the same column.
+    'animstudio-guides':  { kind: 'dock', side: 'inner-right',  group: 0 },
+    // Physics panel tabs with the rig/guides column — same per-bone
+    // editor neighbourhood.
+    'animstudio-physics': { kind: 'dock', side: 'inner-right',  group: 0 },
+    // Mesh panel docks alongside Photo Studio's at the bottom so
+    // submeshes get a wide-and-short row of cards instead of a tall
+    // narrow column.
+    'animstudio-mesh':    { kind: 'dock', side: 'inner-bottom', group: 0 },
+    // Export panel (bake + batch retarget) docks on the right lane —
+    // a tall narrow column suits the path field + batch table.
+    'animstudio-export':  { kind: 'dock', side: 'inner-right',  group: 0 },
     // File Explorer lives on the outer-left lane by default — the same
     // edge VS Code / Cursor users expect a folder tree on. Doesn't fight
     // for room with the right-side panels.

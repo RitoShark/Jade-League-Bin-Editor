@@ -482,6 +482,151 @@
     background: var(--selected-tab-bg, #094771);
 }
 
+/* ───────────────────── Vertical toolbar (VSCode activity bar) ─────────
+   Right-click → "Vertical (left)" flips the toolbar into a narrow strip
+   on the shell body's left edge. The shell mounts it as the first child
+   of `vs-shell-body` (a flex-row), which already lays it out alongside
+   the dock columns — no positioning hacks needed. */
+.visualstudio-shell .vs-toolbar--vertical {
+    flex-direction: column;
+    align-items: center;
+    width: 38px;
+    height: 100%;
+    min-height: 0;
+    padding: 8px 4px;
+    border-bottom: none;
+    border-right: 1px solid var(--window-bg);
+    box-shadow: 2px 0 4px rgba(0, 0, 0, 0.18);
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex-shrink: 0;
+}
+
+/* Inline-flex wrapper divs the toolbar uses to group buttons default to
+   row direction — flip them to column when the toolbar is vertical so
+   each grouped icon stacks. !important overrides the inline
+   `display: inline-flex` set on the wrappers in the default tsx. */
+.visualstudio-shell .vs-toolbar--vertical > div:not(.vs-toolbar-sep):not(.vs-toolbar-spacer):not(.vs-toolbar-ctx-menu):not(.vs-toolbar-menu-wrap) {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center;
+    width: 100%;
+}
+
+/* The Quartz dropdown wrapper sits inside the bin-tools group — flip it
+   too so the trigger button stays centred and the popup anchor is on
+   the button's right edge. */
+.visualstudio-shell .vs-toolbar--vertical .vs-toolbar-menu-wrap {
+    width: 100%;
+    justify-content: center;
+}
+
+/* Separators flip orientation: a thin horizontal rule instead of a
+   vertical one. */
+.visualstudio-shell .vs-toolbar--vertical .vs-toolbar-sep {
+    width: 22px;
+    height: 1px;
+    margin: 6px 0;
+}
+
+/* Quartz / send-to dropdown anchor — fly to the right of the bar
+   instead of below it. */
+.visualstudio-shell .vs-toolbar--vertical .vs-toolbar-menu-popup {
+    top: 0;
+    left: calc(100% + 6px);
+}
+
+/* Right-side variant — border flips edges, dropdown anchor accounted
+   for inline via JS. */
+.visualstudio-shell .vs-toolbar--right {
+    border-right: none;
+    border-left: 1px solid var(--window-bg);
+    box-shadow: -2px 0 4px rgba(0, 0, 0, 0.18);
+}
+
+[data-ui-mode="modern"] .visualstudio-shell .vs-toolbar--right {
+    border-left: 1px solid var(--modern-glass-border) !important;
+    border-right: none !important;
+}
+
+/* Portalled dropdown popup (Send-to-Quartz). Portalled to <body>, so
+   it lives outside the toolbar's stacking context and overflow. */
+.vs-toolbar-menu-popup.vs-toolbar-menu-popup--portal {
+    position: fixed;
+    background: var(--tab-bg, #2d2d30);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+    z-index: 9999;
+    overflow: hidden;
+}
+
+.vs-toolbar-menu-popup.vs-toolbar-menu-popup--portal .vs-toolbar-menu-item {
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--border-color, #3e3e42);
+    color: var(--text-color, #cccccc);
+    text-align: left;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 400;
+    cursor: pointer;
+}
+
+.vs-toolbar-menu-popup.vs-toolbar-menu-popup--portal .vs-toolbar-menu-item:last-child {
+    border-bottom: 0;
+}
+
+.vs-toolbar-menu-popup.vs-toolbar-menu-popup--portal .vs-toolbar-menu-item:hover {
+    background: var(--selected-tab-bg, #094771);
+}
+
+/* Orientation context menu — small popup the user gets on right-click
+   of the toolbar root. Portalled to <body>; position set inline from
+   the click event. */
+.vs-toolbar-ctx-menu {
+    position: fixed;
+    min-width: 160px;
+    background: var(--tab-bg, #2d2d30);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+    z-index: 9999;
+    overflow: hidden;
+    padding: 4px;
+}
+
+.vs-toolbar-ctx-menu button {
+    background: transparent;
+    border: 0;
+    color: var(--text-color, #cccccc);
+    text-align: left;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.vs-toolbar-ctx-menu button:hover {
+    background: var(--selected-tab-bg, #094771);
+}
+
+.vs-toolbar-ctx-menu button.is-active {
+    background: var(--jade-accent, #0e639c);
+    color: var(--jade-accent-text, #ffffff);
+}
+
+[data-ui-mode="modern"] .visualstudio-shell .vs-toolbar--vertical {
+    background: var(--modern-title-bg) !important;
+    backdrop-filter: var(--modern-blur);
+    -webkit-backdrop-filter: var(--modern-blur);
+    border-right: 1px solid var(--modern-glass-border) !important;
+}
+
 /* ───────────────────── Body layout ───────────────────── */
 .visualstudio-shell .vs-shell-body {
     flex: 1;
@@ -909,7 +1054,10 @@
 /* Align the find pane with the edit panels — same dock-body bg, same
    padding, no header chrome. */
 .visualstudio-shell .vs-dock-body .word-find-pane {
-    background: var(--tab-bg, #2d2d30);
+    /* Use --window-bg (the file-explorer / studio surface tone) so the
+       find pane reads as part of the same chrome family rather than the
+       mid-tone tab background. */
+    background: var(--window-bg, var(--tab-bg, #2d2d30));
     color: var(--text-color);
     height: 100%;
     padding: 12px;
@@ -928,7 +1076,9 @@
    the edit panel inside the same dock. Mirror the same tokens here so
    all three modules use one modern surface. */
 [data-ui-mode="modern"] .word-find-pane {
-    background: var(--vscode-editorWidget-background) !important;
+    /* Match File Explorer's surface tone in modern mode too — keeps the
+       dock visually unified. */
+    background: var(--window-bg, var(--vscode-editorWidget-background)) !important;
     color: var(--vscode-editorWidget-foreground);
 }
 

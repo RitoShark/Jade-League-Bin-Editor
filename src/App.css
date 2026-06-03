@@ -255,6 +255,33 @@ body {
   margin-top: 6px;
 }
 
+/* Syntax checker — info lightbulb in the glyph margin (blue, no line
+   highlight). Used for non-issues worth a quiet heads-up, e.g. a
+   whole-mesh raw texture coexisting with a materialOverride (normal on
+   basically every skin). Hovering the bulb shows the message. */
+.syntax-info-bulb {
+  /* Drawn as a MASK so the fill comes from `background-color`, letting
+     the bulb follow the theme accent instead of a hardcoded blue. */
+  --bulb-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5'/%3E%3Cpath d='M9 18h6'/%3E%3Cpath d='M10 22h4'/%3E%3C/svg%3E");
+  -webkit-mask-image: var(--bulb-svg);
+  mask-image: var(--bulb-svg);
+  -webkit-mask-size: 13px 13px;
+  mask-size: 13px 13px;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  /* Follow the editor's property/key syntax color so the bulb reads as
+     part of the same palette as the property line it sits on. */
+  background-color: var(--syntax-property-color, #569cd6);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.12s;
+}
+.syntax-info-bulb:hover {
+  opacity: 1;
+}
+
 /* ── Inverse-corner concave selection curves ──
    Monaco creates inverse (concave) corners using a 10px blue piece + a white
    overlay with border-radius.  Modern-UI mode forces the overlay transparent,
@@ -401,6 +428,20 @@ body {
 /* Monaco "context view" layer is what many hover tooltips (including find/replace button hovers) use */
 .context-view {
   z-index: 6000 !important;
+}
+
+/* Monaco hover popups render prose in the editor's monospace font by
+   default, which looks heavy / chunky for plain text (e.g. the info
+   bulb's message). Use a clean UI font for hover PROSE while keeping
+   inline `code` / code blocks monospace. */
+.monaco-hover .hover-contents {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif !important;
+  font-size: 12px !important;
+  line-height: 1.45 !important;
+}
+.monaco-hover .hover-contents code,
+.monaco-hover .hover-contents pre {
+  font-family: var(--monaco-monospace-font, 'Consolas', 'Courier New', monospace) !important;
 }
 
 /* General Edit Panel should match Monaco find widget z-index */

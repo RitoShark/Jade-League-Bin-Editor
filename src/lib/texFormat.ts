@@ -133,6 +133,60 @@ function decompressDXT1Block(
   }
 }
 
+function decompressDXT3Block(
+  blockData: Uint8Array,
+  x: number, y: number,
+  width: number, height: number,
+  pixels: Uint8Array
+): void {
+  if (blockData.length < 16) return;
+  const view = new DataView(blockData.buffer, blockData.byteOffset, 16);
+
+  // Bytes 0..7: 16 explicit 4-bit alpha values, row-major.
+  const alphas: number[] = new Array(16);
+  for (let i = 0; i < 8; i++) {
+    const b = view.getUint8(i);
+    const a0 = b & 0x0F;
+    const a1 = (b >> 4) & 0x0F;
+    alphas[i * 2] = (a0 << 4) | a0;
+    alphas[i * 2 + 1] = (a1 << 4) | a1;
+  }
+
+  // Bytes 8..15: DXT1-style color block, but always 4-color (no 1-bit-alpha branch).
+  const color0 = view.getUint16(8, true);
+  const color1 = view.getUint16(10, true);
+  const bits = view.getUint32(12, true);
+
+  const r0 = ((color0 >> 11) & 0x1F) << 3;
+  const g0 = ((color0 >> 5) & 0x3F) << 2;
+  const b0 = (color0 & 0x1F) << 3;
+  const r1 = ((color1 >> 11) & 0x1F) << 3;
+  const g1 = ((color1 >> 5) & 0x3F) << 2;
+  const b1 = (color1 & 0x1F) << 3;
+
+  const colors: [number, number, number][] = [
+    [r0, g0, b0],
+    [r1, g1, b1],
+    [Math.floor((r0 * 2 + r1) / 3), Math.floor((g0 * 2 + g1) / 3), Math.floor((b0 * 2 + b1) / 3)],
+    [Math.floor((r0 + r1 * 2) / 3), Math.floor((g0 + g1 * 2) / 3), Math.floor((b0 + b1 * 2) / 3)]
+  ];
+
+  for (let py = 0; py < 4; py++) {
+    for (let px = 0; px < 4; px++) {
+      if (x + px < width && y + py < height) {
+        const idx = py * 4 + px;
+        const colorIdx = (bits >> (idx * 2)) & 3;
+        const pixelIdx = ((y + py) * width + (x + px)) * 4;
+        const color = colors[colorIdx];
+        pixels[pixelIdx] = color[0];
+        pixels[pixelIdx + 1] = color[1];
+        pixels[pixelIdx + 2] = color[2];
+        pixels[pixelIdx + 3] = alphas[idx];
+      }
+    }
+  }
+}
+
 function decompressDXT5Block(
   blockData: Uint8Array,
   x: number, y: number,
@@ -244,12 +298,13 @@ export function decompressTEX(tex: TEXData): Uint8Array {
 
 const DDS_MAGIC = 0x20534444; // "DDS "
 const FOURCC_DXT1 = 0x31545844; // "DXT1"
+const FOURCC_DXT3 = 0x33545844; // "DXT3"
 const FOURCC_DXT5 = 0x35545844; // "DXT5"
 const DDPF_FOURCC = 0x4;
 const DDPF_RGB = 0x40;
 const DDPF_ALPHAPIXELS = 0x1;
 
-type DDSFormat = 'DXT1' | 'DXT5' | 'BGRA8' | 'RGBA8';
+type DDSFormat = 'DXT1' | 'DXT3' | 'DXT5' | 'BGRA8' | 'RGBA8';
 
 interface DDSData {
   width: number;
@@ -281,6 +336,7 @@ export function readDDS(buffer: ArrayBuffer): DDSData {
 
   if (pfFlags & DDPF_FOURCC) {
     if (fourCC === FOURCC_DXT1) { format = 'DXT1'; bytesPerBlock = 8; }
+    else if (fourCC === FOURCC_DXT3) { format = 'DXT3'; bytesPerBlock = 16; }
     else if (fourCC === FOURCC_DXT5) { format = 'DXT5'; bytesPerBlock = 16; }
     else throw new Error(`Unsupported DDS FourCC: 0x${fourCC.toString(16)}`);
   } else if ((pfFlags & (DDPF_RGB | DDPF_ALPHAPIXELS)) && rgbBitCount === 32) {
@@ -338,6 +394,18 @@ export function ddsBufferToDataURL(buffer: ArrayBuffer, maxDim?: number): { data
         }
       }
     }
+  } else if (format === 'DXT3') {
+    const blockSize = 16;
+    const bw = Math.ceil(width / 4);
+    const bh = Math.ceil(height / 4);
+    for (let by = 0; by < bh; by++) {
+      for (let bx = 0; bx < bw; bx++) {
+        const off = (by * bw + bx) * blockSize;
+        if (off + blockSize <= data.length) {
+          decompressDXT3Block(data.subarray(off, off + blockSize), bx * 4, by * 4, width, height, pixels);
+        }
+      }
+    }
   } else if (format === 'DXT5') {
     const blockSize = 16;
     const bw = Math.ceil(width / 4);
@@ -363,7 +431,7 @@ export function ddsBufferToDataURL(buffer: ArrayBuffer, maxDim?: number): { data
   }
 
   // Map to TEXFormat number for formatName compatibility
-  const fmtNum = format === 'DXT1' ? TEXFormat.DXT1 : format === 'DXT5' ? TEXFormat.DXT5 : format === 'BGRA8' ? TEXFormat.BGRA8 : 0;
+  const fmtNum = format === 'DXT1' ? TEXFormat.DXT1 : format === 'DXT5' ? TEXFormat.DXT5 : format === 'BGRA8' ? TEXFormat.BGRA8 : format === 'DXT3' ? 11 : 0;
 
   return {
     dataURL: pixelsToDataURL(pixels, width, height, maxDim),
@@ -401,6 +469,7 @@ function pixelsToDataURL(pixels: Uint8Array, width: number, height: number, maxD
 export function ddsFormatName(fmt: string): string {
   switch (fmt) {
     case 'DXT1': return 'DXT1 (BC1)';
+    case 'DXT3': return 'DXT3 (BC2)';
     case 'DXT5': return 'DXT5 (BC3)';
     case 'BGRA8': return 'BGRA8';
     case 'RGBA8': return 'RGBA8';

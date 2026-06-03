@@ -14,8 +14,8 @@ export interface EditorTab {
      *  tab bar shows every tab regardless of this field). Drag-and-
      *  drop between the two tab bars flips this field. */
     pane?: 'left' | 'right';
-    /** 'editor' (default), 'texture-preview', 'quartz-diff', 'compare', 'markdown-preview', or 'studio' */
-    tabType?: 'editor' | 'texture-preview' | 'quartz-diff' | 'compare' | 'markdown-preview' | 'studio';
+    /** 'editor' (default), 'texture-preview', 'quartz-diff', 'compare', 'markdown-preview', 'studio', or 'animstudio' */
+    tabType?: 'editor' | 'texture-preview' | 'quartz-diff' | 'compare' | 'markdown-preview' | 'studio' | 'animstudio';
     /** For markdown-preview tabs: id of the source editor tab whose content we render. */
     sourceTabId?: string;
     /** For texture-preview tabs: decoded PNG data URL */
@@ -78,6 +78,11 @@ interface TabBarProps {
      *  tabs that have an on-disk file path. When omitted the
      *  context menu falls back to the plain stub. */
     onRevealInExplorer?: (filePath: string) => void;
+    /** Visual-Studio-style drag-to-reorder. When provided (single-pane
+     *  bars only), grabbing a tab and moving it left/right repositions
+     *  it live. `from`/`to` are indices into the rendered tab list,
+     *  which for a single-pane bar are the `tabs` array indices. */
+    onReorderTab?: (from: number, to: number) => void;
 }
 
 export default function TabBar({
@@ -94,8 +99,11 @@ export default function TabBar({
     paneFilter,
     onDropTabIntoPane,
     onRevealInExplorer,
+    onReorderTab,
 }: TabBarProps) {
     const [tabCtx, setTabCtx] = React.useState<{ x: number; y: number; tab: EditorTab } | null>(null);
+    // Id of the tab currently being dragged for reorder — used to dim it.
+    const [draggingId, setDraggingId] = React.useState<string | null>(null);
     React.useEffect(() => {
         if (!tabCtx) return;
         const onDown = (ev: MouseEvent) => {
@@ -237,6 +245,100 @@ export default function TabBar({
         document.addEventListener('pointerup', onUp);
     };
 
+    // Visual-Studio-style drag-to-reorder for the single-pane bar.
+    // Owns the whole gesture so it can decide between two outcomes:
+    //   - horizontal move inside the strip → live reorder (swap the
+    //     dragged tab past each neighbour's midpoint).
+    //   - pulled clearly BELOW the strip → hand off to the shell's
+    //     pop-out gesture (`onTabPointerDown`), if one is wired. This
+    //     is why reorder must own pointerdown instead of running
+    //     alongside pop-out: otherwise a horizontal drag would both
+    //     reorder AND float the document.
+    const startReorderGesture = (e: React.PointerEvent, draggedId: string) => {
+        // Left button only; never start from the close button.
+        if (e.button !== 0) return;
+        if ((e.target as HTMLElement).closest('.tab-close-btn')) return;
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const downTarget = e.target;
+        const DRAG_THRESHOLD = 6;
+        // How far below the strip the pointer must travel before we
+        // abandon reorder and pop the document out (single-pane VS
+        // shell only — `onTabPointerDown` is undefined elsewhere).
+        const POP_MARGIN = 34;
+        let mode: 'idle' | 'reorder' = 'idle';
+        // Index we last asked the dragged tab to move to. `pointermove`
+        // can outrun React's commit, so until the live DOM shows the
+        // dragged tab actually sitting at this index we skip — otherwise
+        // a second move reads the pre-commit DOM and reorders again,
+        // bouncing the tab back and forth.
+        let expectedIndex: number | null = null;
+
+        const cleanup = () => {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            document.body.style.cursor = '';
+            setDraggingId(null);
+        };
+        // Below-the-strip escape hatch → defer to the shell's pop-out.
+        const tryPopOut = (ev: PointerEvent): boolean => {
+            const rect = tabsContainerRef.current?.getBoundingClientRect();
+            if (onTabPointerDown && rect && ev.clientY > rect.bottom + POP_MARGIN) {
+                cleanup();
+                onTabPointerDown(
+                    { target: downTarget, button: 0, clientX: ev.clientX, clientY: ev.clientY } as unknown as React.PointerEvent,
+                    draggedId,
+                );
+                return true;
+            }
+            return false;
+        };
+
+        const onMove = (ev: PointerEvent) => {
+            if (mode === 'idle') {
+                const dx = ev.clientX - startX;
+                const dy = ev.clientY - startY;
+                if (dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
+                if (tryPopOut(ev)) return;
+                mode = 'reorder';
+                setDraggingId(draggedId);
+                document.body.style.cursor = 'grabbing';
+            }
+            if (tryPopOut(ev)) return;
+            // Re-read the live DOM each move: as we reorder, the tab
+            // nodes shuffle, so the dragged tab's index and every
+            // neighbour's rect change. Reading fresh keeps the math
+            // self-correcting frame to frame.
+            const container = tabsContainerRef.current;
+            if (!container) return;
+            const els = Array.from(container.querySelectorAll<HTMLElement>('[data-tab-id]'));
+            const from = els.findIndex(el => el.dataset.tabId === draggedId);
+            if (from < 0) return;
+            // Wait for the previous reorder to land in the DOM before
+            // computing the next one.
+            if (expectedIndex !== null && from !== expectedIndex) return;
+            expectedIndex = null;
+            let to = els.length - 1;
+            for (let i = 0; i < els.length; i++) {
+                if (i === from) continue;
+                const r = els[i].getBoundingClientRect();
+                if (ev.clientX < r.left + r.width / 2) {
+                    // Account for the dragged node being spliced out
+                    // first: a slot to its right shifts down by one.
+                    to = i > from ? i - 1 : i;
+                    break;
+                }
+            }
+            if (to !== from) {
+                expectedIndex = to;
+                onReorderTab?.(from, to);
+            }
+        };
+        const onUp = () => cleanup();
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+    };
+
     return (
         <div
             className={`tab-bar${paneFilter ? ` tab-bar-pane-${paneFilter}` : ''}`}
@@ -272,20 +374,24 @@ export default function TabBar({
                     <div
                         key={tab.id}
                         data-tab-id={tab.id}
-                        className={`tab ${activeTabId === tab.id ? 'active' : ''} ${tab.isModified ? 'modified' : ''} ${tab.isPinned ? 'pinned' : ''}`}
+                        className={`tab ${activeTabId === tab.id ? 'active' : ''} ${tab.isModified ? 'modified' : ''} ${tab.isPinned ? 'pinned' : ''} ${draggingId === tab.id ? 'dragging' : ''}`}
                         onClick={() => onTabSelect(tab.id)}
                         onMouseDown={(e) => handleMouseDown(e, tab.id)}
                         onPointerDown={(e) => {
-                            // In split mode the cross-pane drag
-                            // handler takes priority; the existing
-                            // VS-shell pop-out drag still runs
-                            // afterwards because the threshold/up
-                            // listeners are document-scoped and the
-                            // shell's drag tracker is unaffected.
+                            // Split mode keeps the existing cross-pane
+                            // drag (+ pop-out) path. In single-pane
+                            // mode, reorder OWNS the gesture and decides
+                            // internally whether to reposition the tab
+                            // or hand off to pop-out, so we must not also
+                            // fire onTabPointerDown here.
                             if (paneFilter && onDropTabIntoPane) {
                                 onTabPointerDownInternal(e, tab.id);
+                                onTabPointerDown?.(e, tab.id);
+                            } else if (onReorderTab) {
+                                startReorderGesture(e, tab.id);
+                            } else {
+                                onTabPointerDown?.(e, tab.id);
                             }
-                            onTabPointerDown?.(e, tab.id);
                         }}
                         onContextMenu={(e) => handleContextMenu(e, tab)}
                         onDoubleClick={(e) => handleDoubleClick(e, tab.id)}
@@ -449,6 +555,21 @@ export function createStudioTab(): EditorTab {
         isModified: false,
         isPinned: false,
         tabType: 'studio',
+    };
+}
+
+let animStudioCounter = 0;
+export function createAnimStudioTab(): EditorTab {
+    animStudioCounter += 1;
+    const n = animStudioCounter;
+    return {
+        id: generateTabId(),
+        filePath: null,
+        fileName: n === 1 ? 'Anim Studio' : `Anim Studio ${n}`,
+        content: '',
+        isModified: false,
+        isPinned: false,
+        tabType: 'animstudio',
     };
 }
 

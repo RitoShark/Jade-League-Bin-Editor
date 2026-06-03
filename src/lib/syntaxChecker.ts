@@ -19,7 +19,7 @@
  *  - Material override link pointing to a non-existent material in the file
  */
 
-export type SyntaxSeverity = 'error' | 'warning';
+export type SyntaxSeverity = 'error' | 'warning' | 'info';
 
 export interface SyntaxError {
   line: number;      // 1-based
@@ -1059,12 +1059,18 @@ function checkSemanticWarnings(lines: string[]): SyntaxError[] {
     }
 
     if (rawTextureLine && hasOverrideList) {
+      // Info, not warning: a top-level raw texture alongside overrides is
+      // extremely common (basically every champion skin has it) and is
+      // usually correct — the overrides target specific submeshes while
+      // the raw texture covers the rest. Demoted to an info bulb so it
+      // stops nagging on every mat-override file. The per-submesh "raw
+      // texture + override on the SAME submesh" case (#5) stays a warning.
       warnings.push({
         line: rawTextureLine.line,
         column: rawTextureLine.col,
         length: rawTextureLine.len,
-        message: `File has a materialOverride — the raw texture here may take priority over the overrides. Make sure this is intended.`,
-        severity: 'warning',
+        message: `This whole-mesh texture coexists with a materialOverride. That's normal — overrides target specific submeshes; the raw texture covers the rest. Only an issue if an override and this texture both target the same submesh.`,
+        severity: 'info',
       });
     }
   }

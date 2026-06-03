@@ -8,8 +8,8 @@ use crate::core::mesh::texture_decode::decode_auto;
 use crate::core::mesh::{
     find_skin_bin, parse_anm, parse_scb, parse_skl, parse_skn, parse_sco,
     read_skin_textures_for_skn, read_skin_textures_for_skn_disk, read_skn_animations,
-    read_skn_animations_disk, AnimationListing, BakedAnimation, SkinBinMatch, SklSkeleton,
-    SknMesh, StaticMesh,
+    read_skn_animations_disk, write_anm_v4, AnimationListing, BakedAnimation, SkinBinMatch,
+    SklSkeleton, SknMesh, StaticMesh,
 };
 use crate::core::mesh::fbx::{parse_static_fbx, FbxSceneDTO};
 use crate::core::wad::{read_chunk_decompressed_bytes, with_mount};
@@ -365,6 +365,70 @@ pub async fn read_animation(path: String) -> Result<BakedAnimation, String> {
     Ok(baked)
 }
 
+/// Bake a `BakedAnimation` to disk as a v4 uncompressed ANM file.
+///
+/// Used by the Animation Studio's bake-and-write pipeline — the
+/// frontend retargets the source clip in JS (per-frame TRS rewrite
+/// against the target rig), then ships the resulting DTO here for
+/// the Rust v4 writer to serialise. Round-trips losslessly back
+/// through `read_animation`.
+///
+/// - `path`: where to write. Caller is responsible for ensuring the
+///   parent directory exists.
+/// - `baked`: the already-retargeted animation (target hashes, target
+///   bone count, target-rig translations + rotations).
+/// - `backup_existing`: when true, an existing file at `path` is
+///   renamed to `<path>.bak` (overwriting any prior `.bak`) before
+///   the write. Off = silently overwrite.
+#[tauri::command]
+pub async fn write_animation_v4(
+    path: String,
+    baked: BakedAnimation,
+    backup_existing: bool,
+) -> Result<u64, String> {
+    let pb = PathBuf::from(&path);
+    let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        write_anm_v4(&baked).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("ANM write task join failed: {e}"))??;
+
+    // Backup-existing happens AFTER serialisation succeeds — we
+    // don't want to rename the old file out of the way and then
+    // fail to write the new one, leaving the user with nothing at
+    // the canonical path.
+    if backup_existing && pb.exists() {
+        let mut backup = pb.clone();
+        let new_name = format!(
+            "{}.bak",
+            pb.file_name().and_then(|s| s.to_str()).unwrap_or("anm"),
+        );
+        backup.set_file_name(new_name);
+        // Remove an existing `.bak` first — `rename` will fail on
+        // Windows if the destination already exists.
+        if backup.exists() {
+            let _ = std::fs::remove_file(&backup);
+        }
+        std::fs::rename(&pb, &backup)
+            .map_err(|e| format!("backup '{}' → '{}': {}", pb.display(), backup.display(), e))?;
+    }
+
+    // Ensure the parent folder exists — the default suggested path
+    // is `<target>/animations/<clip>`, and a fresh mod won't have
+    // an animations/ folder yet. mkdir -p semantics.
+    if let Some(parent) = pb.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create dir '{}': {}", parent.display(), e))?;
+        }
+    }
+
+    let len = bytes.len() as u64;
+    std::fs::write(&pb, &bytes)
+        .map_err(|e| format!("write ANM '{}': {}", pb.display(), e))?;
+    Ok(len)
+}
+
 /// Disk-source counterpart of [`wad_read_skn_animations`]. Walks up
 /// from the SKN path to find the skin BIN and animation BIN on disk,
 /// returning the same listing shape — except clips carry
@@ -423,6 +487,7 @@ pub async fn read_skn_animations_disk_cmd(
 #[tauri::command]
 pub async fn read_skn_textures_disk(
     skn_path: String,
+    submesh_names: Option<Vec<String>>,
 ) -> Result<Option<SknTextureBindings>, String> {
     let map = tokio::task::spawn_blocking({
         let p = skn_path.clone();
@@ -458,8 +523,71 @@ pub async fn read_skn_textures_disk(
     // hue-placeholder fallback.
     let scan_default = scan_sibling_default_texture(&skn_path);
 
+    // Sibling `.tex`/`.dds` candidates for per-submesh NAME matching.
+    // This is what lets a "Weapon" submesh find `..._weapon_tx_cm.tex`
+    // even with no BIN (or a BIN whose material names don't line up).
+    // Without it, every submesh fell through to `scan_default` — i.e.
+    // the body texture got slapped on the weapon, fish, etc.
+    let sibling_candidates = gather_sibling_tex_candidates(&skn_path);
+    // Noise tokens that carry no submesh identity: the SKN's own stem
+    // tokens (e.g. `jax`, `base`, `skin14`) plus universal texture
+    // suffixes. Excluding these stops "Weapon" from tying on the shared
+    // `jax`/`base`/`tx`/`cm` tokens that EVERY sibling texture has.
+    let skn_stem = std::path::Path::new(&skn_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let mut noise: Vec<String> = tokenize(&skn_stem);
+    for t in ["tx", "cm", "tex", "dds", "diffuse", "dx9", "dx11", "mat", "material", "color", "albedo", "base", "main"] {
+        noise.push(t.to_string());
+    }
+    let match_by_name = |name: &str| -> Option<String> {
+        // Token-overlap scorer first (handles "Bluefish" → `..._fish_tx`),
+        // then the legacy exact/strip/whole-string cascade as a backstop.
+        match_submesh_token(&sibling_candidates, name, &noise)
+            .or_else(|| {
+                let n = name.to_lowercase();
+                match_exact(&sibling_candidates, &n)
+                    .or_else(|| match_strip_digits(&sibling_candidates, &n))
+                    .or_else(|| match_fuzzy(&sibling_candidates, &n))
+            })
+            .map(|(p, _)| p)
+    };
+
     let Some(map) = map else {
-        eprintln!("[textures] no BIN map; scan_default={:?}", scan_default);
+        eprintln!(
+            "[textures] no BIN map; scan_default={:?}, submeshes={:?}",
+            scan_default, submesh_names
+        );
+        // No BIN: synthesize a binding per submesh by name-matching the
+        // sibling textures. Each submesh keeps its own best match and
+        // only falls back to the folder default when nothing matches.
+        if let Some(names) = submesh_names.filter(|n| !n.is_empty()) {
+            let bindings: Vec<TextureBinding> = names
+                .into_iter()
+                .map(|name| {
+                    let path = match_by_name(&name).or_else(|| scan_default.clone());
+                    TextureBinding {
+                        texture_disk_path: path,
+                        chunk_hash_hex: None,
+                        material: name,
+                        texture_path: String::new(),
+                    }
+                })
+                .collect();
+            return Ok(Some(SknTextureBindings {
+                bin_path: String::new(),
+                bin_path_hash_hex: format!("{:016x}", 0u64),
+                default_texture: None,
+                default_chunk_hash_hex: None,
+                default_texture_disk_path: scan_default,
+                bindings,
+                shadow_texture: None,
+                shadow_chunk_hash_hex: None,
+            }));
+        }
+        // No submesh names supplied — fall back to the single default.
         if let Some(default_disk) = scan_default {
             return Ok(Some(SknTextureBindings {
                 bin_path: String::new(),
@@ -485,11 +613,13 @@ pub async fn read_skn_textures_disk(
         .materials
         .into_iter()
         .map(|m| {
-            let resolved = resolve(&m.texture_path);
-            // If the BIN-referenced path didn't resolve to a real file,
-            // surface the folder-scan default so the frontend's
-            // per-submesh binding still has something paintable.
-            let final_path = resolved.or_else(|| scan_default.clone());
+            // Tiered: BIN-referenced path → sibling name-match on the
+            // material name → folder default. The name-match tier is
+            // what stops a renamed-but-unmatched submesh from grabbing
+            // the body texture when a same-named sibling exists.
+            let final_path = resolve(&m.texture_path)
+                .or_else(|| match_by_name(&m.material))
+                .or_else(|| scan_default.clone());
             TextureBinding {
                 texture_disk_path: final_path,
                 chunk_hash_hex: None,
@@ -516,6 +646,38 @@ pub async fn read_skn_textures_disk(
         shadow_texture: map.shadow_texture,
         shadow_chunk_hash_hex: None,
     }))
+}
+
+/// Collect sibling `.tex`/`.dds` files next to the SKN as match
+/// candidates `(absolute_path, lowercased_stem, 0)`. The trailing `0`
+/// is an unused hash slot so the same `match_*` cascade the WAD path
+/// uses works unchanged on disk.
+fn gather_sibling_tex_candidates(skn_path: &str) -> Vec<(String, String, u64)> {
+    let folder = match std::path::Path::new(skn_path).parent() {
+        Some(p) => p.to_path_buf(),
+        None => return Vec::new(),
+    };
+    let read_dir = match std::fs::read_dir(&folder) {
+        Ok(rd) => rd,
+        Err(_) => return Vec::new(),
+    };
+    let mut candidates = Vec::new();
+    for entry in read_dir.flatten() {
+        let p = entry.path();
+        let lower_name = match p.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_lowercase(),
+            None => continue,
+        };
+        if !(lower_name.ends_with(".tex") || lower_name.ends_with(".dds")) {
+            continue;
+        }
+        let stem = match lower_name.rfind('.') {
+            Some(i) => lower_name[..i].to_string(),
+            None => continue,
+        };
+        candidates.push((p.to_string_lossy().into_owned(), stem, 0u64));
+    }
+    candidates
 }
 
 /// Pick a fallback default texture for an SKN that has no sibling
@@ -2122,6 +2284,77 @@ fn match_fuzzy(candidates: &[(String, String, u64)], name: &str) -> Option<(Stri
         .iter()
         .find(|(_, stem, _)| stem.contains(name) || name.contains(stem.as_str()))
         .map(|(p, _, h)| (p.clone(), *h))
+}
+
+/// Split an identifier into lowercase alphanumeric tokens, also
+/// splitting camelCase boundaries (so `BlueFish` → `blue`, `fish`).
+fn tokenize(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut prev_lower = false;
+    for ch in s.chars() {
+        if ch.is_ascii_alphanumeric() {
+            // camelCase boundary: lower→Upper starts a new token.
+            if ch.is_ascii_uppercase() && prev_lower && !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+            cur.push(ch.to_ascii_lowercase());
+            prev_lower = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        } else if !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+            prev_lower = false;
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Per-submesh texture matcher via distinctive-token overlap. Scores
+/// each sibling texture by the longest meaningful token shared with the
+/// submesh name (substring either way, so `Bluefish` matches a
+/// `..._fish_tx_cm` texture), ignoring `noise` tokens (the SKN stem +
+/// universal suffixes like `tx`/`cm`). The highest score wins; ties
+/// keep the first candidate. Returns `None` if nothing distinctive
+/// overlaps — the caller then falls back to the legacy cascade / folder
+/// default rather than mis-assigning.
+fn match_submesh_token(
+    candidates: &[(String, String, u64)],
+    submesh: &str,
+    noise: &[String],
+) -> Option<(String, u64)> {
+    let is_noise = |t: &str| t.len() < 3 || noise.iter().any(|n| n == t);
+    let sub_lower = submesh.to_lowercase();
+    let sub_tokens = tokenize(submesh);
+
+    let mut best: Option<(usize, &(String, String, u64))> = None;
+    for cand in candidates {
+        let mut score = 0usize;
+        // Distinctive token of the texture stem appearing in the submesh
+        // name (catches `fish` inside `bluefish`).
+        for tok in tokenize(&cand.1) {
+            if is_noise(&tok) {
+                continue;
+            }
+            if sub_lower.contains(&tok) {
+                score = score.max(tok.len());
+            }
+        }
+        // …and the reverse: a submesh-name token appearing in the stem.
+        for tok in &sub_tokens {
+            if is_noise(tok) {
+                continue;
+            }
+            if cand.1.contains(tok.as_str()) {
+                score = score.max(tok.len());
+            }
+        }
+        if score > 0 && best.map_or(true, |(bs, _)| score > bs) {
+            best = Some((score, cand));
+        }
+    }
+    best.map(|(_, c)| (c.0.clone(), c.2))
 }
 
 fn pick_main_texture(

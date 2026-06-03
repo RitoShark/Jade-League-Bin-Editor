@@ -3,6 +3,7 @@ import type { Monaco } from '@monaco-editor/react';
 import type * as MonacoType from 'monaco-editor';
 import type { EditorTab } from '../components/TabBar';
 import type { StudioScene } from '../lib/babylon/studioScene';
+import type { AnimStudioScene } from '../lib/babylon/animStudioScene';
 
 export type PerfMode = 'on' | 'auto' | 'off';
 export type PerfKey =
@@ -70,6 +71,9 @@ export interface ShellContextValue {
     onTabClose: (id: string) => void;
     onTabCloseAll: () => void;
     onTabPin: (id: string) => void;
+    /** Reposition a tab within the single-pane strip — `from`/`to` are
+     *  indices into the `tabs` array. Drives VS-style drag-to-reorder. */
+    onTabReorder: (from: number, to: number) => void;
 
     // -- Status / metrics
     statusText: string;
@@ -123,6 +127,14 @@ export interface ShellContextValue {
      *  count + any per-file failures. */
     onSaveAll: () => void;
     onOpenLog: () => void;
+    /** Open an `.animstudio.json` scene into the currently-active
+     *  Animation Studio tab. No-op when the active tab isn't an
+     *  Animation Studio tab. Lives in File menu — moved out of the
+     *  Options panel so scene IO sits next to other File ops. */
+    onOpenAnimStudioScene: () => Promise<void>;
+    /** Save the active Animation Studio tab's scene to disk. No-op
+     *  when the active tab isn't an Animation Studio tab. */
+    onSaveAnimStudioScene: () => Promise<void>;
 
     // -- Edit operations
     onUndo: () => void;
@@ -261,6 +273,9 @@ export interface ShellContextValue {
     //    capture) read the active tab's scene off this map and mutate
     //    it directly — no prop drilling through the shell.
     onNewStudioScene: () => void;
+    /** Spawn a fresh Animation Studio tab. Used by the Welcome
+     *  screen tile and File menu entry. */
+    onNewAnimStudioScene: () => void;
     /** Viewer → editor handoff. The Viewer's "Open in BIN editor"
      *  button calls this with the already-converted BIN text + the
      *  display name. App.tsx implements it by creating a fresh tab. */
@@ -284,6 +299,20 @@ export interface ShellContextValue {
     notifyStudioDirty: (tabId: string, dirty: boolean) => void;
     registerStudioScene: (tabId: string, scene: StudioScene) => void;
     unregisterStudioScene: (tabId: string) => void;
+    /** Animation Studio scene registry — mirrors the Photo Studio
+     *  pattern. The AnimStudio tab body registers its scene on mount;
+     *  panels resolve by tabId. */
+    registerAnimStudioScene: (tabId: string, scene: AnimStudioScene) => void;
+    unregisterAnimStudioScene: (tabId: string) => void;
+    getAnimStudioScene: (tabId: string) => AnimStudioScene | null;
+    /** Open a `.skn` as either source or target in a new Animation
+     *  Studio tab. Used by File Explorer right-click + Pose-panel link. */
+    onOpenAnimStudio: (sknPath: string, side: 'source' | 'target') => void;
+    /** Load a `.anm` into the active (or most-recent) Animation
+     *  Studio tab as the source clip. Spawns a new tab if none
+     *  exists. The user normally has a target SKN already loaded —
+     *  but the playback works with just a clip + source SKN too. */
+    onLoadAnimStudioClip: (anmPath: string) => void;
     /** Resolves the scene handle for `tabId`, or `null` if the tab
      *  isn't a studio tab or hasn't mounted its canvas yet. */
     getStudioScene: (tabId: string) => StudioScene | null;
@@ -301,6 +330,23 @@ export interface ShellContextValue {
     setStudioMeshOpen: (open: boolean) => void;
     setStudioObjectsOpen: (open: boolean) => void;
     setStudioSpotlightOpen: (open: boolean) => void;
+    /** Animation Studio panel open state — same defaults / pattern
+     *  as Photo Studio. Persisted across sessions via the
+     *  ToolLayout's localStorage entry. */
+    animStudioOptionsOpen: boolean;
+    animStudioMappingOpen: boolean;
+    animStudioRigOpen: boolean;
+    animStudioGuidesOpen: boolean;
+    animStudioPhysicsOpen: boolean;
+    animStudioMeshOpen: boolean;
+    animStudioExportOpen: boolean;
+    setAnimStudioOptionsOpen: (open: boolean) => void;
+    setAnimStudioMappingOpen: (open: boolean) => void;
+    setAnimStudioRigOpen: (open: boolean) => void;
+    setAnimStudioGuidesOpen: (open: boolean) => void;
+    setAnimStudioPhysicsOpen: (open: boolean) => void;
+    setAnimStudioMeshOpen: (open: boolean) => void;
+    setAnimStudioExportOpen: (open: boolean) => void;
     /** Photo dimensions — owned here so the StudioTab can overlay a
      *  framing box on the viewport showing what the capture will
      *  include given the current W/H. The actions panel writes; the

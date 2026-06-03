@@ -17,6 +17,9 @@ import {
     Boxes,
     Clapperboard,
     FileText,
+    FileCode,
+    FileBraces,
+    Camera,
     Mic,
     BookAudio,
     Volume2,
@@ -208,6 +211,17 @@ export function FileTypeIcon({
     size = 16,
 }: { extension?: string; fileName?: string; size?: number }) {
     const lower = (extension ?? '').toLowerCase();
+    const nameLower = (fileName ?? '').toLowerCase();
+    // Studio scene files carry double extensions (`.studio.json` /
+    // `.animstudio.json`) and get the icon of the editor tab they open
+    // into, not the generic JSON glyph. Check `.animstudio.json` first
+    // — it's a more specific suffix.
+    if (nameLower.endsWith('.animstudio.json')) {
+        return <Clapperboard width={size} height={size} strokeWidth={1.8} aria-hidden="true" />;
+    }
+    if (nameLower.endsWith('.studio.json')) {
+        return <Camera width={size} height={size} strokeWidth={1.8} aria-hidden="true" />;
+    }
     if (fileName) {
         const audio = getAudioIconForFileName(fileName);
         if (audio) {
@@ -217,6 +231,14 @@ export function FileTypeIcon({
     }
     if (lower === 'dds' || lower === 'tex' || lower === 'png' || lower === 'jpg' || lower === 'jpeg' || lower === 'bmp' || lower === 'webp' || lower === 'gif') {
         return <ExplorerTextureIcon size={size} />;
+    }
+    // BIN + JSON use plain Lucide glyphs (matching the original Welcome
+    // screen look) rather than the page-and-badge FormatIcon.
+    if (lower === 'bin') {
+        return <FileCode width={size} height={size} strokeWidth={1.8} aria-hidden="true" />;
+    }
+    if (lower === 'json') {
+        return <FileBraces width={size} height={size} strokeWidth={1.8} aria-hidden="true" />;
     }
     if (getFormatConfig(lower).glyph) {
         return <FormatIcon extension={lower} size={size} />;

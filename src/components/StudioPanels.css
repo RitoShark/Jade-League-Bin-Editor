@@ -656,19 +656,82 @@
 
 .studio-mesh-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 8px;
+    /* Smaller minimum so a wide bottom-dock panel fits more cards
+       per row. Reads cleanly on 1200 px+ docks; collapses to 2-3
+       cols on narrow side docks. */
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 6px;
 }
 
 .studio-mesh-card {
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid #3E3E42;
     border-radius: var(--border-radius, 4px);
-    padding: 8px 10px;
+    /* Tightened padding so cards take less vertical space — the
+       Texture / Flip / Action buttons already wrap their own space. */
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+    /* Inherit the panel's font stack (Segoe UI). Cards used to fall
+       through to the OS-default sans which read differently from
+       the rest of the app. */
+    font-family: inherit;
+    font-size: 11.5px;
+    color: var(--text-color, #cccccc);
+}
+
+/* Hidden submesh: dim the whole card so it reads as "off" at a
+   glance without a tiny checkbox to scan for. The card stays
+   clickable (clicking restores visibility). */
+.studio-mesh-card.is-hidden {
+    opacity: 0.42;
+    background: transparent;
+}
+
+/* Visible submesh: subtle accent tint to make the active state
+   visible in a row of mixed cards. */
+.studio-mesh-card.is-visible:hover {
+    border-color: color-mix(in srgb, var(--jade-accent, #007acc) 50%, var(--border-color, #3e3e42));
+}
+
+.studio-mesh-card.is-hidden:hover {
+    opacity: 0.65;
+}
+
+[data-ui-mode="modern"] .studio-mesh-card.is-visible {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+[data-ui-mode="modern"] .studio-mesh-card.is-hidden {
+    background: rgba(255, 255, 255, 0.02);
+    opacity: 0.5;
+}
+
+/* Anim Studio mesh panel — wraps the side sections with small
+   headers so users can tell which rig they're editing. */
+.anim-mesh-section {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    min-width: 0;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-color, #3e3e42);
+}
+.anim-mesh-section:last-child {
+    border-bottom: none;
+}
+[data-ui-mode="modern"] .anim-mesh-section {
+    border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+.anim-mesh-section-head {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary, #9DA5B4);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
 
 .studio-mesh-vis {
@@ -688,7 +751,10 @@
 }
 
 .studio-mesh-name {
-    font-weight: 500;
+    font-family: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text-color, #cccccc);
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -725,12 +791,15 @@
 
 .studio-mesh-badge {
     align-self: flex-start;
-    padding: 2px 7px;
-    font-size: 10px;
+    padding: 2px 6px;
+    font-size: 9.5px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    border-radius: 10px;
+    /* Less-round than before. The full pill (border-radius: 10px)
+       and modern 999px overrides drifted from the rest of the
+       app's button + chip family which sit at ~3-5px. */
+    border-radius: var(--border-radius, 3px);
     border: 1px solid transparent;
 }
 
@@ -1086,7 +1155,7 @@
 }
 
 [data-ui-mode="modern"] .studio-mesh-badge {
-    border-radius: 999px;
+    border-radius: 5px;
 }
 
 [data-ui-mode="modern"] .studio-mesh-vis input[type="checkbox"] {
@@ -1113,4 +1182,1202 @@
 .studio-fetch-anim-btn:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+}
+
+/* ── Animation Studio panels (Guides / Physics / Mapping / Rig) ───
+   Shared chrome so all five anim-studio panels visually match the
+   Photo-Studio panels in both classic and modern UI modes. The
+   anim panels are denser (many small per-bone rows) than Photo
+   Studio's cards, so we get tighter padding + smaller font sizes
+   while keeping the same colour tokens, focus borders, and
+   modern-mode glass treatments. */
+
+.anim-panel-section {
+    display: flex;
+    flex-direction: column;
+    border-bottom: 1px solid var(--border-color, #3e3e42);
+}
+
+.anim-panel-section + .anim-panel-section {
+    margin-top: 4px;
+}
+
+.anim-panel-section:last-child {
+    border-bottom: none;
+}
+
+[data-ui-mode="modern"] .anim-panel-section {
+    border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+
+.anim-section-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 4px 6px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary, #9DA5B4);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.anim-section-head .anim-section-title {
+    flex: 1 1 auto;
+}
+
+.anim-add-btn {
+    height: 24px;
+    padding: 0 10px;
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--text-color, #cccccc);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 3px);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color 120ms ease, border-color 120ms ease;
+    white-space: nowrap;
+}
+
+.anim-add-btn:hover {
+    background: var(--selected-tab-bg, #2a2d2e);
+    border-color: var(--vscode-focusBorder, #007acc);
+}
+
+.anim-add-btn.active {
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 25%, transparent);
+    border-color: var(--jade-accent, #007acc);
+    color: var(--text-primary, #ffffff);
+}
+
+[data-ui-mode="modern"] .anim-add-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+    transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+[data-ui-mode="modern"] .anim-add-btn:hover {
+    background: var(--modern-accent-15);
+    border-color: var(--jade-accent);
+}
+
+[data-ui-mode="modern"] .anim-add-btn.active {
+    background: var(--modern-accent-25);
+    border-color: var(--jade-accent);
+}
+
+/* Search + filter chip row */
+.anim-filter-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 4px;
+    border-bottom: 1px solid var(--border-color, #3e3e42);
+}
+
+[data-ui-mode="modern"] .anim-filter-row {
+    border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+
+.anim-chip {
+    padding: 3px 9px;
+    font-size: 10.5px;
+    font-family: inherit;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--text-color, #cccccc);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 3px);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.anim-chip:hover:not(:disabled) {
+    background: var(--selected-tab-bg, #2a2d2e);
+    border-color: var(--vscode-focusBorder, #007acc);
+}
+
+.anim-chip.active {
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 25%, transparent);
+    border-color: var(--jade-accent, #007acc);
+    color: var(--text-primary, #ffffff);
+}
+
+.anim-chip:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+[data-ui-mode="modern"] .anim-chip {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+    transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+/* Pill variant for Bone Rig filter chips — kept fully rounded as a
+   filter-chip affordance (the user explicitly wanted pills there). */
+.anim-chip-pill {
+    border-radius: 11px;
+}
+[data-ui-mode="modern"] .anim-chip-pill {
+    border-radius: 999px;
+}
+
+[data-ui-mode="modern"] .anim-chip:hover:not(:disabled) {
+    background: var(--modern-accent-15);
+    border-color: var(--jade-accent);
+}
+
+[data-ui-mode="modern"] .anim-chip.active {
+    background: var(--modern-accent-25);
+    border-color: var(--jade-accent);
+}
+
+/* Physics chain solver toggle (Simple / Havok) — segmented control. */
+.anim-solver-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 4px 0 6px;
+}
+.anim-solver-label {
+    font-size: 10.5px;
+    color: var(--text-muted, #8a8a8a);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.anim-solver-toggle {
+    display: inline-flex;
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 3px);
+    overflow: hidden;
+}
+.anim-solver-btn {
+    padding: 3px 12px;
+    font-size: 10.5px;
+    font-family: inherit;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--text-color, #cccccc);
+    border: 0;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+}
+.anim-solver-btn + .anim-solver-btn {
+    border-left: 1px solid var(--vscode-input-border, #3c3c3c);
+}
+.anim-solver-btn:hover:not(.is-on) {
+    background: var(--selected-tab-bg, #2a2d2e);
+}
+.anim-solver-btn.is-on {
+    background: var(--jade-accent, #007acc);
+    color: var(--jade-accent-text, #ffffff);
+}
+[data-ui-mode="modern"] .anim-solver-toggle {
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+}
+[data-ui-mode="modern"] .anim-solver-btn {
+    background: rgba(255, 255, 255, 0.05);
+}
+[data-ui-mode="modern"] .anim-solver-btn + .anim-solver-btn {
+    border-left-color: rgba(255, 255, 255, 0.10);
+}
+[data-ui-mode="modern"] .anim-solver-btn.is-on {
+    background: var(--jade-accent);
+    color: var(--jade-accent-text, #ffffff);
+}
+
+.anim-count-chip {
+    padding: 2px 8px;
+    font-size: 10px;
+    color: var(--text-secondary, #9DA5B4);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 3px);
+    font-variant-numeric: tabular-nums;
+}
+
+[data-ui-mode="modern"] .anim-count-chip {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+}
+
+/* Compact search input used inside add / filter rows.
+   Hard-capped height: every base + modern rule in the cascade
+   uses !important to defeat the modern `.mop-input { height: 30px
+   !important }` cascade if a future variant accidentally inherits it. */
+.anim-search {
+    flex: 1 1 120px;
+    min-width: 0;
+    height: 24px !important;
+    min-height: 24px;
+    max-height: 24px;
+    padding: 2px 8px !important;
+    background-color: var(--vscode-input-background, #3c3c3c);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 3px);
+    color: var(--vscode-input-foreground, #cccccc);
+    font-size: 11px;
+    font-family: inherit;
+    outline: none;
+    box-sizing: border-box;
+    flex-shrink: 0;
+}
+
+.anim-search:focus {
+    outline: 1px solid var(--vscode-focusBorder, #007acc);
+    outline-offset: -1px;
+}
+
+[data-ui-mode="modern"] .anim-search {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+    height: 26px !important;
+    min-height: 26px;
+    max-height: 26px;
+    box-shadow: none !important;
+}
+
+[data-ui-mode="modern"] .anim-search:focus {
+    border-color: var(--jade-accent) !important;
+    box-shadow: 0 0 0 1px var(--jade-accent) !important;
+}
+
+/* Add-bone / search picker block (inside add rows) */
+.anim-pick-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 4px;
+    border-bottom: 1px solid var(--border-color, #3e3e42);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+[data-ui-mode="modern"] .anim-pick-block {
+    background: rgba(255, 255, 255, 0.04);
+    border-bottom-color: rgba(255, 255, 255, 0.07);
+    border-radius: 0;
+}
+
+.anim-pick-list {
+    display: flex;
+    flex-direction: column;
+    max-height: 180px;
+    overflow-y: auto;
+    background: var(--vscode-input-background, #1e1e1e);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 3px);
+}
+
+.anim-pick-list::-webkit-scrollbar {
+    width: 4px;
+}
+.anim-pick-list::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb, #555);
+    border-radius: 2px;
+}
+
+[data-ui-mode="modern"] .anim-pick-list {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+}
+
+.anim-pick-item {
+    text-align: left;
+    padding: 4px 10px;
+    font-size: 11.5px;
+    background: transparent;
+    color: var(--text-color, #cccccc);
+    border: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color, #3e3e42) 35%, transparent);
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.anim-pick-item:hover {
+    background: var(--selected-tab-bg, #2a2d2e);
+}
+
+[data-ui-mode="modern"] .anim-pick-item {
+    border-bottom-color: rgba(255, 255, 255, 0.05);
+}
+
+[data-ui-mode="modern"] .anim-pick-item:hover {
+    background: var(--modern-accent-15);
+}
+
+.anim-pick-empty {
+    padding: 8px 10px;
+    color: var(--text-secondary, #9DA5B4);
+    font-size: 11px;
+    font-style: italic;
+}
+
+/* Vertical list of cards (guide rows, chain rows, etc.) */
+.anim-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 4px;
+}
+
+.anim-list::-webkit-scrollbar {
+    width: 4px;
+}
+.anim-list::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb, #555);
+    border-radius: 2px;
+}
+
+.anim-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 4px);
+}
+
+[data-ui-mode="modern"] .anim-card {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+}
+
+.anim-card-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--text-color, #cccccc);
+}
+
+.anim-card-title {
+    flex: 1 1 auto;
+    font-weight: 600;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.anim-card-sub {
+    font-size: 10px;
+    color: var(--text-secondary, #9DA5B4);
+    font-variant-numeric: tabular-nums;
+}
+
+.anim-mini-btn {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--text-secondary, #9DA5B4);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 3px);
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.anim-mini-btn:hover:not(:disabled) {
+    background: var(--selected-tab-bg, #2a2d2e);
+    border-color: var(--vscode-focusBorder, #007acc);
+    color: var(--text-primary, #d4d4d4);
+}
+
+.anim-mini-btn.active {
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 30%, transparent);
+    border-color: var(--jade-accent, #007acc);
+    color: #ffffff;
+}
+
+.anim-mini-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+[data-ui-mode="modern"] .anim-mini-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+    transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+[data-ui-mode="modern"] .anim-mini-btn:hover:not(:disabled) {
+    background: var(--modern-accent-15);
+    border-color: var(--jade-accent);
+}
+
+[data-ui-mode="modern"] .anim-mini-btn.active {
+    background: var(--modern-accent-25);
+    border-color: var(--jade-accent);
+}
+
+.anim-card-remove {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary, #9DA5B4);
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border-radius: 3px;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.anim-card-remove:hover {
+    background: rgba(244, 135, 113, 0.18);
+    color: #f48771;
+}
+
+/* Field rows inside a card (label + control(s)) */
+.anim-field-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    color: var(--text-color, #cccccc);
+}
+
+.anim-field-label {
+    width: 38px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary, #9DA5B4);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+
+/* Axis label group used in offset rows (X/Y/Z triples) */
+.anim-axis-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.anim-axis-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.anim-axis-letter {
+    font-size: 10px;
+    color: var(--text-secondary, #9DA5B4);
+    font-weight: 600;
+    width: 10px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.anim-axis-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 22px;
+    padding: 2px 5px;
+    background-color: var(--vscode-input-background, #3c3c3c);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 3px);
+    color: var(--vscode-input-foreground, #cccccc);
+    font-size: 10.5px;
+    font-family: inherit;
+    outline: none;
+    box-sizing: border-box;
+    font-variant-numeric: tabular-nums;
+}
+
+.anim-axis-input:focus {
+    outline: 1px solid var(--vscode-focusBorder, #007acc);
+    outline-offset: -1px;
+}
+
+[data-ui-mode="modern"] .anim-axis-input {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+    height: 24px;
+}
+
+/* Selects inside anim cards — compact variant of .studio-select */
+.anim-select {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 22px;
+    padding: 2px 6px;
+    background-color: var(--vscode-input-background, #3c3c3c);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 3px);
+    color: var(--vscode-input-foreground, #cccccc);
+    font-size: 10.5px;
+    font-family: inherit;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.anim-select:focus {
+    outline: 1px solid var(--vscode-focusBorder, #007acc);
+    outline-offset: -1px;
+}
+
+[data-ui-mode="modern"] .anim-select {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+    height: 24px;
+}
+
+/* Reset / inline secondary button */
+.anim-reset-btn {
+    height: 22px;
+    padding: 0 8px;
+    background: transparent;
+    color: var(--text-secondary, #9DA5B4);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 3px);
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color 120ms ease, color 120ms ease;
+    flex-shrink: 0;
+}
+
+.anim-reset-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary, #d4d4d4);
+}
+
+.anim-reset-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+[data-ui-mode="modern"] .anim-reset-btn {
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+}
+
+[data-ui-mode="modern"] .anim-reset-btn:hover:not(:disabled) {
+    background: var(--modern-accent-15);
+    border-color: var(--jade-accent);
+}
+
+/* Slider row used in Physics panel */
+.anim-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    color: var(--text-color, #cccccc);
+}
+
+.anim-slider-row input[type='range'] {
+    flex: 1 1 auto;
+    min-width: 0;
+    accent-color: var(--jade-accent);
+    margin: 0;
+}
+
+.anim-slider-value {
+    width: 38px;
+    text-align: right;
+    color: var(--text-color, #cccccc);
+    font-variant-numeric: tabular-nums;
+    font-size: 10.5px;
+}
+
+/* Empty state — italic muted block */
+.anim-empty {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary, #9DA5B4);
+    font-size: 12px;
+    font-style: italic;
+    padding: 24px;
+    text-align: center;
+}
+
+/* Experimental-feature warning banner (Physics panel). Amber-tinted so
+   it reads as "caution", and sits above all panel content. */
+/* ── Export panel: mode tabs ── */
+.anim-export-tabs {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--border-color, #3e3e42);
+}
+.anim-export-tab {
+    padding: 5px 14px;
+    font-size: 11.5px;
+    font-family: inherit;
+    background: transparent;
+    color: var(--text-secondary, #9DA5B4);
+    border: 0;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    margin-bottom: -1px;
+}
+.anim-export-tab:hover { color: var(--text-color, #ccc); }
+.anim-export-tab.is-on {
+    color: var(--text-color, #fff);
+    border-bottom-color: var(--jade-accent, #007acc);
+}
+
+/* ── Batch table ── */
+.anim-batch-hint {
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: var(--text-secondary, #9DA5B4);
+    margin: 0 0 8px;
+}
+.anim-batch-table {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 3px);
+    overflow: visible;
+    margin-bottom: 8px;
+}
+.anim-batch-head {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr 28px;
+    gap: 6px;
+    align-items: center;
+    padding: 4px 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-muted, #8a8a8a);
+    border-bottom: 1px solid var(--border-color, #3e3e42);
+}
+.anim-batch-row {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr 28px;
+    gap: 6px;
+    align-items: center;
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color, #3e3e42) 50%, transparent);
+    transition: background-color 0.1s, opacity 0.1s;
+}
+.anim-batch-row:last-child { border-bottom: 0; }
+.anim-batch-row.is-enabled { background: color-mix(in srgb, var(--jade-accent, #007acc) 8%, transparent); }
+.anim-batch-row.is-disabled { opacity: 0.4; }
+.anim-batch-row:hover { background: var(--selected-tab-bg, rgba(255,255,255,0.05)); }
+.anim-batch-col-src { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.anim-batch-srcname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.anim-batch-col-tgt { min-width: 0; }
+.anim-batch-col-phys { display: flex; justify-content: center; }
+.anim-batch-status {
+    flex-shrink: 0;
+    font-size: 8.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+}
+.anim-batch-status-bin { color: #98c379; border-color: color-mix(in srgb, #98c379 45%, transparent); }
+.anim-batch-status-name { color: #e0a32e; border-color: color-mix(in srgb, #e0a32e 45%, transparent); }
+.anim-batch-status-unmatched { color: #e06c75; border-color: color-mix(in srgb, #e06c75 45%, transparent); }
+.anim-batch-results {
+    font-size: 11px;
+    color: var(--text-color, #ccc);
+    margin-top: 6px;
+}
+.anim-batch-errors {
+    margin: 4px 0 0;
+    padding-left: 16px;
+    font-size: 10px;
+    color: #e06c75;
+}
+
+.anim-experimental-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    margin: 0 0 10px;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-color, #cccccc);
+    background: color-mix(in srgb, #e0a32e 14%, transparent);
+    border: 1px solid color-mix(in srgb, #e0a32e 45%, transparent);
+    border-radius: var(--border-radius, 3px);
+}
+.anim-experimental-banner strong {
+    color: #f0b94a;
+}
+.anim-experimental-icon {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: #f0b94a;
+}
+[data-ui-mode="modern"] .anim-experimental-banner {
+    border-radius: 6px;
+}
+
+.anim-empty-block {
+    padding: 10px 12px;
+    color: var(--text-secondary, #9DA5B4);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.anim-empty-block p {
+    margin: 0;
+}
+
+.anim-empty-block p + p {
+    margin-top: 6px;
+    opacity: 0.7;
+}
+
+/* Bone-pill chip (used inside chain bone editor) */
+.anim-bone-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    font-size: 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 3px);
+    color: var(--text-color, #cccccc);
+}
+
+.anim-bone-chip-idx {
+    opacity: 0.55;
+}
+
+.anim-bone-chip-x {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary, #9DA5B4);
+    cursor: pointer;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1;
+}
+
+.anim-bone-chip-x:hover {
+    color: #f48771;
+}
+
+[data-ui-mode="modern"] .anim-bone-chip {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+}
+
+/* Per-bone weight input (Havok mass multiplier). */
+.anim-bone-weight {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 10px;
+    color: var(--text-secondary, #9DA5B4);
+    flex-shrink: 0;
+}
+.anim-bone-weight input {
+    width: 42px;
+    padding: 1px 4px;
+    font-size: 10px;
+    font-family: inherit;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--text-color, #cccccc);
+    border: 1px solid var(--vscode-input-border, #3e3e42);
+    border-radius: var(--border-radius, 3px);
+}
+[data-ui-mode="modern"] .anim-bone-weight input {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+}
+
+/* Inline checkbox row */
+.anim-check-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    color: var(--text-color, #cccccc);
+    cursor: pointer;
+    user-select: none;
+}
+
+.anim-check-row input[type='checkbox'] {
+    cursor: pointer;
+    width: 13px;
+    height: 13px;
+}
+
+[data-ui-mode="modern"] .anim-check-row input[type='checkbox'] {
+    accent-color: var(--jade-accent);
+}
+
+/* Footer strip used by Rig + others — armed status */
+.anim-footer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    font-size: 11px;
+    color: var(--text-color, #cccccc);
+    border-top: 1px solid var(--border-color, #3e3e42);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+[data-ui-mode="modern"] .anim-footer {
+    border-top-color: rgba(255, 255, 255, 0.07);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.anim-footer-armed {
+    color: var(--jade-accent-text, #8cc5ff);
+    font-weight: 600;
+}
+
+.anim-footer-hint {
+    opacity: 0.65;
+    font-style: italic;
+}
+
+/* Mini-viewport row used by Rig panel */
+.anim-vp-row {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.anim-vp-col {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+.anim-vp-divider {
+    width: 1px;
+    background: var(--border-color, #3e3e42);
+    flex: 0 0 auto;
+}
+
+[data-ui-mode="modern"] .anim-vp-divider {
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.anim-vp-label {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    padding: 1px 7px;
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--text-secondary, #9DA5B4);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: 3px;
+    pointer-events: none;
+    z-index: 1;
+}
+
+[data-ui-mode="modern"] .anim-vp-label {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 999px;
+}
+
+.anim-vp-canvas {
+    width: 100%;
+    height: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: block;
+    outline: none;
+}
+
+/* ── Anim panel root layout / chrome ────────────────────────────
+   Three independent modifier classes:
+     .anim-panel-flush   — kill .mop-content padding so sections butt
+                           up against the dock edges (Mapping, Rig,
+                           Guides, Physics).
+     .anim-panel-padded  — keep .mop-content padding but tighten it
+                           (Options' dense form layout).
+     .anim-panel-scroll  — let .mop-content scroll vertically when
+                           content is taller than the dock pane.
+   The flush + padded variants only set padding/gap; the scroll
+   variant only sets overflow. Apply them in combination. Without
+   this split, the Options panel (padded + scroll) couldn't reach
+   its bake button when docked at the bottom — earlier the flush
+   rule was clobbering the padded rule's padding because both
+   matched `.anim-panel-scroll .mop-content`. */
+
+/* Use higher specificity (.anim-panel-flush.mop-dialog) to beat
+   `[data-ui-mode="modern"] .mop-content`'s !important padding — both
+   are otherwise (0,2,0) which would leave us at the mercy of source
+   order, and the inherited 12px modern padding has been creeping
+   back in some build/HMR orderings. */
+.anim-panel-flush.mop-dialog .mop-content {
+    padding: 0 !important;
+    gap: 0 !important;
+}
+
+.anim-panel-padded.mop-dialog .mop-content {
+    padding: 10px !important;
+    gap: 10px !important;
+}
+
+/* Options-panel section grid. When the panel docks tall and narrow
+   (default inner-right), sections stack vertically. When docked
+   wide and short (inner-bottom — Options' default placement), the
+   grid auto-flows into multiple columns so the Rigs / Retarget /
+   Bake sections sit side-by-side instead of leaving big empty
+   stretches to the right of each row. */
+.anim-options-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 10px 14px;
+    align-content: start;
+}
+
+.anim-options-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.anim-options-section-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary, #9DA5B4);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Source / Target rig editor cards — always side-by-side, never
+   stacked. Each card takes half the row's width regardless of how
+   wide the Rigs grid column ends up being. `flex: 1 1 0` with no
+   wrap keeps them on the same line; `min-width: 0` lets the file-
+   name truncate with ellipsis instead of forcing the cards wider
+   than their container. */
+.anim-options-rigs-row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+}
+
+.anim-options-rigs-row > .anim-side-editor {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+/* Compact form-rows used for Root / Ground / Vertical-axis pickers
+   and the Vertical-offset input. Labels stay narrow + dropdowns
+   take the rest of the row, but the row itself never grows past
+   400 px so it sits cleanly next to other sections in the grid. */
+.anim-options-form-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 400px;
+}
+
+.anim-options-form-row > .studio-field-label {
+    flex: 0 0 110px;
+    min-width: 0;
+}
+
+/* Wide variant — fills the parent section's grid column. Used by
+   the Vertical Offset section where the input + mesh list look
+   visually undersized next to the full-width Retarget toggle
+   grid in the section above. */
+.anim-options-form-row--wide {
+    max-width: none;
+}
+
+/* Bake row caps so it doesn't span a horizontal panel's full
+   width — a 1200px-wide path field is just empty space. */
+.anim-options-bake-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 480px;
+}
+
+.anim-options-mesh-list {
+    /* Match the wider form-row so the "Apply offset to:" list
+       lines up flush with the Offset (Y) input above it. */
+    max-width: none;
+    width: 100%;
+}
+
+.anim-panel-scroll {
+    overflow: hidden; /* the inner .mop-content owns the scrollbar */
+}
+
+.anim-panel-scroll .mop-content {
+    overflow-y: auto;
+    /* Without min-height: 0 the flex parent refuses to let the inner
+       scroll container be smaller than its content. Result: the
+       outer dock pane scrolls instead, which clips the panel's
+       sticky bottom controls (e.g. Options' bake button). */
+    min-height: 0;
+}
+
+/* Match the File Explorer + Photo Studio panel surface so the
+   workspace reads as a single chrome stack instead of mixing
+   tab-bg / editor-bg shades. `--window-bg` lands on ~#0F1928 in
+   Calm Sea (the chrome shade the user wants). Both classic and
+   modern UI modes use the same token here — modern mode already
+   handles backdrop blur via the .mop-dialog rule. */
+.anim-panel-flush.studio-panel,
+.anim-panel-padded.studio-panel {
+    background: var(--window-bg) !important;
+}
+
+[data-ui-mode="modern"] .anim-panel-flush.studio-panel,
+[data-ui-mode="modern"] .anim-panel-padded.studio-panel {
+    background: var(--window-bg) !important;
+}
+
+/* ── Animation Studio scrubber strip ───────────────────────────────
+   Sits at the bottom of the Animation Studio tab body. Same visual
+   family as the panel chrome: input-bg surface, jade-accent for
+   active states, modern-mode glass treatment. */
+
+.anim-scrubber {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-top: 1px solid var(--border-color, #3e3e42);
+    /* Match the surrounding panel chrome (--window-bg) so the strip
+       reads as part of the same surface stack, not a tab-bg island. */
+    background: var(--window-bg);
+    color: var(--text-color, #cccccc);
+    flex: 0 0 auto;
+    font-size: 12px;
+}
+
+[data-ui-mode="modern"] .anim-scrubber {
+    border-top-color: rgba(255, 255, 255, 0.07);
+    background: var(--window-bg);
+    backdrop-filter: saturate(180%) blur(18px);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+}
+
+/* Reuse studio-icon-btn for the play/loop/speed/clear buttons but
+   in a 26px height variant for the strip. */
+.anim-scrubber .studio-icon-btn {
+    height: 26px;
+    width: auto;
+    min-width: 30px;
+    padding: 0 8px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Range slider — match panel sliders (jade accent on the track
+   thumb). */
+.anim-scrubber input[type='range'] {
+    accent-color: var(--jade-accent);
+    margin: 0;
+    height: 18px;
+}
+
+.anim-scrubber-time {
+    color: var(--text-secondary, #9DA5B4);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    min-width: 110px;
+    text-align: center;
+}
+
+.anim-scrubber-clip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 3px);
+    color: var(--text-color, #cccccc);
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+}
+
+[data-ui-mode="modern"] .anim-scrubber-clip {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+}
+
+.anim-scrubber-clip-empty {
+    opacity: 0.55;
+    font-style: italic;
+}
+
+/* Loop button: dim when off, full opacity when on. */
+.anim-scrubber-loop.is-off {
+    opacity: 0.45;
+}
+
+/* A/B offset reset button: when the user hasn't engaged A/B mode
+   (offset = 0), the button stays present but reads as inactive. */
+.anim-scrubber-ab.is-sync {
+    opacity: 0.6;
+}
+
+/* Panel-level small status / counts at top of panel */
+.anim-panel-status {
+    padding: 4px 8px;
+    font-size: 10.5px;
+    color: var(--text-secondary, #9DA5B4);
+    border-bottom: 1px solid var(--border-color, #3e3e42);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+[data-ui-mode="modern"] .anim-panel-status {
+    border-bottom-color: rgba(255, 255, 255, 0.07);
+    background: rgba(255, 255, 255, 0.03);
 }

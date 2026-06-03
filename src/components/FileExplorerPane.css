@@ -12,7 +12,11 @@
     height: 100%;
     width: 100%;
     color: var(--text-color);
-    background: var(--editor-bg);
+    /* `--window-bg` (rather than `--editor-bg`) so the explorer
+       reads as part of the chrome stack alongside the title bar
+       and dock panes — same shade Photo / Animation Studio panels
+       use. In Calm Sea this lands on ~#0F1928. */
+    background: var(--window-bg);
     outline: none;
     font-size: 12px;
     font-family: inherit;
@@ -29,7 +33,7 @@
     gap: 6px;
     padding: 4px 8px;
     border-bottom: 1px solid var(--border-color);
-    background: var(--editor-bg);
+    background: var(--window-bg);
     flex: 0 0 auto;
 }
 
@@ -89,7 +93,7 @@
     gap: 6px;
     padding: 4px 8px;
     border-bottom: 1px solid var(--border-color);
-    background: var(--editor-bg);
+    background: var(--window-bg);
     flex: 0 0 auto;
 }
 
@@ -198,7 +202,7 @@
     padding: 4px 8px;
     border-bottom: 1px solid var(--border-color);
     font-size: 11px;
-    background: var(--editor-bg);
+    background: var(--window-bg);
     flex: 0 0 auto;
 }
 
@@ -373,6 +377,7 @@
     border-left: 2px solid transparent;
     transition: background-color 60ms ease;
 }
+
 
 .fe-row:hover {
     background: var(--selected-tab-bg);

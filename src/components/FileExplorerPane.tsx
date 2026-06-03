@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { FormatIcon, FileTypeIcon } from './FormatIcons';
 import type { FileExplorerRoot } from '../shells/ShellContext';
+import { useDrag } from '../lib/dnd';
 import './FileExplorerPane.css';
 
 interface WadEntry {
@@ -109,6 +110,15 @@ interface FileExplorerPaneProps {
     onOpenFile: (path: string) => void;
     setRoot?: (root: FileExplorerRoot | null) => void;
     setStatusMessage?: (msg: string) => void;
+    /** Right-click on a `.skn` (on-disk root only — not inside a WAD)
+     *  surfaces "Open in Animation Studio as source / target". Wired
+     *  by App.tsx to spin up an animstudio tab pre-loaded with the
+     *  picked SKN on the requested side. */
+    onOpenInAnimStudio?: (sknPath: string, side: 'source' | 'target') => void;
+    /** Right-click on a `.anm` surfaces "Load as source clip in
+     *  Animation Studio". Loads into the most-recent open animstudio
+     *  tab, or spawns a new one. */
+    onLoadAnmInAnimStudio?: (anmPath: string) => void;
 }
 
 const STORAGE_KEY_EXPANDED = 'file-explorer-expanded';
@@ -313,6 +323,7 @@ function ExplorerGrid({
     setSelectedPath,
     onActivate,
     onContextMenu,
+    onPointerDownDrag,
     thumbCache,
     thumbPending,
     thumbVersion,
@@ -326,6 +337,7 @@ function ExplorerGrid({
     setSelectedPath: (p: string | null) => void;
     onActivate: (node: ExplorerNode) => void;
     onContextMenu: (node: ExplorerNode, x: number, y: number) => void;
+    onPointerDownDrag: (e: React.PointerEvent<HTMLElement>, node: ExplorerNode) => void;
     thumbCache: ThumbLRU;
     thumbPending: Set<string>;
     thumbVersion: number;
@@ -478,7 +490,10 @@ function ExplorerGrid({
                         ref={isImage ? cellRef : undefined}
                         data-path={isImage ? node.path : undefined}
                         className={`fe-cell${isSelected ? ' fe-cell-selected' : ''}`}
-                        onMouseDown={() => setSelectedPath(node.path)}
+                        onPointerDown={(e) => {
+                            setSelectedPath(node.path);
+                            onPointerDownDrag(e, node);
+                        }}
                         onDoubleClick={() => onActivate(node)}
                         onContextMenu={(e) => { e.preventDefault(); onContextMenu(node, e.clientX, e.clientY); }}
                         title={node.name}
@@ -511,6 +526,8 @@ export default function FileExplorerPane({
     onOpenFile,
     setRoot,
     setStatusMessage,
+    onOpenInAnimStudio,
+    onLoadAnmInAnimStudio,
 }: FileExplorerPaneProps) {
     // Derive the "root path" used as a key throughout the pane: the
     // folder path for disk roots, or a synthetic `wad://<id>` for
@@ -532,6 +549,53 @@ export default function FileExplorerPane({
     const [createValue, setCreateValue] = useState('');
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: ExplorerNode } | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<ExplorerNode | null>(null);
+    const ctxMenuRef = useRef<HTMLDivElement | null>(null);
+    const drag = useDrag();
+
+    // Drag-source — pointer-driven (NOT HTML5 native), because
+    // Tauri 2's `dragDropEnabled: true` interceptor (which we need
+    // for OS file drops) swallows HTML5 dragover/drop events
+    // before they reach the DOM (refs: tauri#14373, tauri#9445).
+    // Pointer events bypass that subsystem entirely. The actual
+    // drag-tracking + ghost rendering lives in `DragProvider`;
+    // here we just feed it the path on pointerdown.
+    const onRowPointerDown = (e: React.PointerEvent<HTMLElement>, node: ExplorerNode) => {
+        // Folders aren't useful payloads — none of our editors
+        // accept a directory. Skip them entirely.
+        if (node.isDir) return;
+        if (e.button !== 0) return; // primary button only
+        if (!drag) return;
+        drag.beginDrag(node.path, node.name, e.clientX, e.clientY);
+    };
+
+    // Clamp the right-click context menu so it never escapes the
+    // viewport. Without this, opening the menu near the bottom or
+    // right edge clips items off-screen. Measured + adjusted in a
+    // layout effect so the menu paints once at the corrected
+    // position — no flicker.
+    useLayoutEffect(() => {
+        if (!contextMenu || !ctxMenuRef.current) return;
+        const el = ctxMenuRef.current;
+        const rect = el.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const margin = 6;
+        let left = contextMenu.x;
+        let top = contextMenu.y;
+        if (left + rect.width > vw - margin) {
+            // Flip to the left of the cursor; clamp to viewport if
+            // the menu is wider than the cursor's distance to the
+            // left edge.
+            left = Math.max(margin, contextMenu.x - rect.width);
+            if (left + rect.width > vw - margin) left = vw - rect.width - margin;
+        }
+        if (top + rect.height > vh - margin) {
+            top = Math.max(margin, contextMenu.y - rect.height);
+            if (top + rect.height > vh - margin) top = vh - rect.height - margin;
+        }
+        el.style.left = `${left}px`;
+        el.style.top = `${top}px`;
+    }, [contextMenu]);
 
     // ── Reveal-in-Explorer pulse listener ───────────────────────
     // App.tsx writes `file-explorer-reveal-pulse` and dispatches a
@@ -1577,6 +1641,7 @@ export default function FileExplorerPane({
                             setSelectedPath(node.path);
                             setContextMenu({ x, y, node });
                         }}
+                        onPointerDownDrag={onRowPointerDown}
                         thumbCache={thumbCacheRef.current}
                         thumbPending={thumbPendingRef.current}
                         thumbVersion={thumbVersion}
@@ -1605,7 +1670,10 @@ export default function FileExplorerPane({
                                     transform: `translateY(${idx * ROW_HEIGHT}px)`,
                                     paddingLeft: 6 + r.depth * INDENT_PX,
                                 }}
-                                onMouseDown={() => setSelectedPath(node.path)}
+                                onPointerDown={(e) => {
+                                    setSelectedPath(node.path);
+                                    onRowPointerDown(e, node);
+                                }}
                                 onDoubleClick={() => activateNode(node)}
                                 onContextMenu={(e) => {
                                     e.preventDefault();
@@ -1692,6 +1760,7 @@ export default function FileExplorerPane({
 
             {contextMenu && (
                 <div
+                    ref={ctxMenuRef}
                     className="fe-ctx-menu"
                     style={{ left: contextMenu.x, top: contextMenu.y }}
                 >
@@ -1723,6 +1792,35 @@ export default function FileExplorerPane({
                         </>
                     ) : (
                         <>
+                            {/* Animation Studio entry — only on `.skn`
+                                files on disk. Above the file-ops block
+                                so it sits next to "Open" semantically. */}
+                            {!contextMenu.node.isDir
+                                && /\.skn$/i.test(contextMenu.node.path)
+                                && onOpenInAnimStudio && (
+                                <>
+                                    <div className="fe-ctx-sep" />
+                                    <button onClick={() => {
+                                        onOpenInAnimStudio(contextMenu.node.path, 'source');
+                                        setContextMenu(null);
+                                    }}>Open in Animation Studio as source</button>
+                                    <button onClick={() => {
+                                        onOpenInAnimStudio(contextMenu.node.path, 'target');
+                                        setContextMenu(null);
+                                    }}>Open in Animation Studio as target</button>
+                                </>
+                            )}
+                            {!contextMenu.node.isDir
+                                && /\.anm$/i.test(contextMenu.node.path)
+                                && onLoadAnmInAnimStudio && (
+                                <>
+                                    <div className="fe-ctx-sep" />
+                                    <button onClick={() => {
+                                        onLoadAnmInAnimStudio(contextMenu.node.path);
+                                        setContextMenu(null);
+                                    }}>Load as source clip in Animation Studio</button>
+                                </>
+                            )}
                             <div className="fe-ctx-sep" />
                             <button onClick={() => { startCreate('file'); setContextMenu(null); }}>New File</button>
                             <button onClick={() => { startCreate('folder'); setContextMenu(null); }}>New Folder</button>

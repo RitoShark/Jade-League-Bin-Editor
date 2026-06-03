@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { createStudioScene, type StudioScene } from '../lib/babylon/studioScene';
 import { useShell } from '../shells/ShellContext';
+import { useDropZone } from '../lib/dnd';
 
 interface TauriDragPayload {
     paths?: string[];
@@ -176,6 +177,22 @@ export default function StudioTab({ tabId }: StudioTabProps) {
             setLoading(false);
         }
     };
+
+    // Internal drag-from-File-Explorer drop zone. Pointer-event
+    // based — Tauri 2's OS-level drag interceptor breaks HTML5
+    // DnD inside the webview when `dragDropEnabled` is on, which
+    // we need for the `tauri://drag-drop` listener above to keep
+    // working. See `lib/dnd.tsx` for the rationale.
+    useDropZone({
+        ref: containerRef,
+        accepts: (path) => /\.(skn|scb|sco|gltf|glb|fbx)$/i.test(path),
+        onEnter: () => setHover(true),
+        onLeave: () => setHover(false),
+        onDrop: (path) => {
+            setHover(false);
+            void loadPath(path);
+        },
+    });
 
     return (
         <div

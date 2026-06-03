@@ -490,6 +490,14 @@ body.welcome-active .title-bar > * {
     text-align: left;
     font-family: inherit;
     min-height: 50px;
+    /* The table is a flex column with overflow-y: auto. Flex children
+       default to flex-shrink: 1, so once there are enough rows to
+       overflow, the browser squashes each row to fit BEFORE the
+       scrollbar kicks in — and the header (min-height: 0) collapses
+       most, jamming its labels into the divider. Pinning shrink to 0
+       keeps every row at its natural height and lets the container
+       scroll instead. */
+    flex-shrink: 0;
 }
 .welcome-recent-row:hover:not(.welcome-recent-row-header) {
     background: rgba(255, 255, 255, 0.04);
@@ -498,8 +506,6 @@ body.welcome-active .title-bar > * {
     color: var(--text-muted, #8a8a8a);
     font-size: 11px;
     cursor: default;
-    padding-top: 10px;
-    padding-bottom: 10px;
     min-height: 0;
     border-bottom-color: var(--border-color, #3e3e42);
     text-transform: uppercase;

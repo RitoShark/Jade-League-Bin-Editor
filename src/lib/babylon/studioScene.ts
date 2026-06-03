@@ -37,7 +37,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import type { Engine } from '@babylonjs/core/Engines/engine';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 
-import { createEngine } from './engine';
+import { createEngine, isAppVisible } from './engine';
 import {
     createSknObject,
     createGltfObject,
@@ -507,7 +507,9 @@ export function createStudioScene(canvas: HTMLCanvasElement): StudioScene {
     };
 
     engine.runRenderLoop(() => {
-        if (!disposed) scene.render();
+        if (disposed) return;
+        if (!isAppVisible()) return; // skip GPU work while window is hidden / minimised
+        scene.render();
     });
     const ro = new ResizeObserver(() => {
         engine.resize();

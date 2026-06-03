@@ -16,6 +16,7 @@
 
 pub mod anm;
 pub mod anm_compressed;
+pub mod anm_write;
 pub mod error;
 pub mod fbx;
 pub mod scb;
@@ -34,6 +35,8 @@ pub mod texture_decode;
 pub use error::MeshError;
 #[allow(unused_imports)]
 pub use anm::{parse_anm, AnmFrame, AnmTrack, BakedAnimation};
+#[allow(unused_imports)]
+pub use anm_write::{write_anm_v4, write_anm_v4_into};
 #[allow(unused_imports)]
 pub use skin_animations::{
     read_skn_animations, read_skn_animations_disk, AnimationClip, AnimationListing,

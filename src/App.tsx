@@ -16,11 +16,14 @@ import {
 import { loadSavedTheme } from "./lib/themeApplicator";
 import { checkSyntax, suggestType } from "./lib/syntaxChecker";
 import { texBufferToDataURL, ddsBufferToDataURL, ddsFormatName } from "./lib/texFormat";
-import { EditorTab, createQuartzDiffTab, createMarkdownPreviewTab, createStudioTab, createTab, createTexPreviewTab, createCompareTab, getFileName } from "./components/TabBar";
+import { EditorTab, createQuartzDiffTab, createMarkdownPreviewTab, createStudioTab, createAnimStudioTab, createTab, createTexPreviewTab, createCompareTab, getFileName } from "./components/TabBar";
 import type { StudioScene } from "./lib/babylon/studioScene";
+import type { AnimStudioScene } from "./lib/babylon/animStudioScene";
 import { ShellProvider, type ShellContextValue, type PerfMode, type PerfKey, type HashSyncToastState, type ShellVariant, type FileExplorerRoot } from "./shells/ShellContext";
 import FetchAnimationsDialog from "./components/FetchAnimationsDialog";
 import ShellHost from "./shells/ShellHost";
+import { DragProvider } from "./lib/dnd";
+import { usePersistedBool } from "./lib/persistedState";
 import { findAndOpenLinkedBins, LinkedBinResult } from "./lib/linkedBinParser";
 import "./App.css";
 import "./App.modernui.css";
@@ -35,6 +38,32 @@ interface UpdateInfo {
 // Store editor view states (scroll position, cursor position) per tab
 interface EditorViewState {
   viewState: MonacoType.editor.ICodeEditorViewState | null;
+}
+
+/** Replace a model's entire content WITHOUT destroying its undo/redo
+ *  stack. `model.setValue()` throws the undo history away — which is
+ *  fatal when an external reload (the 2s auto-reload poll, a Quartz
+ *  round-trip) fires moments after the user was editing and silently
+ *  erases everything they could have undone. A full-range
+ *  `pushEditOperations` records the swap as one ordinary, undoable
+ *  edit instead, so Ctrl+Z still walks back past it.
+ *
+ *  No-ops when the content already matches, so a poll that detects an
+ *  identical file (e.g. our own save round-tripping through disk)
+ *  doesn't churn the stack or jump the cursor. Returns true iff it
+ *  actually edited. */
+function replaceModelContentPreservingUndo(
+  model: MonacoType.editor.ITextModel,
+  next: string,
+): boolean {
+  if (model.getValue() === next) return false;
+  model.pushEditOperations(
+    [],
+    [{ range: model.getFullModelRange(), text: next }],
+    () => null,
+  );
+  model.pushStackElement();
+  return true;
 }
 
 interface InteropHandoff {
@@ -171,11 +200,11 @@ function App() {
   const [appIcon, setAppIcon] = useState<string>("/media/jade.ico");
   const [findWidgetOpen, setFindWidgetOpen] = useState(false);
   const [replaceWidgetOpen, setReplaceWidgetOpen] = useState(false);
-  const [generalEditPanelOpen, setGeneralEditPanelOpen] = useState(false);
-  const [particlePanelOpen, setParticlePanelOpen] = useState(false);
+  const [generalEditPanelOpen, setGeneralEditPanelOpen] = usePersistedBool('panel-general-edit', false);
+  const [particlePanelOpen, setParticlePanelOpen] = usePersistedBool('panel-particle-editor', false);
   const [textureInsertOpen, setTextureInsertOpen] = useState(false);
   const [materialInsertOpen, setMaterialInsertOpen] = useState(false);
-  const [binNavOpen, setBinNavOpen] = useState(false);
+  const [binNavOpen, setBinNavOpen] = usePersistedBool('panel-bin-nav', false);
   const [mdPreviewContent, setMdPreviewContent] = useState<string>('');
   const [showNewFileDialog, setShowNewFileDialog] = useState(false);
   const [particleDialogOpen, setParticleDialogOpen] = useState(false);
@@ -457,7 +486,26 @@ function App() {
   // early path-open + drag-drop code can route `.studio.json` to the
   // studio loader instead of the text editor.
   const studioOpenSceneFromPathRef = useRef<((path: string) => Promise<void>) | null>(null);
+  const animStudioOpenSceneFromPathRef = useRef<((path: string) => Promise<void>) | null>(null);
   const isStudioScenePath = (p: string) => /\.studio\.json$/i.test(p);
+  const isAnimStudioScenePath = (p: string) => /\.animstudio\.json$/i.test(p);
+  /** Sniff JSON content for the AnimStudio scene shape. Used when a
+   *  scene file lacks the `.animstudio.json` double extension (just
+   *  `.json`) so the File→Open flow still routes it to the studio
+   *  instead of dumping it into a Monaco text tab. Cheap parse —
+   *  we already have the text from `openAnyEditorFile`. */
+  const looksLikeAnimStudioScene = (text: string): boolean => {
+    try {
+      const data = JSON.parse(text);
+      return data
+        && typeof data === 'object'
+        && data.version === 1
+        && 'retargetOptions' in data
+        && 'boneOverrides' in data;
+    } catch {
+      return false;
+    }
+  };
   const openingFilesRef = useRef<Set<string>>(new Set()); // prevents duplicate concurrent opens
   const handleTabCloseRef = useRef<((tabId: string) => void) | null>(null);
   const handleNewRef = useRef<(() => void) | null>(null);
@@ -1076,6 +1124,14 @@ function App() {
           // `.studio.json` opens as a Photo Studio scene. Checked
           // before the plain-text branch since `.json` would
           // otherwise route to the text editor.
+          // `.animstudio.json` routes before `.studio.json` because
+          // both predicates use a suffix regex and a path matching
+          // .animstudio.json would also (incorrectly) match
+          // .studio.json's check if order were reversed.
+          if (isAnimStudioScenePath(filePath)) {
+            await animStudioOpenSceneFromPathRef.current?.(filePath);
+            continue;
+          }
           if (isStudioScenePath(filePath)) {
             await studioOpenSceneFromPathRef.current?.(filePath);
             continue;
@@ -1676,11 +1732,11 @@ function App() {
 
     const model = monacoModelsRef.current.get(tabId);
     if (model && !model.isDisposed()) {
-      model.setValue(nextContent);
+      replaceModelContentPreservingUndo(model, nextContent);
     } else if (activeTabIdRef.current === tabId && editorRef.current) {
       const activeModel = editorRef.current.getModel();
       if (activeModel) {
-        activeModel.setValue(nextContent);
+        replaceModelContentPreservingUndo(activeModel, nextContent);
       }
     }
 
@@ -1703,8 +1759,14 @@ function App() {
   }, []);
 
   const openFileFromPath = async (filePath: string) => {
-    // `.studio.json` scene files go to the Photo Studio loader, not
-    // the text editor — route them out before the normal pipeline.
+    // Scene files route to their respective studio loaders, not
+    // the text editor. Check `.animstudio.json` before
+    // `.studio.json` — a path ending in `.animstudio.json` also
+    // ends in `.json` but the more-specific predicate must win.
+    if (isAnimStudioScenePath(filePath)) {
+      await animStudioOpenSceneFromPathRef.current?.(filePath);
+      return;
+    }
     if (isStudioScenePath(filePath)) {
       await studioOpenSceneFromPathRef.current?.(filePath);
       return;
@@ -1774,11 +1836,9 @@ function App() {
       pendingStudioModelLoadsRef.current.set(newTab.id, filePath);
       setTabs(prev => [...prev, newTab]);
       setActiveTabId(newTab.id);
-      setStudioAnimOpen(true);
-      setStudioBgOpen(true);
-      setStudioActionsOpen(true);
-      setStudioMeshOpen(true);
-      setStudioObjectsOpen(true);
+      // Panel open states are persisted (`panel-studio-*`) — let
+      // the user's last toggle stand instead of forcing everything
+      // back open on every model load.
       setWelcomeOverride('hide');
       setStatusMessage(`Loading ${getFileName(filePath)} in Photo Studio…`);
       addToRecentFiles(filePath).catch(() => {});
@@ -1976,6 +2036,10 @@ function App() {
     modelLruRef.current = modelLruRef.current.filter(id => id !== tabId);
     // Real close — now it's safe to drop the studio scene's
     // pending-load entry (kept alive across StrictMode remounts).
+    if (tabToClose.tabType === 'animstudio') {
+      pendingAnimStudioLoadsRef.current.delete(tabId);
+      pendingAnimStudioSceneDataRef.current.delete(tabId);
+    }
     if (tabToClose.tabType === 'studio') {
       pendingStudioLoadsRef.current.delete(tabId);
       pendingStudioModelLoadsRef.current.delete(tabId);
@@ -2140,6 +2204,26 @@ function App() {
     );
   }, []);
 
+  // Visual-Studio-style tab reordering. `from`/`to` are positions within
+  // the single-pane tab strip — which renders the whole `tabs` array in
+  // order — so they map straight onto array indices. Called live while
+  // the user drags a tab left/right past its neighbours' midpoints.
+  const handleTabReorder = useCallback((from: number, to: number) => {
+    setTabs(prevTabs => {
+      if (
+        from === to ||
+        from < 0 || to < 0 ||
+        from >= prevTabs.length || to >= prevTabs.length
+      ) {
+        return prevTabs;
+      }
+      const next = [...prevTabs];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  }, []);
+
 
   // Add a new tab
   const addTab = useCallback((filePath: string | null, content: string): EditorTab => {
@@ -2263,7 +2347,7 @@ function App() {
     const activeTab = tabs.find(t => t.id === activeTabId);
     if (!activeTab) return;
 
-    // Texture-preview tabs don't have a Monaco model â€” skip model switching
+    // Texture-preview tabs don't have a Monaco model — skip model switching
     if (!isEditorTab(activeTab)) return;
 
     // Save view state of current model before switching
@@ -2609,15 +2693,15 @@ function App() {
         const mtime = await invoke<number>('get_file_mtime', { path: filePath });
         const last = texMtimeRef.current.get(tabId);
         if (last === undefined) {
-          // First reading â€” just store it, don't reload
+          // First reading — just store it, don't reload
           texMtimeRef.current.set(tabId, mtime);
         } else if (mtime !== last) {
           texMtimeRef.current.set(tabId, mtime);
-          // File changed on disk â€” silently reload
+          // File changed on disk — silently reload
           await loadTextureIntoTab(tabId, filePath, true);
         }
       } catch {
-        // File temporarily locked while being written â€” ignore and retry next tick
+        // File temporarily locked while being written — ignore and retry next tick
       }
     }, 1500);
 
@@ -2670,7 +2754,13 @@ function App() {
               if (tab.id === activeTabId && editorRef.current) {
                 const model = editorRef.current.getModel();
                 if (model) {
-                  model.setValue(newContent);
+                  // Preserve scroll/cursor and the undo stack across an
+                  // external reload — `setValue` would wipe both.
+                  const vs = editorRef.current.saveViewState();
+                  const changed = replaceModelContentPreservingUndo(model, newContent);
+                  if (changed && vs) {
+                    try { editorRef.current.restoreViewState(vs); } catch { /* best effort */ }
+                  }
                 }
               }
               setStatusMessage(`Reloaded ${tab.fileName} (changed externally)`);
@@ -2929,25 +3019,31 @@ function App() {
     const text = model.getValue();
     const errors = checkSyntax(text);
 
-    // Markers give the squiggly underline + problems list.
-    // Errors (red) are for broken syntax, warnings (yellow) are for things
-    // that will convert but won't work as intended in-game.
-    const markers: MonacoType.editor.IMarkerData[] = errors.map(err => ({
-      severity: err.severity === 'warning'
-        ? monaco.MarkerSeverity.Warning
-        : monaco.MarkerSeverity.Error,
-      message: err.message,
-      startLineNumber: err.line,
-      startColumn: err.column,
-      endLineNumber: err.line,
-      endColumn: err.column + (err.length || 1),
-    }));
+    // Markers give the squiggly underline + problems list. Errors (red)
+    // are for broken syntax, warnings (yellow) for things that convert
+    // but won't work in-game. `info` items deliberately get NO marker —
+    // they render as a quiet gutter lightbulb (below) so they don't
+    // squiggle or clutter the Problems panel.
+    const markers: MonacoType.editor.IMarkerData[] = errors
+      .filter(err => err.severity !== 'info')
+      .map(err => ({
+        severity: err.severity === 'warning'
+          ? monaco.MarkerSeverity.Warning
+          : monaco.MarkerSeverity.Error,
+        message: err.message,
+        startLineNumber: err.line,
+        startColumn: err.column,
+        endLineNumber: err.line,
+        endColumn: err.column + (err.length || 1),
+      }));
     monaco.editor.setModelMarkers(model, 'syntax-checker', markers);
 
     // Decorations give the line highlight + glyph dot + minimap indicator.
-    // Errors win over warnings — if a line has both, show red.
+    // Errors win over warnings — if a line has both, show red. `info` is
+    // handled separately (a bulb, no highlight).
     const lineSeverity = new Map<number, 'error' | 'warning'>();
     for (const err of errors) {
+      if (err.severity === 'info') continue;
       const prev = lineSeverity.get(err.line);
       const sev = err.severity === 'warning' ? 'warning' : 'error';
       if (prev === 'error') continue;
@@ -2971,6 +3067,27 @@ function App() {
             color: isWarn ? '#e6b800' : '#ff3333',
             position: monaco.editor.OverviewRulerLane.Full,
           },
+        },
+      });
+    }
+
+    // Info items: a quiet lightbulb in the glyph margin with the message
+    // on hover. No line highlight, no squiggle, not in the Problems
+    // panel — just a discoverable heads-up. One bulb per line (first
+    // info message wins); skip lines that already show an error/warning
+    // glyph so we don't stack two icons in the same gutter slot.
+    const infoByLine = new Map<number, string>();
+    for (const err of errors) {
+      if (err.severity !== 'info') continue;
+      if (lineSeverity.has(err.line)) continue;
+      if (!infoByLine.has(err.line)) infoByLine.set(err.line, err.message);
+    }
+    for (const [lineNum, msg] of infoByLine.entries()) {
+      decorations.push({
+        range: new monaco.Range(lineNum, 1, lineNum, 1),
+        options: {
+          glyphMarginClassName: 'syntax-info-bulb',
+          glyphMarginHoverMessage: { value: msg },
         },
       });
     }
@@ -3911,12 +4028,22 @@ function App() {
   //    Dismissing a panel hides it for the current session; switching
   //    away from the studio tab also hides them (handled in the shell
   //    via the active-tab check).
-  const [studioAnimOpen, setStudioAnimOpen] = useState(true);
-  const [studioBgOpen, setStudioBgOpen] = useState(true);
-  const [studioActionsOpen, setStudioActionsOpen] = useState(true);
-  const [studioMeshOpen, setStudioMeshOpen] = useState(true);
-  const [studioObjectsOpen, setStudioObjectsOpen] = useState(true);
-  const [studioSpotlightOpen, setStudioSpotlightOpen] = useState(true);
+  const [studioAnimOpen, setStudioAnimOpen] = usePersistedBool('panel-studio-anim', true);
+  const [studioBgOpen, setStudioBgOpen] = usePersistedBool('panel-studio-bg', true);
+  const [studioActionsOpen, setStudioActionsOpen] = usePersistedBool('panel-studio-actions', true);
+  const [studioMeshOpen, setStudioMeshOpen] = usePersistedBool('panel-studio-mesh', true);
+  const [studioObjectsOpen, setStudioObjectsOpen] = usePersistedBool('panel-studio-objects', true);
+  const [studioSpotlightOpen, setStudioSpotlightOpen] = usePersistedBool('panel-studio-spotlight', true);
+  // Animation Studio panels — default open same as Photo Studio so a
+  // fresh tab shows the full UI surface; user can dock / float / hide
+  // them individually.
+  const [animStudioOptionsOpen, setAnimStudioOptionsOpen] = usePersistedBool('panel-animstudio-options', true);
+  const [animStudioMappingOpen, setAnimStudioMappingOpen] = usePersistedBool('panel-animstudio-mapping', true);
+  const [animStudioRigOpen, setAnimStudioRigOpen] = usePersistedBool('panel-animstudio-rig', false);
+  const [animStudioGuidesOpen, setAnimStudioGuidesOpen] = usePersistedBool('panel-animstudio-guides', true);
+  const [animStudioPhysicsOpen, setAnimStudioPhysicsOpen] = usePersistedBool('panel-animstudio-physics', false);
+  const [animStudioMeshOpen, setAnimStudioMeshOpen] = usePersistedBool('panel-animstudio-mesh', false);
+  const [animStudioExportOpen, setAnimStudioExportOpen] = usePersistedBool('panel-animstudio-export', false);
 
   // -- File Explorer pane state.
   //    Lives at the shell level so the pane survives tab switches
@@ -4183,6 +4310,129 @@ function App() {
     return studioScenesRef.current.get(tabId) ?? null;
   }, []);
 
+  // ── Animation Studio scene registry ─────────────────────────────
+  // Same lifecycle as Photo Studio: AnimStudioTab calls `register`
+  // on mount with the freshly-built dual-viewport scene, panels look
+  // up by tab id. The pending-load map carries the (source, target)
+  // SKN paths that a "right-click → Open in Animation Studio" handed
+  // off; the scene picks them up once it's bound to its canvases.
+  const animStudioScenesRef = useRef<Map<string, AnimStudioScene>>(new Map());
+  const pendingAnimStudioLoadsRef = useRef<Map<string, { source?: string; target?: string }>>(new Map());
+  // Pending `.animstudio.json` payload waiting for its tab's scene
+  // to mount. Same StrictMode-survival pattern as the SKN-path
+  // pending map above.
+  const pendingAnimStudioSceneDataRef = useRef<Map<string, import('./lib/babylon/animStudioScene').AnimStudioSceneData>>(new Map());
+  const registerAnimStudioScene = useCallback((tabId: string, scene: AnimStudioScene) => {
+    animStudioScenesRef.current.set(tabId, scene);
+    const pending = pendingAnimStudioLoadsRef.current.get(tabId);
+    if (pending) {
+      // StrictMode double-mount: keep the entry alive (same reason
+      // as Photo Studio's pendingStudioLoadsRef) — cleared in
+      // `handleTabClose`.
+      if (pending.source) {
+        scene.loadSkn('source', pending.source).catch(e => console.warn('[AnimStudio] source load failed:', e));
+      }
+      if (pending.target) {
+        scene.loadSkn('target', pending.target).catch(e => console.warn('[AnimStudio] target load failed:', e));
+      }
+    }
+    const pendingSceneData = pendingAnimStudioSceneDataRef.current.get(tabId);
+    if (pendingSceneData) {
+      scene.loadFromData(pendingSceneData)
+        // Fresh load: re-baseline so undo can't reach back past the
+        // opened scene, and clear the dirty flag.
+        .then(() => { scene.resetUndoHistory(); scene.markSaved(); })
+        .catch(e => console.warn('[AnimStudio] scene load failed:', e));
+    }
+  }, []);
+  const unregisterAnimStudioScene = useCallback((tabId: string) => {
+    animStudioScenesRef.current.delete(tabId);
+  }, []);
+  const getAnimStudioScene = useCallback((tabId: string): AnimStudioScene | null => {
+    return animStudioScenesRef.current.get(tabId) ?? null;
+  }, []);
+
+  // Open a `.skn` as either source or target in a new Animation
+  // Studio tab. Stashes the path in the pending-load map so the
+  // scene picks it up on mount. If an Animation Studio tab is
+  // already open and missing the requested side, prefer feeding the
+  // existing tab instead of spawning a new one — matches user
+  // expectations from "Open as target" with a source already loaded.
+  const handleOpenAnimStudio = useCallback((sknPath: string, side: 'source' | 'target') => {
+    setTabs(prev => {
+      // Find an existing tab whose requested side is empty.
+      const reuseTab = prev.find(t => {
+        if (t.tabType !== 'animstudio') return false;
+        const scene = animStudioScenesRef.current.get(t.id);
+        if (!scene) {
+          // Scene not yet built — check pending loads instead.
+          const pending = pendingAnimStudioLoadsRef.current.get(t.id);
+          return !pending || !pending[side];
+        }
+        return scene.getSide(side).object === null;
+      });
+      if (reuseTab) {
+        const existingScene = animStudioScenesRef.current.get(reuseTab.id);
+        if (existingScene) {
+          existingScene.loadSkn(side, sknPath).catch(e => console.warn(`[AnimStudio] ${side} load failed:`, e));
+        } else {
+          const pending = pendingAnimStudioLoadsRef.current.get(reuseTab.id) ?? {};
+          pending[side] = sknPath;
+          pendingAnimStudioLoadsRef.current.set(reuseTab.id, pending);
+        }
+        setActiveTabId(reuseTab.id);
+        return prev;
+      }
+      const newTab = createAnimStudioTab();
+      pendingAnimStudioLoadsRef.current.set(newTab.id, { [side]: sknPath });
+      setActiveTabId(newTab.id);
+      return [...prev, newTab];
+    });
+  }, []);
+
+  // Load a `.anm` as the source clip in an Animation Studio tab.
+  // Picks the currently-active animstudio tab, falling back to the
+  // most-recent one, or spawns a new tab if none exist. Clip loading
+  // doesn't have a pending-handoff path because there's no useful UI
+  // when only a clip is loaded (no rig to play it on) — if a fresh
+  // tab is spawned, the user has to drop a SKN onto a viewport
+  // before the clip will animate anything.
+  const handleLoadAnimStudioClip = useCallback((anmPath: string) => {
+    setTabs(prev => {
+      const animTabs = prev.filter(t => t.tabType === 'animstudio');
+      // Prefer the active tab if it's an animstudio; else the last
+      // one in the list (which is roughly "most recent" since tabs
+      // append).
+      const active = prev.find(t => t.id === activeTabIdRef.current);
+      const targetTab = (active?.tabType === 'animstudio')
+        ? active
+        : animTabs[animTabs.length - 1] ?? null;
+      if (targetTab) {
+        const scene = animStudioScenesRef.current.get(targetTab.id);
+        if (scene) {
+          scene.loadSourceClip(anmPath).catch(e => console.warn('[AnimStudio] clip load failed:', e));
+        }
+        setActiveTabId(targetTab.id);
+        return prev;
+      }
+      const newTab = createAnimStudioTab();
+      setActiveTabId(newTab.id);
+      // Defer: register handler will see no pending SKN paths but
+      // the user just spawned a tab with no rig — the clip will get
+      // loaded once the scene mounts. We stash it in the pending map
+      // under a special key so the scene picks it up.
+      pendingAnimStudioLoadsRef.current.set(newTab.id, { });
+      // Tiny race: scene mounts -> register fires -> we call load.
+      // Defer the call via setTimeout so React has flushed the new
+      // tab through and the scene is registered by the time we run.
+      setTimeout(() => {
+        const sc = animStudioScenesRef.current.get(newTab.id);
+        if (sc) sc.loadSourceClip(anmPath).catch(e => console.warn('[AnimStudio] clip load failed:', e));
+      }, 80);
+      return [...prev, newTab];
+    });
+  }, []);
+
   // StudioTab subscribes to its scene's change events and calls this
   // so the tab's `isModified` flag tracks the scene's dirty state —
   // which drives the tab-bar dot and the save-before-close prompt.
@@ -4263,11 +4513,7 @@ function App() {
     pendingStudioLoadsRef.current.set(newTab.id, data);
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(newTab.id);
-    setStudioAnimOpen(true);
-    setStudioBgOpen(true);
-    setStudioActionsOpen(true);
-    setStudioMeshOpen(true);
-    setStudioObjectsOpen(true);
+    // Panels respect persisted state — don't force-reopen.
     setStatusMessage(`Opened ${picked}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ensureStudioShell, saveCurrentViewState]);
@@ -4275,6 +4521,48 @@ function App() {
   // Stable ref so the early-defined `openFileFromPath` + drag-drop
   // listener can route `.studio.json` here without a forward-decl.
   studioOpenSceneFromPathRef.current = studioOpenSceneFromPath;
+
+  // Animation Studio scene-file loader. Mirrors the Photo Studio
+  // version: read JSON, validate, focus an already-open tab if the
+  // same path is loaded, otherwise spawn a fresh animstudio tab
+  // and stage the parsed data in the pending map for the scene's
+  // register hook to drain.
+  const animStudioOpenSceneFromPath = useCallback(async (picked: string) => {
+    let data: import('./lib/babylon/animStudioScene').AnimStudioSceneData;
+    try {
+      const content = await invoke<string>('read_text_file', { path: picked });
+      data = JSON.parse(content);
+    } catch (e) {
+      setStatusMessage(`Anim Studio: couldn't read scene — ${e}`);
+      return;
+    }
+    if (!data || data.version !== 1) {
+      setStatusMessage('Anim Studio: not a valid .animstudio.json (or unsupported version)');
+      return;
+    }
+    const existing = tabsRef.current.find(
+      t => t.tabType === 'animstudio' && t.filePath?.toLowerCase() === picked.toLowerCase(),
+    );
+    if (existing) {
+      ensureStudioShell();
+      setActiveTabId(existing.id);
+      return;
+    }
+    saveCurrentViewState();
+    ensureStudioShell();
+    const fileName = picked.split(/[\\/]/).pop() ?? 'Anim Studio';
+    const newTab: EditorTab = { ...createAnimStudioTab(), filePath: picked, fileName };
+    pendingAnimStudioSceneDataRef.current.set(newTab.id, data);
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+    // Don't auto-open Options / Mapping panels — they respect the
+    // user's persisted preference now (`panel-animstudio-options`,
+    // `panel-animstudio-mapping`). Re-opening on every scene load
+    // would override "I closed this on purpose".
+    setStatusMessage(`Opened ${picked}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ensureStudioShell, saveCurrentViewState]);
+  animStudioOpenSceneFromPathRef.current = animStudioOpenSceneFromPath;
 
   // Menu / shell entry — pops the open dialog, then delegates.
   const studioOpenScene = useCallback(async () => {
@@ -4285,19 +4573,92 @@ function App() {
     await studioOpenSceneFromPath(picked);
   }, [studioOpenSceneFromPath]);
 
+  // Spawn a fresh Animation Studio tab — empty rigs, no clip.
+  // User drops files / right-clicks to populate. Used by the
+  // Welcome screen's "Animation Studio" tile.
+  const onNewAnimStudioScene = useCallback(() => {
+    saveCurrentViewState();
+    ensureStudioShell();
+    const newTab = createAnimStudioTab();
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+    // Don't auto-open the panels — they read from the persisted
+    // `panel-animstudio-*` keys, so the user's last toggle survives.
+    setStatusMessage(`New ${newTab.fileName}`);
+    statusMessageRef.current = `New ${newTab.fileName}`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ensureStudioShell]);
+
+  // Open / save .animstudio.json on the currently-active Animation
+  // Studio tab. Reads activeTab via a ref to avoid pulling the whole
+  // tabs+activeTabId state into the callback's dep array (which would
+  // re-create it on every tab switch and tear listeners loose).
+  const onOpenAnimStudioScene = useCallback(async () => {
+    const active = tabsRef.current.find(t => t.id === activeTabIdRef.current);
+    if (!active || active.tabType !== 'animstudio') {
+      setStatusMessage('Anim Studio: switch to an Animation Studio tab to open a scene.');
+      return;
+    }
+    const scene = animStudioScenesRef.current.get(active.id);
+    if (!scene) {
+      setStatusMessage('Anim Studio: scene not ready yet — try again.');
+      return;
+    }
+    const picked = await openDialog({
+      title: 'Open Animation Studio scene',
+      filters: [{ name: 'Animation Studio scene', extensions: ['animstudio.json', 'json'] }],
+    });
+    if (typeof picked !== 'string') return;
+    try {
+      const text = await invoke<string>('read_text_file', { path: picked });
+      const data = JSON.parse(text) as import('./lib/babylon/animStudioScene').AnimStudioSceneData;
+      if (data.version !== 1) throw new Error(`unsupported scene version ${data.version}`);
+      await scene.loadFromData(data);
+      const fileName = picked.split(/[\\/]/).pop() ?? picked;
+      setStatusMessage(`Anim Studio: opened ${fileName}`);
+    } catch (e) {
+      setStatusMessage(`Anim Studio: open failed — ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [setStatusMessage]);
+
+  const onSaveAnimStudioScene = useCallback(async () => {
+    const active = tabsRef.current.find(t => t.id === activeTabIdRef.current);
+    if (!active || active.tabType !== 'animstudio') {
+      setStatusMessage('Anim Studio: switch to an Animation Studio tab to save its scene.');
+      return;
+    }
+    const scene = animStudioScenesRef.current.get(active.id);
+    if (!scene) {
+      setStatusMessage('Anim Studio: scene not ready yet — try again.');
+      return;
+    }
+    const picked = await saveDialog({
+      title: 'Save Animation Studio scene',
+      filters: [{ name: 'Animation Studio scene', extensions: ['animstudio.json'] }],
+    });
+    if (typeof picked !== 'string') return;
+    try {
+      const data = scene.serialize();
+      await invoke('write_text_file', { path: picked, content: JSON.stringify(data, null, 2) });
+      // Stamp saved — keeps the undo history alive (unlike Monaco's old
+      // behaviour), just clears the dirty flag.
+      scene.markSaved();
+      const fileName = picked.split(/[\\/]/).pop() ?? picked;
+      setStatusMessage(`Anim Studio: saved scene → ${fileName}`);
+    } catch (e) {
+      setStatusMessage(`Anim Studio: save failed — ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [setStatusMessage]);
+
   const onNewStudioScene = useCallback(() => {
     saveCurrentViewState();
     ensureStudioShell();
     const newTab = createStudioTab();
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(newTab.id);
-    // Re-open the panels so a fresh scene always shows the full UI,
-    // even if the user dismissed some panels in a previous studio tab.
-    setStudioAnimOpen(true);
-    setStudioBgOpen(true);
-    setStudioActionsOpen(true);
-    setStudioMeshOpen(true);
-    setStudioObjectsOpen(true);
+    // Panel open states are persisted (`panel-studio-*`). If the
+    // user dismissed Background last session they don't want it
+    // popping back on every new tab — leave it to their setting.
     setStatusMessage(`New ${newTab.fileName}`);
     statusMessageRef.current = `New ${newTab.fileName}`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4403,11 +4764,32 @@ function App() {
       allowHashStatusUpdateRef.current = false;
       const result = await openAnyEditorFile();
       if (result) {
-        // Troybin / inibin sources skip the text-content path — route
-        // through `openFileFromPath` which builds the dedicated tab.
+        // Troybin / inibin / animstudio sources skip the text-content
+        // path — route through `openFileFromPath` which builds the
+        // dedicated tab. `openAnyEditorFile` already read the bytes
+        // for us, but the format-specific tab constructors fetch
+        // their own content (or in animstudio's case, parse JSON),
+        // so we forward the path only.
         const lowerExt = result.path.toLowerCase().slice(result.path.lastIndexOf('.'));
         if (lowerExt === '.troybin' || lowerExt === '.inibin') {
           await openFileFromPath(result.path);
+          allowHashStatusUpdateRef.current = true;
+          return;
+        }
+        if (isAnimStudioScenePath(result.path) || isStudioScenePath(result.path)) {
+          await openFileFromPath(result.path);
+          await addToRecentFiles(result.path).catch(() => {});
+          allowHashStatusUpdateRef.current = true;
+          return;
+        }
+        // Some `.animstudio.json` files end up with just a `.json`
+        // suffix on disk (depending on how the user named the file).
+        // Sniff the parsed JSON for the AnimStudio scene shape and
+        // route accordingly so a regular-JSON open doesn't silently
+        // become a Monaco text tab.
+        if (lowerExt === '.json' && looksLikeAnimStudioScene(result.content)) {
+          await animStudioOpenSceneFromPath(result.path);
+          await addToRecentFiles(result.path).catch(() => {});
           allowHashStatusUpdateRef.current = true;
           return;
         }
@@ -5127,6 +5509,20 @@ function App() {
       if (model) {
         const currentContent = model.getValue();
 
+        // Nothing actually changed (a panel re-applied identical
+        // content) — don't push an empty undo step or disturb scroll.
+        if (currentContent === newContent) return;
+
+        // The side panel — not the editor — has focus when it rewrites
+        // content, so the editor's recorded selection is stale (often
+        // line 1). Left alone, Monaco reveals that stale spot on undo,
+        // which reads as "the editor scrolled up for no reason". Snapshot
+        // the viewport now and restore it after the programmatic edit so
+        // applying the change doesn't jump, and point the post-edit cursor
+        // at the actual edit so a later undo reveals there instead of the
+        // top.
+        const preEditViewState = editor.saveViewState();
+
         // Find the actual changed lines to minimize the edit
         const oldLines = currentContent.split('\n');
         const newLines = newContent.split('\n');
@@ -5156,13 +5552,17 @@ function App() {
         const replacementLines = newLines.slice(startLine, newEndLine + 1);
         const replacementText = replacementLines.join('\n');
 
-        // Get current selections to preserve cursor position on undo
-        const selections = editor.getSelections() || [];
+        // Anchor the cursor at the edit site (not wherever the stale
+        // editor selection happened to be) so undo/redo reveal the
+        // change instead of scrolling to the top.
+        const editAnchor = new monacoRef.current!.Selection(
+          startLineNum, 1, startLineNum, 1,
+        );
 
         // Use pushEditOperations for proper undo stack with cursor restoration
         // Only push stack element AFTER the edit (not before)
         model.pushEditOperations(
-          selections,
+          [editAnchor],
           [{
             range: {
               startLineNumber: startLineNum,
@@ -5172,11 +5572,17 @@ function App() {
             },
             text: replacementText
           }],
-          () => selections // Return same selections for undo
+          () => [editAnchor]
         );
 
         // Push stack element AFTER the edit (only once)
         model.pushStackElement();
+
+        // Restore the viewport — the panel (not the editor) drove this
+        // edit, so the user's scroll position should stay put.
+        if (preEditViewState) {
+          try { editor.restoreViewState(preEditViewState); } catch { /* best effort */ }
+        }
 
         // Update tab content state (mark as modified, content will be synced on tab switch)
         setTabs(prevTabs =>
@@ -5711,6 +6117,7 @@ function App() {
     tabs, activeTabId, activeTab, isEditorTab, isBinFileOpen,
     onTabSelect: handleTabSelect, onTabClose: handleTabClose,
     onTabCloseAll: handleTabCloseAll, onTabPin: handleTabPin,
+    onTabReorder: handleTabReorder,
 
     // -- Status / metrics
     statusText, lineCount, caretPosition, appMemoryBytes, setStatusMessage,
@@ -5760,11 +6167,19 @@ function App() {
 
     // -- Photo Studio
     onNewStudioScene, onStudioOpen: studioOpenScene, notifyStudioDirty,
+    onNewAnimStudioScene,
     onOpenSkinBinAsText: handleOpenSkinBinAsText,
     onSendMeshToStudio: handleSendMeshToStudio,
     registerStudioScene, unregisterStudioScene, getStudioScene,
+    registerAnimStudioScene, unregisterAnimStudioScene, getAnimStudioScene,
+    onOpenAnimStudio: handleOpenAnimStudio,
+    onLoadAnimStudioClip: handleLoadAnimStudioClip,
+    onOpenAnimStudioScene,
+    onSaveAnimStudioScene,
     studioAnimOpen, studioBgOpen, studioActionsOpen, studioMeshOpen, studioObjectsOpen, studioSpotlightOpen,
     setStudioAnimOpen, setStudioBgOpen, setStudioActionsOpen, setStudioMeshOpen, setStudioObjectsOpen, setStudioSpotlightOpen,
+    animStudioOptionsOpen, animStudioMappingOpen, animStudioRigOpen, animStudioGuidesOpen, animStudioPhysicsOpen, animStudioMeshOpen, animStudioExportOpen,
+    setAnimStudioOptionsOpen, setAnimStudioMappingOpen, setAnimStudioRigOpen, setAnimStudioGuidesOpen, setAnimStudioPhysicsOpen, setAnimStudioMeshOpen, setAnimStudioExportOpen,
     studioPhotoWidth, studioPhotoHeight, setStudioPhotoWidth, setStudioPhotoHeight,
 
     // -- File Explorer
@@ -5829,7 +6244,9 @@ function App() {
 
   return (
     <ShellProvider value={shellCtx}>
-      <ShellHost />
+      <DragProvider>
+        <ShellHost />
+      </DragProvider>
       <FetchAnimationsDialog
         open={!!fetchAnimDialog?.open}
         initialChampion={fetchAnimDialog?.champion ?? null}

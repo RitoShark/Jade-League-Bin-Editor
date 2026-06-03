@@ -34,6 +34,7 @@ export default function VSTitleBar() {
     const click = (cb: () => void) => () => { cb(); close(); };
 
     const recentFilesEnabled = !s.openFileDisabled && s.recentFiles.length > 0;
+    const isAnimStudioActive = s.activeTab?.tabType === 'animstudio';
 
     return (
         <div className="vs-title-bar" ref={wrapRef}>
@@ -111,6 +112,23 @@ export default function VSTitleBar() {
                             <button className="vs-menu-option" onClick={click(s.onSaveAll)}>
                                 <span>Save All</span><span className="vs-shortcut">Ctrl+Alt+S</span>
                             </button>
+                            {isAnimStudioActive && (
+                                <>
+                                    <div className="vs-menu-separator" />
+                                    <button
+                                        className="vs-menu-option"
+                                        onClick={click(() => { void s.onOpenAnimStudioScene(); })}
+                                    >
+                                        <span>Open Animation Studio Scene…</span>
+                                    </button>
+                                    <button
+                                        className="vs-menu-option"
+                                        onClick={click(() => { void s.onSaveAnimStudioScene(); })}
+                                    >
+                                        <span>Save Animation Studio Scene…</span>
+                                    </button>
+                                </>
+                            )}
                             <div className="vs-menu-separator" />
                             <button className="vs-menu-option" onClick={click(s.onOpenLog)}>
                                 <span>Open Log File</span>

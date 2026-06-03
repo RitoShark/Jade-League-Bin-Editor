@@ -347,6 +347,7 @@ pub fn run() {
             mesh_commands::wad_read_skn_animations,
             mesh_commands::wad_load_animation,
             mesh_commands::read_animation,
+            mesh_commands::write_animation_v4,
             mesh_commands::read_skn_animations_disk_cmd,
             mesh_commands::read_skn_textures_disk,
             mesh_commands::disk_guess_textures,

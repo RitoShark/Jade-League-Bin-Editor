@@ -6,7 +6,7 @@ import {
   ChevronLeft, ChevronDown, Search as SearchIcon,
   Info, Clapperboard, Layers, Palette, Settings as SettingsIcon, Upload,
   ChevronLeft as PrevIcon, ChevronRight as NextIcon,
-  Play, Pause,
+  Play, Pause, Repeat as FormCycleIcon,
 } from 'lucide-react';
 
 import { MeshPreview, type AnimationListing } from './MeshPreview';
@@ -130,6 +130,19 @@ export default function ModelViewerStage({
   const [skn, setSkn] = useState<WadEntry | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // ── Form switching ────────────────────────────────────────────────
+  // Many champions ship "forms" / spawned units as SEPARATE character
+  // folders in the same WAD (Elise → elisespider / elisespiderling;
+  // Azir → azirsoldier / azirsundisc / …). Each is a fully-loadable
+  // character, so we discover them by scanning the mount's resolved
+  // entry paths for sibling `characters/<champ-prefix>*/skins/` folders
+  // and let the user cycle through them. `forms[0]` is always the base
+  // champion; `formIdx` is which one is currently shown.
+  interface FormEntry { id: string; label: string }
+  const [forms, setForms] = useState<FormEntry[]>([]);
+  const [formIdx, setFormIdx] = useState(0);
+  const activeCharId = forms[formIdx]?.id ?? selected.entry.id;
+
   // Animations + parts — populated via callbacks from the controlled
   // MeshPreview once the SKN's skin BIN walk + animation table resolve.
   const [animations, setAnimations] = useState<AnimationListing | null>(null);
@@ -235,46 +248,88 @@ export default function ModelViewerStage({
     // the engine's ground-truth pointer to which .skn to render
     // (covers Rell rider vs. horse, Mel's variants, anything else
     // ambiguous by filename). The backend reads + resolves it for us.
-    invoke<SimpleSknRef | null>('viewer_resolve_skn', {
-      id: mountId,
-      champion: selected.entry.id,
-      skinNum: skin.num,
-    })
-      .then((ref) => {
-        if (cancelled) return;
-        if (!ref) {
-          setLoadError(
-            `Couldn't find skin${skin.num}.bin or its simpleSkin field for ${selected.entry.id}.`,
-          );
-          return;
-        }
-        if (!ref.chunk_hash_hex) {
-          setLoadError(
-            `Skin BIN points at '${ref.bin_path}' but that .skn isn't in the WAD.`,
-          );
-          return;
-        }
-        console.log(`[viewer] BIN-resolved SKN: ${ref.bin_path}`);
-        // Build a synthetic WadEntry just so the rest of the stage
-        // (which expects one) stays unchanged.
-        setSkn({
-          path: ref.bin_path,
-          path_hash_hex: ref.chunk_hash_hex,
-          size: 0,
-          compressed_size: 0,
-          compression: 'unknown',
-          is_duplicated: false,
-          unknown: false,
-        });
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setLoadError(typeof err === 'string' ? err : String(err));
+    // `activeCharId` is the base champ or a selected form character.
+    const isForm = activeCharId !== selected.entry.id.toLowerCase()
+      && activeCharId !== selected.entry.id;
+    (async () => {
+      // Try the current skin number first; for a form that doesn't ship
+      // this skin, fall back to skin 0 (its base) rather than erroring.
+      let ref = await invoke<SimpleSknRef | null>('viewer_resolve_skn', {
+        id: mountId, champion: activeCharId, skinNum: skin.num,
       });
+      if (!ref && isForm && skin.num !== 0) {
+        ref = await invoke<SimpleSknRef | null>('viewer_resolve_skn', {
+          id: mountId, champion: activeCharId, skinNum: 0,
+        });
+      }
+      if (cancelled) return;
+      if (!ref) {
+        setLoadError(
+          `Couldn't find skin${skin.num}.bin or its simpleSkin field for ${activeCharId}.`,
+        );
+        return;
+      }
+      if (!ref.chunk_hash_hex) {
+        setLoadError(`Skin BIN points at '${ref.bin_path}' but that .skn isn't in the WAD.`);
+        return;
+      }
+      console.log(`[viewer] BIN-resolved SKN (${activeCharId}): ${ref.bin_path}`);
+      setSkn({
+        path: ref.bin_path,
+        path_hash_hex: ref.chunk_hash_hex,
+        size: 0,
+        compressed_size: 0,
+        compression: 'unknown',
+        is_duplicated: false,
+        unknown: false,
+      });
+    })().catch((err: unknown) => {
+      if (cancelled) return;
+      setLoadError(typeof err === 'string' ? err : String(err));
+    });
     return () => {
       cancelled = true;
     };
-  }, [mountId, skin.num, selected.entry.id]);
+  }, [mountId, skin.num, selected.entry.id, activeCharId]);
+
+  // Discover related characters (forms / spawned units) in the mounted
+  // WAD by scanning resolved entry paths for `characters/<prefix>*`
+  // siblings. Runs once per champ/mount; resets the selection to base.
+  useEffect(() => {
+    if (mountId === null) { setForms([]); setFormIdx(0); return; }
+    const base = selected.entry.id.toLowerCase();
+    let cancelled = false;
+    setFormIdx(0);
+    (async () => {
+      try {
+        const entries = await invoke<WadEntry[]>('wad_list_entries', { id: mountId });
+        if (cancelled) return;
+        // Match `(assets|data)/characters/<name>/skins/` and keep names
+        // that start with the base champ id (the form-prefix convention).
+        const charRe = /(?:assets|data)\/characters\/([a-z0-9_]+)\/skins\//i;
+        const found = new Set<string>();
+        for (const e of entries) {
+          const m = charRe.exec(e.path.replace(/\\/g, '/').toLowerCase());
+          if (!m) continue;
+          const name = m[1];
+          if (name === base || name.startsWith(base)) found.add(name);
+        }
+        found.add(base); // base is always present
+        // Base first, then the rest alphabetically by their suffix.
+        const others = Array.from(found).filter(n => n !== base).sort();
+        const ordered = [base, ...others];
+        const labelFor = (id: string): string => {
+          if (id === base) return 'Base';
+          const suffix = id.startsWith(base) ? id.slice(base.length) : id;
+          return (suffix || id).replace(/^[_-]+/, '').replace(/\b\w/g, c => c.toUpperCase()) || id;
+        };
+        setForms(ordered.map(id => ({ id, label: labelFor(id) })));
+      } catch {
+        if (!cancelled) setForms([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [mountId, selected.entry.id]);
 
   const portraitUrl = getChampionCircleUrl(selected.cdChamp.alias, branch);
   const portraitBlob = getCachedImageUrl(portraitUrl);
@@ -293,7 +348,7 @@ export default function ModelViewerStage({
     setSelectedChromaId(null);
     setShadowAvailable(false);
     setShadowForm(false);
-  }, [selected.entry.wad_path, skin.num]);
+  }, [selected.entry.wad_path, skin.num, activeCharId]);
 
   // Auto-pick an idle clip the first time the animation listing lands
   // for a skin. Scoring approach because the simple "first clip with
@@ -980,6 +1035,22 @@ export default function ModelViewerStage({
               icon={SettingsIcon}
               prefKey="ViewerAccordion"
             >
+              {forms.length > 1 && (
+                <button
+                  type="button"
+                  className="mv-info-btn mv-form-cycle-btn"
+                  onClick={() => setFormIdx(i => (i + 1) % forms.length)}
+                  title="Cycle through this champion's forms / spawned units (e.g. Elise spider, Azir soldiers)"
+                >
+                  <FormCycleIcon size={14} />
+                  <span className="mv-form-cycle-label">
+                    Form: {forms[formIdx]?.label ?? 'Base'}
+                  </span>
+                  <span className="mv-form-cycle-count">
+                    {formIdx + 1}/{forms.length}
+                  </span>
+                </button>
+              )}
               <label className="mv-option-row">
                 <input
                   type="checkbox"

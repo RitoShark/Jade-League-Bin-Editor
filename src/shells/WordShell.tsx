@@ -64,6 +64,7 @@ export default function WordShell() {
                         onSettings={s.onSettings}
                         onAbout={s.onAbout}
                         onNewStudioScene={s.onNewStudioScene}
+                        onNewAnimStudioScene={s.onNewAnimStudioScene}
                         onOpenFolder={s.onOpenFolder}
                         onOpenSkinBinAsText={s.onOpenSkinBinAsText}
                         onSendMeshToStudio={s.onSendMeshToStudio}

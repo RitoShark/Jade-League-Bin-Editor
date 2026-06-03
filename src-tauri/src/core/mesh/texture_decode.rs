@@ -256,6 +256,7 @@ pub fn decode_tex(bytes: &[u8]) -> Result<DecodedTexture> {
 
 const DDS_MAGIC: [u8; 4] = *b"DDS ";
 const FOURCC_DXT1: u32 = 0x3154_5844; // "DXT1" little-endian
+const FOURCC_DXT3: u32 = 0x3354_5844; // "DXT3"
 const FOURCC_DXT5: u32 = 0x3554_5844; // "DXT5"
 const DDPF_FOURCC: u32 = 0x4;
 const DDPF_RGB: u32 = 0x40;
@@ -299,11 +300,12 @@ pub fn decode_dds(bytes: &[u8]) -> Result<DecodedTexture> {
     if pf_flags & DDPF_FOURCC != 0 {
         match four_cc {
             FOURCC_DXT1 => decode_bc(pixel_data, width, height, BcFormat::Bc1, "DXT1"),
+            FOURCC_DXT3 => decode_bc(pixel_data, width, height, BcFormat::Bc2, "DXT3"),
             FOURCC_DXT5 => decode_bc(pixel_data, width, height, BcFormat::Bc3, "DXT5"),
             other => Err(MeshError::InvalidField {
                 format: "DDS",
                 field: "fourCC",
-                value: format!("0x{:08x} (only DXT1/DXT5 supported)", other),
+                value: format!("0x{:08x} (only DXT1/DXT3/DXT5 supported)", other),
             }),
         }
     } else if (pf_flags & (DDPF_RGB | DDPF_ALPHAPIXELS)) != 0 && rgb_bit_count == 32 {
@@ -566,10 +568,10 @@ fn mipmap_count(width: u32, height: u32) -> u32 {
 fn bc_mip_size(width: u32, height: u32, fmt: BcFormat) -> usize {
     let bytes_per_block = match fmt {
         BcFormat::Bc1 => 8,
-        BcFormat::Bc3 => 16,
-        // Other BC formats (Bc2/Bc4/Bc5/Bc6h/Bc7) are unreachable
-        // here — `decode_dds` and `decode_tex` only call us with
-        // Bc1 / Bc3.
+        BcFormat::Bc2 | BcFormat::Bc3 => 16,
+        // Other BC formats (Bc4/Bc5/Bc6h/Bc7) are unreachable here —
+        // `decode_tex` only calls us with Bc1/Bc3, `decode_dds` with
+        // Bc1/Bc2/Bc3.
         _ => 16,
     };
     bc_mip_size_at_level(width, height, 0, bytes_per_block)

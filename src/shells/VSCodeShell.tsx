@@ -136,6 +136,7 @@ export default function VSCodeShell() {
                         onTabCloseAll={s.onTabCloseAll}
                         onTabPin={s.onTabPin}
                         onRevealInExplorer={s.revealInExplorer}
+                        onReorderTab={s.onTabReorder}
                         splitMode={s.splitMode}
                         onToggleSplit={() => s.setSplitMode(!s.splitMode)}
                         splitDisabled={s.tabs.length < 2}
@@ -156,6 +157,7 @@ export default function VSCodeShell() {
                 onSettings={s.onSettings}
                 onAbout={s.onAbout}
                 onNewStudioScene={s.onNewStudioScene}
+                onNewAnimStudioScene={s.onNewAnimStudioScene}
                 onOpenFolder={s.onOpenFolder}
                 onOpenSkinBinAsText={s.onOpenSkinBinAsText}
                 onSendMeshToStudio={s.onSendMeshToStudio}

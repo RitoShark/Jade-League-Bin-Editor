@@ -13,6 +13,7 @@ import TexturePreviewTab from '../components/TexturePreviewTab';
 import QuartzDiffTab from '../components/QuartzDiffTab';
 import CompareTab from '../components/CompareTab';
 import StudioTab from '../components/StudioTab';
+import AnimStudioTab from '../components/AnimStudioTab';
 import SecondaryPaneView from './SecondaryPaneView';
 import { useShell, type PerfMode } from './ShellContext';
 
@@ -145,6 +146,23 @@ export default function EditorPane() {
                     }}
                 >
                     <StudioTab tabId={studioTab.id} />
+                </div>
+            ))}
+            {/* Animation Studio tabs follow the same mount-all/hide-
+                inactive pattern as Photo Studio — unmounting would
+                disposes the dual-engine scene and force a reload of
+                both SKNs on every tab switch. */}
+            {s.tabs.filter(t => t.tabType === 'animstudio').map(animTab => (
+                <div
+                    key={animTab.id}
+                    style={{
+                        flex: '1 1 auto',
+                        minHeight: 0,
+                        position: 'relative',
+                        display: activeTab?.id === animTab.id ? 'block' : 'none',
+                    }}
+                >
+                    <AnimStudioTab tabId={animTab.id} />
                 </div>
             ))}
             {/* Compare tabs render all-at-once with `display:none` for

@@ -40,7 +40,7 @@ import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture';
 import { CreateGround } from '@babylonjs/core/Meshes/Builders/groundBuilder';
 import { GridMaterial } from '@babylonjs/materials/grid/gridMaterial';
 
-import { createEngine } from '../lib/babylon/engine';
+import { createEngine, isAppVisible } from '../lib/babylon/engine';
 import { buildSknMeshes, type SknDTO } from '../lib/babylon/meshBuilder';
 import { buildBinaryStl } from '../lib/stlExport';
 import {
@@ -885,6 +885,7 @@ export function MeshPreview({
 
         const startRender = () => {
             engine.runRenderLoop(() => {
+                if (!isAppVisible()) return;
                 if (sceneRef.current) sceneRef.current.render();
             });
         };
@@ -2725,6 +2726,7 @@ async function applyTexturesDisk(
     try {
         map = await invoke<SknTextureBindings | null>('read_skn_textures_disk', {
             sknPath: sknDiskPath,
+            submeshNames: skn.submeshes.map(s => s.name),
         });
     } catch (e) {
         console.warn('[MeshPreview] disk texture map fetch failed:', e);

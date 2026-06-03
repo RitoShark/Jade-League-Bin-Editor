@@ -7,6 +7,8 @@ import ParticleEditorPanel from '../components/ParticleEditorPanel';
 import MarkdownEditPanel from '../components/MarkdownEditPanel';
 import BinNavPanel from '../components/BinNavPanel';
 import VSToolbar from './VSToolbar';
+import type { ToolbarOrientation } from './VSToolbar';
+import { useSharedPersistedString } from '../lib/persistedState';
 import VSTitleBar from './VSTitleBar';
 import VSDockPane from './VSDockPane';
 import VSDockGroup from './VSDockGroup';
@@ -18,6 +20,13 @@ import StudioBackgroundPanel from '../components/StudioBackgroundPanel';
 import StudioActionsPanel from '../components/StudioActionsPanel';
 import StudioMeshPanel from '../components/StudioMeshPanel';
 import StudioObjectsPanel from '../components/StudioObjectsPanel';
+import AnimStudioOptionsPanel from '../components/AnimStudioOptionsPanel';
+import AnimStudioMappingPanel from '../components/AnimStudioMappingPanel';
+import AnimStudioRigPanel from '../components/AnimStudioRigPanel';
+import AnimStudioGuidesPanel from '../components/AnimStudioGuidesPanel';
+import AnimStudioPhysicsPanel from '../components/AnimStudioPhysicsPanel';
+import AnimStudioMeshPanel from '../components/AnimStudioMeshPanel';
+import AnimStudioExportPanel from '../components/AnimStudioExportPanel';
 import StudioSpotlightPanel from '../components/StudioSpotlightPanel';
 import FileExplorerPane from '../components/FileExplorerPane';
 import SharedDialogs from './SharedDialogs';
@@ -44,6 +53,13 @@ const TOOL_LABELS: Record<ToolId, string> = {
     'studio-mesh': 'Mesh',
     'studio-objects': 'Objects',
     'studio-spotlight': 'Lighting',
+    'animstudio-options': 'Anim Options',
+    'animstudio-mapping': 'Bone Mapping',
+    'animstudio-rig':     'Bone Rig',
+    'animstudio-guides':  'Guides',
+    'animstudio-physics': 'Physics',
+    'animstudio-mesh':    'Meshes',
+    'animstudio-export':  'Export',
     'file-explorer': 'Explorer',
 };
 
@@ -120,6 +136,11 @@ export default function VisualStudioShell() {
         : null;
     const isMarkdown = ext === 'md' || ext === 'markdown';
 
+    // Toolbar orientation — toggled via right-click on VSToolbar.
+    // 'top' keeps the legacy horizontal strip. 'left'/'right' mount it
+    // as a VSCode-style activity bar inside the shell body.
+    const [toolbarOrientation] = useSharedPersistedString<ToolbarOrientation>('vstoolbar-orientation', 'top');
+
     const findOpen = s.findWidgetOpen || s.replaceWidgetOpen;
     const generalOpen = s.generalEditPanelOpen && !!activeTab && s.isEditorTab(activeTab) && !isMarkdown;
     const markdownOpen = s.generalEditPanelOpen && !!activeTab && s.isEditorTab(activeTab) && isMarkdown;
@@ -130,6 +151,9 @@ export default function VisualStudioShell() {
     // user's dock placement persists in localStorage so coming back
     // to the studio restores the customised layout.
     const isStudio = activeTab?.tabType === 'studio';
+    // Animation Studio panels mirror the same gating — they only
+    // surface when an animstudio tab is active.
+    const isAnimStudio = activeTab?.tabType === 'animstudio';
 
     const isOpen: Record<ToolId, boolean> = {
         general:  generalOpen,
@@ -145,6 +169,13 @@ export default function VisualStudioShell() {
         'studio-mesh':    isStudio && s.studioMeshOpen,
         'studio-objects': isStudio && s.studioObjectsOpen,
         'studio-spotlight': isStudio && s.studioSpotlightOpen,
+        'animstudio-options': isAnimStudio && s.animStudioOptionsOpen,
+        'animstudio-mapping': isAnimStudio && s.animStudioMappingOpen,
+        'animstudio-rig':     isAnimStudio && s.animStudioRigOpen,
+        'animstudio-guides':  isAnimStudio && s.animStudioGuidesOpen,
+        'animstudio-physics': isAnimStudio && s.animStudioPhysicsOpen,
+        'animstudio-mesh':    isAnimStudio && s.animStudioMeshOpen,
+        'animstudio-export':  isAnimStudio && s.animStudioExportOpen,
         // File Explorer is shell-wide (not bound to a particular tab type)
         // and persists even when no tab is active.
         'file-explorer': s.fileExplorerOpen,
@@ -168,6 +199,13 @@ export default function VisualStudioShell() {
             case 'studio-mesh':    s.setStudioMeshOpen(false); break;
             case 'studio-objects': s.setStudioObjectsOpen(false); break;
             case 'studio-spotlight': s.setStudioSpotlightOpen(false); break;
+            case 'animstudio-options': s.setAnimStudioOptionsOpen(false); break;
+            case 'animstudio-mapping': s.setAnimStudioMappingOpen(false); break;
+            case 'animstudio-rig':     s.setAnimStudioRigOpen(false); break;
+            case 'animstudio-guides':  s.setAnimStudioGuidesOpen(false); break;
+            case 'animstudio-physics': s.setAnimStudioPhysicsOpen(false); break;
+            case 'animstudio-mesh':    s.setAnimStudioMeshOpen(false); break;
+            case 'animstudio-export':  s.setAnimStudioExportOpen(false); break;
             case 'file-explorer': {
                 // Closing the explorer while a WAD is mounted unmounts
                 // it. Confirm first so an accidental click doesn't
@@ -464,6 +502,8 @@ export default function VisualStudioShell() {
                     onOpenFile={(p) => s.openFileFromPath(p)}
                     setRoot={s.setFileExplorerRoot}
                     setStatusMessage={s.setStatusMessage}
+                    onOpenInAnimStudio={s.onOpenAnimStudio}
+                    onLoadAnmInAnimStudio={s.onLoadAnimStudioClip}
                 />
             );
         }
@@ -480,6 +520,20 @@ export default function VisualStudioShell() {
             }
             // Non-studio tools cannot render on a studio tab (they'd
             // have nothing meaningful to do without an editor).
+            return null;
+        }
+        // Animation Studio panels render on an animstudio tab. Same
+        // pattern as Photo Studio — gate at the top, switch on id.
+        if (activeTab?.tabType === 'animstudio') {
+            switch (id) {
+                case 'animstudio-options': return <AnimStudioOptionsPanel animStudioTabId={activeTab.id} />;
+                case 'animstudio-mapping': return <AnimStudioMappingPanel animStudioTabId={activeTab.id} />;
+                case 'animstudio-rig':     return <AnimStudioRigPanel     animStudioTabId={activeTab.id} />;
+                case 'animstudio-guides':  return <AnimStudioGuidesPanel  animStudioTabId={activeTab.id} />;
+                case 'animstudio-physics': return <AnimStudioPhysicsPanel animStudioTabId={activeTab.id} />;
+                case 'animstudio-mesh':    return <AnimStudioMeshPanel    animStudioTabId={activeTab.id} />;
+                case 'animstudio-export':  return <AnimStudioExportPanel  animStudioTabId={activeTab.id} />;
+            }
             return null;
         }
         if (!activeTab || !s.isEditorTab(activeTab)) {
@@ -649,9 +703,10 @@ export default function VisualStudioShell() {
         <div className={`app-container visualstudio-shell ${s.isDragging ? 'dragging' : ''}`}>
             <VSTitleBar />
 
-            <VSToolbar />
+            {toolbarOrientation === 'top' && <VSToolbar />}
 
             <div className="vs-shell-body" ref={bodyRef}>
+                {toolbarOrientation === 'left' && <VSToolbar />}
                 {renderDock('outer-left')}
                 {renderDock('inner-left')}
 
@@ -723,6 +778,7 @@ export default function VisualStudioShell() {
                                 onTabPin={s.onTabPin}
                                 onRevealInExplorer={s.revealInExplorer}
                                 onTabPointerDown={e => startEditorDrag(e, 'pop')}
+                                onReorderTab={s.onTabReorder}
                                 splitMode={s.splitMode}
                                 onToggleSplit={() => s.setSplitMode(!s.splitMode)}
                                 splitDisabled={s.tabs.length < 2}
@@ -744,6 +800,7 @@ export default function VisualStudioShell() {
                             onSettings={s.onSettings}
                             onAbout={s.onAbout}
                             onNewStudioScene={s.onNewStudioScene}
+                            onNewAnimStudioScene={s.onNewAnimStudioScene}
                             onOpenFolder={s.onOpenFolder}
                             onOpenSkinBinAsText={s.onOpenSkinBinAsText}
                             onSendMeshToStudio={s.onSendMeshToStudio}
@@ -763,6 +820,7 @@ export default function VisualStudioShell() {
 
                 {renderDock('inner-right')}
                 {renderDock('outer-right')}
+                {toolbarOrientation === 'right' && <VSToolbar />}
 
                 {/* Floating tool windows. They live above the body so they
                     can sit anywhere over the editor / docked panes. */}

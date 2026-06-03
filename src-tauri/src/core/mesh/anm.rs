@@ -24,7 +24,7 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use glam::{Quat, Vec3};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::error::{MeshError, Result};
 
@@ -34,7 +34,7 @@ const MAGIC_COMPRESSED: &[u8; 8] = b"r3d2canm";
 /// One frame of TRS for a single joint, baked to flat arrays so the
 /// JS animation player can build typed arrays directly without
 /// per-frame parsing on the JS side.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnmFrame {
     pub translation: [f32; 3],
     pub rotation: [f32; 4], // xyzw
@@ -43,7 +43,7 @@ pub struct AnmFrame {
 
 /// All frames for one joint. The `joint_hash` matches `SklJoint.name_hash`
 /// in the SKL DTO so the JS player can resolve track → bone in one pass.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnmTrack {
     pub joint_hash: u32,
     pub frames: Vec<AnmFrame>,
@@ -53,7 +53,7 @@ pub struct AnmTrack {
 /// per-track `frames.len()` always match — joints with no movement
 /// still ship a frame at every index (rest-pose entries) so the
 /// player can index by frame_id without bounds checks.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BakedAnimation {
     pub duration: f32,
     pub fps: f32,

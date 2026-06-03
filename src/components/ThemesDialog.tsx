@@ -1196,7 +1196,7 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
                     className={`engine-option${shellVariant === 'vscode' ? ' active' : ''}`}
                     onClick={() => handleShellChange('vscode')}
                 >
-                    Classic
+                    Classic <span style={{ fontSize: 10, opacity: 0.7, marginLeft: 4 }}>(deprecating)</span>
                 </button>
                 <button
                     className={`engine-option${shellVariant === 'word' ? ' active' : ''}`}
@@ -1216,7 +1216,7 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             <div className="engine-description">
                 {shellVariant === 'vscode' && (
                     <>
-                        <span className="engine-description-title">Classic</span>
+                        <span className="engine-description-title">Classic (deprecating)</span>
                         <p className="engine-description-text">
                             The original Jade layout. Tabs across the top, a menu bar
                             with File / Edit / Tools, and floating popovers for Find,

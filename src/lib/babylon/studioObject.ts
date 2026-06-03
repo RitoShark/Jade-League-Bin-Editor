@@ -1555,6 +1555,11 @@ async function applyDiskSknTextures(
     try {
         map = await invoke<SknBindingsResponse | null>('read_skn_textures_disk', {
             sknPath,
+            // Pass submesh names so the binless / unmatched path can
+            // match each submesh to its own sibling texture by name
+            // (e.g. "Weapon" → `..._weapon_tx_cm.tex`) instead of
+            // slapping the single folder-default on every submesh.
+            submeshNames: skn.submeshes.map(s => s.name),
         });
     } catch {
         return;

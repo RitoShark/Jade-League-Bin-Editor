@@ -5,7 +5,7 @@ import {
     LibraryIcon, PaletteIcon, SettingsIcon, ChevronRightIcon, SearchIcon,
     MinimizeIcon, MaximizeIcon, RestoreIcon, CloseIcon,
 } from './Icons';
-import { FormatIcon, extractExtension, getFormatConfig, getAudioIconForFileName } from './FormatIcons';
+import { FileTypeIcon, extractExtension } from './FormatIcons';
 import { texBufferToDataURL, ddsBufferToDataURL, ddsFormatName, formatName as texFormatName } from '../lib/texFormat';
 import ExtractionSettingsDialog, { ExtractMode } from './ExtractionSettingsDialog';
 import PortalDropdown from './PortalDropdown';
@@ -31,11 +31,6 @@ import {
     FolderDown as FolderDownIcon,
     Package as LucidePackage,
     PackageOpen as LucidePackageOpen,
-    FileAxis3d,
-    FileCode,
-    FileDown,
-    FileBraces,
-    FileType,
     File as LucideFile,
     SquareArrowRightEnter,
     Aperture,
@@ -43,6 +38,7 @@ import {
     House,
     FolderSearch,
     Camera,
+    Clapperboard,
     CircleHelp as HelpIcon,
 } from 'lucide-react';
 import './WelcomeScreen.css';
@@ -64,6 +60,7 @@ interface WelcomeScreenProps {
     onSettings?: () => void;
     onAbout?: () => void;
     onNewStudioScene?: () => void;
+    onNewAnimStudioScene?: () => void;
     /** Pops the OS folder-picker and opens the chosen folder in the
      *  Explorer pane (studio shell only). When omitted, the tile is
      *  hidden. */
@@ -262,6 +259,7 @@ export default function WelcomeScreen({
     onSettings,
     onAbout,
     onNewStudioScene,
+    onNewAnimStudioScene,
     onOpenFolder,
     onOpenSkinBinAsText,
     onSendMeshToStudio,
@@ -534,6 +532,7 @@ export default function WelcomeScreen({
                         onThemes={onThemes}
                         onSettings={onSettings}
                         onNewStudioScene={onNewStudioScene}
+                        onNewAnimStudioScene={onNewAnimStudioScene}
                         onOpenFolder={onOpenFolder}
                         openFileDisabled={openFileDisabled}
                     />
@@ -662,6 +661,7 @@ function HomeView({
     onThemes,
     onSettings,
     onNewStudioScene,
+    onNewAnimStudioScene,
     onOpenFolder,
     openFileDisabled,
 }: {
@@ -676,6 +676,7 @@ function HomeView({
     onThemes?: () => void;
     onSettings?: () => void;
     onNewStudioScene?: () => void;
+    onNewAnimStudioScene?: () => void;
     onOpenFolder?: () => void;
     openFileDisabled?: boolean;
 }) {
@@ -747,6 +748,14 @@ function HomeView({
                             sub="Stage a model and export thumbnails"
                             icon={<Camera size={28} />}
                             onClick={onNewStudioScene}
+                        />
+                    )}
+                    {onNewAnimStudioScene && (
+                        <ActionTile
+                            label="Animation Studio"
+                            sub="Retarget animations between champions"
+                            icon={<Clapperboard size={28} />}
+                            onClick={onNewAnimStudioScene}
                         />
                     )}
                     {onMaterialLibrary && (
@@ -1564,6 +1573,27 @@ function ExtractView({
         if (match) setWadSelected(match);
         pendingWadSelectionRef.current = null;
     }, [wadEntries]);
+
+    // Clamp the context menu so it never spills off-screen near a
+    // viewport edge. Measured + repositioned in a layout effect so the
+    // menu paints once at the corrected spot — no flicker.
+    const ctxMenuRef = useRef<HTMLDivElement | null>(null);
+    useLayoutEffect(() => {
+        if (!contextMenu || !ctxMenuRef.current) return;
+        const el = ctxMenuRef.current;
+        const rect = el.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const margin = 6;
+        let left = contextMenu.x;
+        let top = contextMenu.y;
+        if (left + rect.width > vw - margin) left = Math.max(margin, contextMenu.x - rect.width);
+        if (left + rect.width > vw - margin) left = vw - rect.width - margin;
+        if (top + rect.height > vh - margin) top = Math.max(margin, contextMenu.y - rect.height);
+        if (top + rect.height > vh - margin) top = vh - rect.height - margin;
+        el.style.left = `${left}px`;
+        el.style.top = `${top}px`;
+    }, [contextMenu]);
 
     // Close the context menu on any outside click / Esc / another
     // right-click. Mirrors how most native menus dismiss themselves.
@@ -3865,7 +3895,25 @@ function ExtractView({
                                         {iconForExtension(fext.replace(/^\./, ''), fname)}
                                     </span>
                                     <span className="welcome-extract-row-name">
-                                        {search.trim() ? f.path : fname}
+                                        {(() => {
+                                            // While searching: a folder-scoped
+                                            // search (the default) shows paths
+                                            // relative to the current sub-dir so
+                                            // the visible string isn't drowning
+                                            // in the parent prefix the user
+                                            // already navigated through. The
+                                            // "search whole WAD" toggle goes
+                                            // back to full paths because there's
+                                            // no shared context to strip.
+                                            if (!search.trim()) return fname;
+                                            if (!searchWholeWad && wadCurrentDir) {
+                                                const prefix = wadCurrentDir.toLowerCase() + '/';
+                                                if (f.path.toLowerCase().startsWith(prefix)) {
+                                                    return f.path.slice(wadCurrentDir.length + 1);
+                                                }
+                                            }
+                                            return f.path;
+                                        })()}
                                     </span>
                                     <span className="welcome-extract-row-meta">
                                         {fext || (f.unknown ? 'Unknown' : 'File')}
@@ -4211,6 +4259,7 @@ function ExtractView({
 
             {contextMenu && (
                 <div
+                    ref={ctxMenuRef}
                     className="welcome-extract-ctxmenu"
                     style={{ top: contextMenu.y, left: contextMenu.x }}
                     role="menu"
@@ -4373,80 +4422,16 @@ function WadIcon({ size = 20, isOpen = false }: { size?: number; isOpen?: boolea
     );
 }
 
-/* Texture / image glyph — picture frame with sun + mountain. Used for
-   `.dds` and `.tex` rows in the WAD list so the eye spots textures
-   without reading the extension column. */
-function TextureIcon({ size = 16 }: { size?: number }) {
-    return (
-        <svg
-            width={size}
-            height={size}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <circle cx="8.5" cy="9" r="1.5" />
-            <path d="M21 15l-4.5-4.5a1.5 1.5 0 0 0-2.12 0L4 21" />
-        </svg>
-    );
-}
-
-/* Extensions Jade treats as "source code" — beyond the BIN family,
-   these are languages a user might idly try to open in the editor. */
-const CODE_EXTENSIONS = new Set([
-    'py', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'rs', 'go', 'java',
-    'js', 'jsx', 'ts', 'tsx', 'lua', 'rb', 'php', 'sh', 'ps1',
-    'css', 'scss', 'html', 'xml', 'toml', 'yaml', 'yml',
-]);
-const TEXT_EXTENSIONS = new Set(['txt', 'log', 'ini', 'cfg', 'csv']);
-
-/** Pick a lucide file glyph for a recent-files row. Studio scenes get
- *  a camera, BIN / code files a code glyph, Markdown a download arrow,
- *  plain JSON braces, text files a type glyph, everything else the
- *  generic file outline. */
+/** Recent-files row icon. Delegates to the shared `FileTypeIcon` so the
+ *  Welcome screen, Extract tab, and File Explorer all draw the same
+ *  glyph for a given file (including the studio-scene tab icons). */
 function recentFileIcon(filePath: string, ext: string): React.ReactElement {
-    const name = filePath.replace(/\\/g, '/').split('/').pop()?.toLowerCase() || '';
-    const lower = (ext || '').toLowerCase();
-    const size = 32;
-    if (name.endsWith('.studio.json')) return <FileAxis3d size={size} />;
-    if (lower === 'bin' || CODE_EXTENSIONS.has(lower)) return <FileCode size={size} />;
-    if (lower === 'md' || lower === 'markdown') return <FileDown size={size} />;
-    if (lower === 'json') return <FileBraces size={size} />;
-    if (TEXT_EXTENSIONS.has(lower)) return <FileType size={size} />;
-    return <LucideFile size={size} />;
+    const name = filePath.replace(/\\/g, '/').split('/').pop() || '';
+    return <FileTypeIcon extension={ext} fileName={name} size={32} />;
 }
 
-/** Pick the right outlined glyph for a file row by extension. WAD
- *  package files are handled separately (caller checks `isWadFileName`)
- *  because their extension is `.client` rather than `.wad`. Pass the
- *  filename when available so VO/SFX `.bnk` and `.wpk` containers get
- *  the role-specific mic / book-audio / volume icons instead of the
- *  generic page outline. */
-function iconForExtension(ext: string, fileName?: string): React.ReactElement {
-    const lower = (ext || '').toLowerCase();
-    // Filename-driven audio icon — VO vs SFX vs events can't be
-    // distinguished by the bare `.bnk` extension, so check the
-    // basename first.
-    if (fileName) {
-        const audio = getAudioIconForFileName(fileName);
-        if (audio) {
-            const Glyph = audio;
-            return <Glyph size={16} strokeWidth={1.8} aria-hidden="true" />;
-        }
-    }
-    if (lower === 'dds' || lower === 'tex' || lower === 'png' || lower === 'jpg' || lower === 'jpeg' || lower === 'bmp') {
-        return <TextureIcon size={16} />;
-    }
-    // Hand off to FormatIcon for any extension that has a custom
-    // pictogram registered (skl / skn / scb / sco / anm). Otherwise
-    // fall through to the generic page outline.
-    if (getFormatConfig(lower).glyph) {
-        return <FormatIcon extension={lower} size={16} />;
-    }
-    return <DocIcon size={16} />;
+/** Extract-tab row icon. Thin wrapper over the shared `FileTypeIcon`. */
+function iconForExtension(ext: string, fileName?: string, size = 16): React.ReactElement {
+    return <FileTypeIcon extension={ext} fileName={fileName} size={size} />;
 }
 
