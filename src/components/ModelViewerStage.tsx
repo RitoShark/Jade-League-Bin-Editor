@@ -9,7 +9,7 @@ import {
   Play, Pause, Repeat as FormCycleIcon,
 } from 'lucide-react';
 
-import { MeshPreview, type AnimationListing } from './MeshPreview';
+import { MeshPreview, type AnimationListing, type MeshPreviewCameraState } from './MeshPreview';
 import { Accordion, AccordionSection } from './Accordion';
 import {
   getChampionCircleUrl,
@@ -50,6 +50,11 @@ interface ModelViewerStageProps {
   /** The shared WAD mount opened upstream when the user clicked the
    *  champion tile. `null` while the open is still in flight. */
   mountId: number | null;
+  /** Whether the Viewer tab is the active/visible view. When false the
+   *  heavy Babylon canvas (MeshPreview) is unmounted to free the GPU
+   *  scene; all other React state is preserved so the model, animation,
+   *  pause-state and camera restore instantly when the user returns. */
+  active: boolean;
   onBack: () => void;
   /** When provided, the Export accordion's "Open in BIN editor" entry
    *  reads the skin BIN, converts it to text, and hands it off to the
@@ -117,6 +122,7 @@ export default function ModelViewerStage({
   skin,
   branch,
   mountId,
+  active,
   onBack,
   onOpenSkinBinAsText,
   onSendMeshToStudio,
@@ -185,6 +191,12 @@ export default function ModelViewerStage({
   const textureBindingsRef = useRef<
     Array<{ submeshName: string; chunkHashHex: string | null }> | null
   >(null);
+  // Survives MeshPreview unmount (Babylon teardown on tab-switch) so the
+  // camera orbit is restored when the user returns to the Viewer.
+  const cameraStateRef = useRef<MeshPreviewCameraState | null>(null);
+  // Latest animation frame + pause-state, kept current via onPlayerProgress
+  // and read once by MeshPreview on remount to restore a paused shot.
+  const playerRestoreRef = useRef<{ time: number; paused: boolean } | null>(null);
   // Animation playback progress (driven by MeshPreview's onPlayerProgress
   // callback) + a seek ref that lets the seek bar scrub the player.
   const [playerTime, setPlayerTime] = useState(0);
@@ -498,7 +510,14 @@ export default function ModelViewerStage({
   const exportSkinFiles = async () => {
     if (mountId === null || !skn) return;
     setSkinFilesBusy(true);
-    const label = `${selected.cdChamp.name} skin${skin.num}`;
+    // When a chroma is active, extract IT (its skin{N}.bin + textures),
+    // written over the parent skin slot — otherwise the parent skin's
+    // base textures come out instead of the chroma the user is viewing.
+    const chromaSkinNum =
+      selectedChromaId !== null ? selectedChromaId % 1000 : null;
+    const label = chromaSkinNum !== null
+      ? `${selected.cdChamp.name} skin${skin.num} chroma`
+      : `${selected.cdChamp.name} skin${skin.num}`;
     // Hoisted so the `finally` block can unmount whichever locale
     // WAD we opened for VO, even if extraction throws.
     let voMountId: number | null = null;
@@ -620,6 +639,7 @@ export default function ModelViewerStage({
           skipSfxRepath,
           exportVo,
           voMountId,
+          chromaSkinNum,
         },
       );
       const errorTail = result.errors > 0 ? ` (${result.errors} errors — see console)` : '';
@@ -738,8 +758,15 @@ export default function ModelViewerStage({
             <div className="mv-state mv-state-error">{loadError}</div>
           ) : !mountId || !skn ? (
             <div className="mv-state">Loading model…</div>
+          ) : !active ? (
+            // Viewer not visible — tear Babylon down to free the GPU
+            // scene. All selection/animation/pause/camera state is held
+            // in React state + refs here, so it restores on return.
+            <div className="mv-state" />
           ) : (
             <MeshPreview
+              cameraStateRef={cameraStateRef}
+              playerRestoreRef={playerRestoreRef}
               source={{ kind: 'wad', mountId, pathHashHex: skn.path_hash_hex }}
               label={`${selected.cdChamp.name} — skin${skin.num}`}
               controlled
@@ -760,6 +787,9 @@ export default function ModelViewerStage({
               onPlayerProgress={(p) => {
                 setPlayerTime(p.time);
                 setPlayerDuration(p.duration);
+                // Keep the restore snapshot current so a tab-switch
+                // (MeshPreview unmount) preserves the exact frame + pause.
+                playerRestoreRef.current = { time: p.time, paused: p.paused };
               }}
               onAnimationsLoaded={(a) => setAnimations(a)}
               onSubmeshesLoaded={(names) => {

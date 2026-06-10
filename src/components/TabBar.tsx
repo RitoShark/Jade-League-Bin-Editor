@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import './TabBar.css';
 import { PinIcon, CloseIcon } from './Icons';
+import { useTabDrag } from '../shells/tabDrag';
 
 export interface EditorTab {
     id: string;
@@ -65,6 +66,13 @@ interface TabBarProps {
     splitMode?: boolean;
     onToggleSplit?: () => void;
     splitDisabled?: boolean;
+    /** Split this group DOWNwards (vertical / column split). Shown next
+     *  to the side-split button when provided. Gated by `splitDisabled`
+     *  too. */
+    onSplitDown?: () => void;
+    /** Collapse all splits back into one group. Rendered only when
+     *  provided (i.e. when more than one group exists). */
+    onUnsplit?: () => void;
     /** Pane filter — when present, only tabs whose `pane` matches are
      *  shown. The two tab bars in split mode pass `'left'` and
      *  `'right'` respectively. Tabs missing a `pane` field are
@@ -83,6 +91,10 @@ interface TabBarProps {
      *  it live. `from`/`to` are indices into the rendered tab list,
      *  which for a single-pane bar are the `tabs` array indices. */
     onReorderTab?: (from: number, to: number) => void;
+    /** Id of the editor group this bar belongs to. Enables VSCode-style
+     *  drag-out: once a dragged tab leaves this strip, the drag is handed
+     *  to the cross-group/split controller (TabDragProvider). */
+    groupId?: string;
 }
 
 export default function TabBar({
@@ -96,11 +108,15 @@ export default function TabBar({
     splitMode,
     onToggleSplit,
     splitDisabled,
+    onSplitDown,
+    onUnsplit,
     paneFilter,
     onDropTabIntoPane,
     onRevealInExplorer,
     onReorderTab,
+    groupId,
 }: TabBarProps) {
+    const tabDrag = useTabDrag();
     const [tabCtx, setTabCtx] = React.useState<{ x: number; y: number; tab: EditorTab } | null>(null);
     // Id of the tab currently being dragged for reorder — used to dim it.
     const [draggingId, setDraggingId] = React.useState<string | null>(null);
@@ -305,6 +321,21 @@ export default function TabBar({
                 document.body.style.cursor = 'grabbing';
             }
             if (tryPopOut(ev)) return;
+            // Once the dragged tab leaves THIS strip, hand off to the
+            // cross-group / drop-to-split controller (VSCode-style). Pure
+            // within-strip movement stays a plain reorder below.
+            if (tabDrag && groupId) {
+                const strip = tabsContainerRef.current?.getBoundingClientRect();
+                const outside = !strip
+                    || ev.clientX < strip.left || ev.clientX > strip.right
+                    || ev.clientY < strip.top || ev.clientY > strip.bottom;
+                if (outside) {
+                    cleanup();
+                    const label = tabs.find(t => t.id === draggedId)?.fileName ?? '';
+                    tabDrag.beginTabDrag(draggedId, label, groupId, ev.clientX, ev.clientY);
+                    return;
+                }
+            }
             // Re-read the live DOM each move: as we reorder, the tab
             // nodes shuffle, so the dragged tab's index and every
             // neighbour's rect change. Reading fresh keeps the math
@@ -343,6 +374,7 @@ export default function TabBar({
         <div
             className={`tab-bar${paneFilter ? ` tab-bar-pane-${paneFilter}` : ''}`}
             data-pane={paneFilter}
+            data-group-id={groupId}
         >
             <div
                 className="tabs-container"
@@ -416,8 +448,36 @@ export default function TabBar({
                 ))}
             </div>
 
-            {(tabs.length > 1 || onToggleSplit) && (
+            {(tabs.length > 1 || onToggleSplit || onUnsplit) && (
                 <div className="tabs-actions">
+                    {/* Unsplit / join — collapse every split back into one
+                        group. Only shown when there's more than one group
+                        (the shell passes `onUnsplit` only then). */}
+                    {onUnsplit && (
+                        <button
+                            className="tab-split-btn"
+                            onClick={onUnsplit}
+                            title="Unsplit — merge all editor groups back into one"
+                        >
+                            <svg width="14" height="12" viewBox="0 0 14 12" aria-hidden="true">
+                                <rect x="1" y="1" width="12" height="10" rx="1" fill="none" stroke="currentColor" strokeWidth="1.2" />
+                                <path d="M5 3.5 7 6 5 8.5M9 3.5 7 6l2 2.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+                            </svg>
+                        </button>
+                    )}
+                    {/* Split DOWN (vertical / column). */}
+                    {onSplitDown && !splitDisabled && (
+                        <button
+                            className="tab-split-btn"
+                            onClick={onSplitDown}
+                            title="Split editor down"
+                        >
+                            <svg width="12" height="14" viewBox="0 0 12 14" aria-hidden="true">
+                                <rect x="1" y="1" width="10" height="5" rx="1" fill="none" stroke="currentColor" strokeWidth="1.2" />
+                                <rect x="1" y="8" width="10" height="5" rx="1" fill="none" stroke="currentColor" strokeWidth="1.2" />
+                            </svg>
+                        </button>
+                    )}
                     {/* The split button is only useful when at least
                         two tabs exist — splitting with a single tab
                         leaves the right pane empty until the user

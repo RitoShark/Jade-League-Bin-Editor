@@ -2,6 +2,30 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Paint the saved theme on the FIRST frame. Runs before the app
+         bundle + stylesheet evaluate, restoring the last-applied theme's
+         root CSS vars + data attributes from localStorage (written by
+         cacheThemeForBoot in themeApplicator.ts). Without this the app
+         flashes the default gray theme until loadSavedTheme's async
+         preference read lands. -->
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem('jade-boot-theme');
+          if (!raw) return;
+          var data = JSON.parse(raw);
+          var el = document.documentElement;
+          if (data && data.style) el.setAttribute('style', data.style);
+          if (data && data.attrs) {
+            for (var k in data.attrs) {
+              if (Object.prototype.hasOwnProperty.call(data.attrs, k)) {
+                el.setAttribute(k, data.attrs[k]);
+              }
+            }
+          }
+        } catch (e) { /* ignore — fall back to default theme */ }
+      })();
+    </script>
     <link rel="icon" type="image/x-icon" href="/media/jade.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Jade</title>

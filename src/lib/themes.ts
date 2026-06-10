@@ -35,6 +35,10 @@ export interface ThemeColors {
      *  preferences. Used by minimalist palettes that look "wrong" when
      *  semi-transparent washes mute their flat colors. */
     disableModernUIEffects?: boolean;
+    /** Optional animated background effect for this theme (see themeEffects.ts).
+     *  Resolves to the effect's id; alternate themes set this so they get some
+     *  life by default. Users can override or disable it in the Effects tab. */
+    effect?: string;
 }
 
 // Cascadia Code already covers the Cascadia family — its Mono variant
@@ -106,47 +110,60 @@ export const THEMES: ThemeColors[] = [
     {
         id: 'DarkRed',
         displayName: 'Crimson Forest',
-        windowBg: '#280F14',
-        editorBg: '#2D1419',
-        titleBar: '#32191E',
-        statusBar: '#9E0028',
+        // Hue pulled from ~348° (magenta-rose) to ~355° (true crimson) and
+        // the accent desaturated, per feedback that it read "between magenta
+        // and red." Revert snapshot lives in chat history if needed.
+        windowBg: '#280F11',
+        editorBg: '#2D1416',
+        titleBar: '#32191B',
+        statusBar: '#A0161E',
         text: '#F0DDE1',
-        tabBg: '#32191E',
-        selectedTab: '#5A2D37'
+        tabBg: '#32191B',
+        selectedTab: '#5A2D31'
     },
     {
         id: 'LightPink',
         displayName: 'Sakura Garden',
+        // Text was pure black ("cancer" per feedback) → dark plum; the
+        // status/accent magenta desaturated from 80%→~41% so it stops
+        // screaming against the pastel surfaces.
         windowBg: '#C896B4',
         editorBg: '#D2A5BE',
         titleBar: '#B482A0',
-        statusBar: '#C71585',
-        text: '#000000',
+        statusBar: '#B14A82',
+        text: '#3A2233',
         tabBg: '#B482A0',
         selectedTab: '#E696BE',
-        font: 'Comic Sans MS'
+        effect: 'petals'
     },
     {
         id: 'PastelBlue',
         displayName: 'Frost Lens',
+        // Text was pure black → dark slate-blue (~12:1 on the pale cyan).
+        // Title bar's pink-white tint replaced with a cool white so the
+        // theme stays in the blue family.
         windowBg: '#E6F5FF',
         editorBg: '#D2F0FF',
-        titleBar: '#FFF0FA',
+        titleBar: '#EAF6FF',
         statusBar: '#50C8FF',
-        text: '#000000',
+        text: '#1B2A38',
         tabBg: '#EBE1FF',
-        selectedTab: '#A0E6FF'
+        selectedTab: '#A0E6FF',
+        effect: 'snow'
     },
     {
         id: 'ForestGreen',
         displayName: 'Evergreen Hills',
+        // Text nudged whiter and the accent desaturated (60%→~46%, same
+        // hue) per "too saturated, texts could be more whiteish."
         windowBg: '#142319',
         editorBg: '#192D1E',
         titleBar: '#1E3223',
-        statusBar: '#228B22',
-        text: '#C8E6D2',
+        statusBar: '#328632',
+        text: '#DEEFE6',
         tabBg: '#1E3223',
-        selectedTab: '#32553C'
+        selectedTab: '#32553C',
+        effect: 'fireflies'
     },
     {
         id: 'AMOLED',
@@ -160,26 +177,73 @@ export const THEMES: ThemeColors[] = [
         selectedTab: '#1E1E1E'
     },
     {
+        // Generic clean light theme (MS Word-ish): near-white surfaces,
+        // soft dark-slate text (not pure black), a Word-blue status bar.
+        // Flat by design — the modern UI glass/gradient wash is tuned for
+        // dark palettes and muddies the clean white surfaces.
+        id: 'Light',
+        displayName: 'Light',
+        windowBg: '#F3F3F3',
+        editorBg: '#FFFFFF',
+        titleBar: '#EAEAEA',
+        statusBar: '#2B579A',
+        text: '#1F1F1F',
+        tabBg: '#ECECEC',
+        selectedTab: '#FFFFFF',
+        statusBarText: '#FFFFFF',
+        titleBarText: '#1F1F1F',
+        chromeForeground: '#1F1F1F',
+        disableModernUIEffects: true,
+    },
+    {
+        // Accessibility high-contrast: ONLY pure black + white. Elements
+        // are separated by 1px white borders (see the
+        // [data-active-theme='HighContrast'] rules in App.css) since the
+        // flat black bg gives no other visual separation. Flat — no glass.
+        id: 'HighContrast',
+        displayName: 'High Contrast',
+        windowBg: '#000000',
+        editorBg: '#000000',
+        titleBar: '#000000',
+        statusBar: '#000000',
+        text: '#FFFFFF',
+        tabBg: '#000000',
+        selectedTab: '#000000',
+        statusBarText: '#FFFFFF',
+        titleBarText: '#FFFFFF',
+        chromeForeground: '#FFFFFF',
+        disableModernUIEffects: true,
+    },
+    {
         id: 'Void',
         displayName: 'Deep Space',
-        windowBg: '#0A0514',
-        editorBg: '#0F0A1E',
-        titleBar: '#140F28',
-        statusBar: '#190F50',
+        // Surface hues used to drift 249°–270°; locked to a single ~262°
+        // and derived purely by lightness, per "keep one hue, vary the
+        // tint by lightness" feedback. The statusBar (also the modern-UI
+        // accent) was the bluish outlier that got pulled into line.
+        windowBg: '#0D0618',
+        editorBg: '#130A24',
+        titleBar: '#1A0D30',
+        statusBar: '#2B1353',
         text: '#B4AADC',
-        tabBg: '#140F28',
-        selectedTab: '#281E46'
+        tabBg: '#1A0D30',
+        selectedTab: '#2E1F47',
+        effect: 'stars'
     },
     {
         id: 'VioletSorrow',
         displayName: 'Orchid Origami',
-        windowBg: '#120A23',
-        editorBg: '#160C2A',
-        titleBar: '#1C1234',
-        statusBar: '#411E78',
+        // Same hue-lock treatment as Deep Space (~262°), kept at this
+        // theme's lighter levels. Mostly a tidy — surfaces were already
+        // ~257–263°; the title bar was the one outlier.
+        windowBg: '#130A23',
+        editorBg: '#170C2A',
+        titleBar: '#1E1036',
+        statusBar: '#402274',
         text: '#B9AAD7',
-        tabBg: '#201439',
-        selectedTab: '#4B3273'
+        tabBg: '#21113C',
+        selectedTab: '#4A3274',
+        effect: 'rain'
     },
     {
         id: 'OrangeBurnout',
@@ -190,7 +254,8 @@ export const THEMES: ThemeColors[] = [
         statusBar: '#CC5500',
         text: '#FFE4D1',
         tabBg: '#32190A',
-        selectedTab: '#6E2D0F'
+        selectedTab: '#6E2D0F',
+        effect: 'embers'
     },
     {
         id: 'PurpleGrief',
@@ -201,7 +266,8 @@ export const THEMES: ThemeColors[] = [
         statusBar: '#462850',
         text: '#DCC8E6',
         tabBg: '#231928',
-        selectedTab: '#50325A'
+        selectedTab: '#50325A',
+        effect: 'storm'
     },
     {
         id: '2077',
@@ -371,7 +437,9 @@ export const SYNTAX_COLORS: Record<string, SyntaxColors> = {
     },
     OrangeBurnout: {
         keyword: '#FF8C00',
-        comment: '#8B4513',
+        // Was #8B4513 (~2.3:1 on the dark bg — effectively invisible);
+        // lifted to a readable warm tan (~5:1).
+        comment: '#C0916F',
         stringColor: '#FFD700',
         number: '#F4A460',
         propertyColor: '#FFA07A'
@@ -424,12 +492,24 @@ export const SYNTAX_COLORS: Record<string, SyntaxColors> = {
         number: '#EBFA5C',
         propertyColor: '#5269B3'
     },
+    Light: {
+        // VS Code Light+ palette — dark tokens with proper contrast on white.
+        keyword: '#0000FF',
+        comment: '#008000',
+        stringColor: '#A31515',
+        number: '#098658',
+        propertyColor: '#001080',
+        symbolColor: '#1F1F1F',
+    },
     HighContrast: {
-        keyword: '#FFFF00',
-        comment: '#00FF00',
-        stringColor: '#FF00FF',
-        number: '#00FFFF',
-        propertyColor: '#FFFF00'
+        // Pure black + white only. No syntax color differentiation —
+        // keywords still read as bold via the Monaco theme's fontStyle.
+        keyword: '#FFFFFF',
+        comment: '#FFFFFF',
+        stringColor: '#FFFFFF',
+        number: '#FFFFFF',
+        propertyColor: '#FFFFFF',
+        symbolColor: '#FFFFFF',
     },
     VSCode: {
         keyword: '#569CD6',
@@ -451,29 +531,30 @@ export const SYNTAX_COLORS: Record<string, SyntaxColors> = {
 export const BRACKET_COLORS: Record<string, BracketColors> = {
     Default: { color1: '#FFD700', color2: '#DA70D6', color3: '#87CEEB' },
     DarkBlue: { color1: '#FFD700', color2: '#DA70D6', color3: '#00BFFF' },
-    DarkRed: { color1: '#FFD700', color2: '#FF69B4', color3: '#FF8C00' },
+    DarkRed: { color1: '#FFD700', color2: '#F06292', color3: '#FF8C00' },
     LightPink: { color1: '#4B0082', color2: '#8A2BE2', color3: '#9400D3' },
     PastelBlue: { color1: '#B8860B', color2: '#8B008B', color3: '#006400' },
     ForestGreen: { color1: '#FFD700', color2: '#40E0D0', color3: '#ADFF2F' },
     AMOLED: { color1: '#FFD700', color2: '#00FFFF', color3: '#FF00FF' },
     Void: { color1: '#FFD700', color2: '#BA55D3', color3: '#8A2BE2' },
     VioletSorrow: { color1: '#9370DB', color2: '#8A2BE2', color3: '#BA55D3' },
-    OrangeBurnout: { color1: '#FF8C00', color2: '#DAA520', color3: '#FF4500' },
+    OrangeBurnout: { color1: '#FF8C00', color2: '#DAA520', color3: '#E0632E' },
     PurpleGrief: { color1: '#BE9FE1', color2: '#E1BEE7', color3: '#9575CD' },
     LetsAllLoveLain: { color1: '#B8697A', color2: '#B07868', color3: '#C1B492' },
     MilkBag: { color1: '#640020', color2: '#640020', color3: '#640020' },
     '2023': { color1: '#F65752', color2: '#6BFBFC', color3: '#F65752' },
     YoRHa: { color1: '#4E4B42', color2: '#4E4B42', color3: '#4E4B42' },
     '2077': { color1: '#EBFA5C', color2: '#5269B3', color3: '#6BFBFC' },
-    HighContrast: { color1: '#FFFF00', color2: '#00FF00', color3: '#FF0000' },
+    Light: { color1: '#0431FA', color2: '#319331', color3: '#7B3814' },
+    HighContrast: { color1: '#FFFFFF', color2: '#FFFFFF', color3: '#FFFFFF' },
     VSCode: { color1: '#FFD700', color2: '#DA70D6', color3: '#179FFF' },
     StandardFlint: { color1: '#FFD700', color2: '#DA70D6', color3: '#179FFF' }
 };
 
 // Syntax theme options (includes all UI themes + standalone syntax themes)
 export const SYNTAX_THEME_OPTIONS = [
+    // HighContrast + Light are now real UI themes, so they come from THEMES.
     ...THEMES.map(t => ({ id: t.id, displayName: t.displayName })),
-    { id: 'HighContrast', displayName: 'High Contrast' },
     { id: 'VSCode', displayName: 'VS Code' },
     { id: 'StandardFlint', displayName: 'Standard Flint' }
 ];

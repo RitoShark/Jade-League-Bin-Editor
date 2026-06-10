@@ -4,6 +4,8 @@ import type * as MonacoType from 'monaco-editor';
 import type { EditorTab } from '../components/TabBar';
 import type { StudioScene } from '../lib/babylon/studioScene';
 import type { AnimStudioScene } from '../lib/babylon/animStudioScene';
+import type { EditorLayoutNode, SplitEdge } from './editorLayout';
+import type { ThemeAppliedInfo } from '../lib/themeApplicator';
 
 export type PerfMode = 'on' | 'auto' | 'off';
 export type PerfKey =
@@ -266,6 +268,37 @@ export interface ShellContextValue {
      *  remounts. */
     setupRightEditor: (editor: MonacoType.editor.IStandaloneCodeEditor) => () => void;
 
+    // -- Editor group layout (VSCode-style splitting)
+    //    The recursive `layout` tree of editor groups replaces the old
+    //    binary left/right split. Each leaf group renders its own tab bar
+    //    + Monaco; the focused group is the "primary" editor.
+    layout: EditorLayoutNode;
+    focusedGroupId: string;
+    /** Focus a group (its editor becomes the primary editor). */
+    onFocusGroup: (groupId: string) => void;
+    /** Mark `editor` as the app's primary editor (focused group). */
+    setPrimaryEditor: (editor: MonacoType.editor.IStandaloneCodeEditor) => void;
+    /** Activate a tab within a specific group + focus that group. */
+    onGroupSelectTab: (groupId: string, tabId: string) => void;
+    /** Close a tab from a group (honors unsaved prompts). */
+    onGroupCloseTab: (groupId: string, tabId: string) => void;
+    /** Close every tab in a group. */
+    onGroupCloseAll: (groupId: string) => void;
+    /** Reorder a tab within a group's strip. */
+    onGroupReorderTab: (groupId: string, from: number, to: number) => void;
+    /** Split a group (default: focused) along an edge, moving its active
+     *  tab into the new group. */
+    onSplitEditor: (edge: SplitEdge, groupId?: string) => void;
+    /** Commit new fractional sizes for a split node. */
+    onResizeSplit: (splitId: string, sizes: number[]) => void;
+    /** Move a tab into another group (cross-group drag). */
+    onMoveTabToGroup: (tabId: string, targetGroupId: string) => void;
+    /** Collapse every split back into a single group. */
+    onUnsplitAll: () => void;
+    /** Drag-to-split: split `targetGroupId` along `edge`, dropping the
+     *  dragged tab into the new group. */
+    onDropTabSplit: (tabId: string, targetGroupId: string, edge: SplitEdge) => void;
+
     // -- Photo Studio
     //    Each studio tab mounts a `StudioTab` component, which builds a
     //    `StudioScene` and registers it here keyed by tab id. The
@@ -418,7 +451,7 @@ export interface ShellContextValue {
     setShowNewFileDialog: (open: boolean) => void;
     particleDialogOpen: boolean;
     setParticleDialogOpen: (open: boolean) => void;
-    handleThemeApplied: () => void;
+    handleThemeApplied: (info?: ThemeAppliedInfo) => void;
     handleCreateNewFile: (fileName: string) => void;
 
     // -- Toasts

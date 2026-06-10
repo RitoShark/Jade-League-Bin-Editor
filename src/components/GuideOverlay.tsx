@@ -10,6 +10,7 @@ import {
 } from './Icons';
 import { applyTheme, applyModernUI } from '../lib/themeApplicator';
 import { THEMES, SYNTAX_COLORS } from '../lib/themes';
+import ThemeCard from './ThemeCard';
 import { useShell } from '../shells/ShellContext';
 import './GuideOverlay.css';
 
@@ -136,50 +137,11 @@ const DOCK_LAYOUT_KEY = 'vs-tool-layout';
    to actually try the drag-dock before moving on. */
 const FIND_COOLDOWN_SECS = 5;
 
-interface ThemePreview {
-    id: string;
-    name: string;
-    bg: string;
-    bar: string;
-    accent: string;
-    text: string;   // theme's UI text color — used for the card label so
-                    // the name is readable on the titleBar regardless of
-                    // how muted the syntax keyword color happens to be.
-    lineA: string;  // keyword
-    lineB: string;  // comment / property
-    lineC: string;  // stringColor
-}
-
-/** Welcome step's hand-picked trio. Built from THEMES + SYNTAX_COLORS
- *  so the preview faithfully reflects the active theme's actual
- *  syntax palette — same logic as the full customize grid. */
-function buildPreview(id: string): ThemePreview {
-    const t = THEMES.find(th => th.id === id) ?? THEMES[0];
-    const syn = SYNTAX_COLORS[id] ?? SYNTAX_COLORS.Default;
-    return {
-        id: t.id,
-        name: t.displayName,
-        bg: t.windowBg,
-        bar: t.titleBar,
-        accent: t.statusBar,
-        // Prefer `titleBarText` when the theme defines one — those are
-        // explicit chrome-readability overrides (e.g. 2077 uses dark
-        // ink on a neon-yellow title bar). Fall back to the regular
-        // UI text color otherwise.
-        text: t.titleBarText || t.text,
-        lineA: syn.keyword,
-        lineB: syn.comment,
-        lineC: syn.stringColor,
-    };
-}
-
-const THEME_PREVIEWS: ThemePreview[] = ['Default', 'DarkBlue', 'AMOLED'].map(buildPreview);
-
-/** Full theme grid for the customize step — every theme rendered with
- *  the same welcome-style mini-editor preview, colors derived faithfully
- *  from THEMES + SYNTAX_COLORS so what the user sees in the card matches
- *  what the editor will show. */
-const ALL_THEME_PREVIEWS: ThemePreview[] = THEMES.map((t) => buildPreview(t.id));
+// Welcome step's hand-picked trio + the full set for the customize grid.
+// Cards render via the shared <ThemeCard> (see ThemeCard.tsx), which
+// derives its colors from THEMES + SYNTAX_COLORS.
+const THEME_PREVIEW_IDS = ['Default', 'DarkBlue', 'AMOLED'];
+const ALL_THEME_IDS = THEMES.map(t => t.id);
 
 interface SpotRect { top: number; left: number; width: number; height: number; }
 
@@ -679,24 +641,13 @@ function WelcomeContent({ selectedTheme, onThemeSelect, onNext }: {
             <div className="guide-theme-label">Choose a look</div>
 
             <div className="guide-theme-row">
-                {THEME_PREVIEWS.map(t => (
-                    <button
-                        key={t.id}
-                        className={`guide-theme-card${selectedTheme === t.id ? ' selected' : ''}`}
-                        onClick={() => onThemeSelect(t.id)}
-                        title={t.name}
-                    >
-                        <div className="guide-theme-preview" style={{ background: t.bg }}>
-                            <div className="guide-theme-bar" style={{ background: t.bar }} />
-                            <div className="guide-theme-editor" style={{ background: t.bg }}>
-                                <div className="guide-theme-line" style={{ background: t.lineA, width: '70%' }} />
-                                <div className="guide-theme-line" style={{ background: t.lineB, width: '50%' }} />
-                                <div className="guide-theme-line" style={{ background: t.lineC, width: '60%' }} />
-                            </div>
-                            <div className="guide-theme-status" style={{ background: t.accent }} />
-                        </div>
-                        <div className="guide-theme-name" style={{ background: t.bar, color: t.lineA }}>{t.name}</div>
-                    </button>
+                {THEME_PREVIEW_IDS.map(id => (
+                    <ThemeCard
+                        key={id}
+                        themeId={id}
+                        selected={selectedTheme === id}
+                        onClick={() => onThemeSelect(id)}
+                    />
                 ))}
             </div>
 
@@ -770,35 +721,22 @@ function CustomizeContent({ selectedTheme, onThemeSelect, onNext, modernUI }: {
 
             <div className="guide-customize-section-label">Theme</div>
             <div className="guide-customize-theme-grid">
-                {ALL_THEME_PREVIEWS.map(t => {
+                {ALL_THEME_IDS.map(id => {
                     // Themes that depend on Modern UI's glass + gradient
                     // layer can't render meaningfully without it — disable
                     // them when Modern UI is currently off (e.g. because
                     // the user has MilkBag selected, which forces it off).
-                    const themeMeta = THEMES.find(th => th.id === t.id);
+                    const themeMeta = THEMES.find(th => th.id === id);
                     const lockedByModern = !!themeMeta?.requiresModernUI && !modernUI;
                     return (
-                        <button
-                            key={t.id}
-                            className={`guide-theme-card${selectedTheme === t.id ? ' selected' : ''}${lockedByModern ? ' locked' : ''}`}
-                            onClick={() => { if (!lockedByModern) onThemeSelect(t.id); }}
-                            title={lockedByModern ? `${t.name} — requires Modern UI` : t.name}
-                            disabled={lockedByModern}
-                        >
-                            <div className="guide-theme-preview" style={{ background: t.bg }}>
-                                <div className="guide-theme-bar" style={{ background: t.bar }} />
-                                <div className="guide-theme-editor" style={{ background: t.bg }}>
-                                    <div className="guide-theme-line" style={{ background: t.lineA, width: '70%' }} />
-                                    <div className="guide-theme-line" style={{ background: t.lineB, width: '50%' }} />
-                                    <div className="guide-theme-line" style={{ background: t.lineC, width: '60%' }} />
-                                </div>
-                                <div className="guide-theme-status" style={{ background: t.accent }} />
-                            </div>
-                            {/* Name uses the theme's UI text color (designed
-                                for readability on the bar) so muted-keyword
-                                themes like 2023 / 2077 / YoRHa stay legible. */}
-                            <div className="guide-theme-name" style={{ background: t.bar, color: t.text }}>{t.name}</div>
-                        </button>
+                        <ThemeCard
+                            key={id}
+                            themeId={id}
+                            selected={selectedTheme === id}
+                            locked={lockedByModern}
+                            title={lockedByModern ? `${themeMeta?.displayName} — requires Modern UI` : undefined}
+                            onClick={() => onThemeSelect(id)}
+                        />
                     );
                 })}
             </div>

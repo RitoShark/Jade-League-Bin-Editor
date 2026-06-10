@@ -83,6 +83,9 @@ export default function FloatingEditorPane({
             <div className="vs-floating-editor-body">
                 <Editor
                     height="100%"
+                    // Shared model from the registry — don't let the
+                    // wrapper dispose it when this floating pane unmounts.
+                    keepCurrentModel
                     theme={s.editorTheme}
                     onMount={onMount}
                     options={{
@@ -98,6 +101,7 @@ export default function FloatingEditorPane({
                         maxTokenizationLineLength: 100_000,
                         folding: isOn(s.perfPrefs.folding),
                         renderWhitespace: 'none',
+                        bracketPairColorization: { enabled: isOn(s.perfPrefs.bracketColors) },
                         find: {
                             addExtraSpaceOnTop: false,
                             autoFindInSelection: 'never' as const,

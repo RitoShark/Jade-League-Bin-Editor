@@ -442,7 +442,14 @@ pub(super) fn decompress_quat(bytes: &[u8; 6]) -> Quat {
     // components in [-1/√2, 1/√2] guarantees the omitted one fits in
     // [-1, 1] under the unit-norm constraint.
     const INV_SQRT2: f32 = 0.707_106_77_f32;
-    const SCALE: f32 = INV_SQRT2 / 16383.0;
+    // 16383.5 is the exact midpoint of the 15-bit field range [0, 32767],
+    // and the half-range. This makes the decode the exact inverse of the
+    // encoder `field = round(16383.5 * (√2 * value + 1))`, mapping the
+    // field symmetrically onto [-1/√2, 1/√2]. Using 16383 (as before)
+    // pinned the bottom end but overshot +1/√2 at the top by ~4e-5 and
+    // offset the zero-crossing by half a step.
+    const CENTER: f32 = 16383.5;
+    const SCALE: f32 = INV_SQRT2 / CENTER;
 
     // Pack the 6 bytes into a u64. Top 16 bits stay zero.
     let bits = (bytes[0] as u64)
@@ -456,10 +463,10 @@ pub(super) fn decompress_quat(bytes: &[u8; 6]) -> Quat {
     // a = first stored component (highest 15-bit field, bits 30-44).
     // b = second stored component (middle, bits 15-29).
     // c = third stored component (lowest, bits 0-14).
-    // Centered on 16383 so the field maps to [-1/√2, 1/√2].
-    let a = (((bits >> 30) & 0x7fff) as i32 - 16383) as f32 * SCALE;
-    let b = (((bits >> 15) & 0x7fff) as i32 - 16383) as f32 * SCALE;
-    let c = ((bits & 0x7fff) as i32 - 16383) as f32 * SCALE;
+    // Centered on 16383.5 so the field maps symmetrically to [-1/√2, 1/√2].
+    let a = (((bits >> 30) & 0x7fff) as f32 - CENTER) * SCALE;
+    let b = (((bits >> 15) & 0x7fff) as f32 - CENTER) * SCALE;
+    let c = ((bits & 0x7fff) as f32 - CENTER) * SCALE;
     // Recover the omitted component from the unit-norm constraint.
     // Clamped to non-negative because numerical drift can nudge the
     // inside of the sqrt slightly under zero.

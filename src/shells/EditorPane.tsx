@@ -282,6 +282,11 @@ export default function EditorPane() {
                 >
                 <Editor
                     height="100%"
+                    // Models are shared (monacoModelsRef) and outlive this
+                    // editor instance — never let the wrapper dispose one
+                    // on unmount/remount. See SecondaryPaneView for the
+                    // split→unsplit data-loss this guards against.
+                    keepCurrentModel
                     defaultLanguage={RITOBIN_LANGUAGE_ID}
                     theme={s.editorTheme}
                     beforeMount={s.handleBeforeMount}
@@ -365,8 +370,8 @@ export default function EditorPane() {
                                 autoFindInSelection: 'never' as const,
                                 seedSearchStringFromSelection: 'always' as const,
                             },
+                            bracketPairColorization: { enabled: !stripChrome && isOn(s.perfPrefs.bracketColors) },
                             ...({
-                                "bracketPairColorization.enabled": !stripChrome && isOn(s.perfPrefs.bracketColors),
                                 "suggest.maxVisibleSuggestions": 5,
                                 "semanticHighlighting.enabled": false,
                                 "guides.indentation": !stripChrome,

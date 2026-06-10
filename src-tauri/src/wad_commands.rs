@@ -379,6 +379,14 @@ pub async fn wad_extract_skin_assets(
     // Frontend opens it via `wad_open` before calling us and
     // closes it after. Ignored when `export_vo` is false.
     vo_mount_id: Option<u64>,
+    // When Some(n), a chroma occupying skin slot `n` is selected. We
+    // collect assets from the CHROMA's `skin{n}.bin` (so its textures —
+    // not the base skin's — land in the extraction plan) and write the
+    // chroma BIN's bytes onto the PARENT skin BIN path, so the extracted
+    // mod renders as the chroma when the parent skin loads. Mirrors the
+    // Photo Studio chroma path (`viewer_extract_for_studio`). `None` =
+    // ordinary base-skin extraction.
+    chroma_skin_num: Option<u32>,
 ) -> Result<SkinAssetExtractResult, String> {
     use crate::core::bin::repath::{
         collect_asset_paths_lower, is_audio_path, is_hud_icon_path,
@@ -386,6 +394,7 @@ pub async fn wad_extract_skin_assets(
     };
     use crate::core::bin::{read_bin_ltk, write_bin_ltk};
     use crate::core::mesh::find_skin_bin;
+    use crate::core::mesh::skin_bin::find_chroma_bin;
     use crate::core::wad::WadChunk;
     use std::collections::{HashMap, HashSet};
     use std::hash::Hasher;
@@ -490,10 +499,30 @@ pub async fn wad_extract_skin_assets(
 
     tokio::task::spawn_blocking(move || -> Result<SkinAssetExtractResult, String> {
         // ── 1. Resolve skin BIN from SKN hash ────────────────────────
-        let bin_match = find_skin_bin(id, skn_hash)
-            .ok_or_else(|| "skin BIN not found for SKN".to_string())?;
+        // For a chroma we drive asset collection from the CHROMA bin (so
+        // its textures land in the plan, not the base skin's), but keep
+        // the PARENT skin bin path so we can write the chroma bytes over
+        // it — loading the parent skin then shows the chroma.
+        let parent_bin = find_skin_bin(id, skn_hash);
+        let bin_match = match chroma_skin_num {
+            Some(n) => find_chroma_bin(id, skn_hash, n)
+                .ok_or_else(|| format!("chroma BIN skin{n} not found for SKN"))?,
+            None => parent_bin
+                .clone()
+                .ok_or_else(|| "skin BIN not found for SKN".to_string())?,
+        };
         let bin_hash = u64::from_str_radix(&bin_match.path_hash_hex, 16)
             .map_err(|e| format!("bad skin bin hash hex: {e}"))?;
+        // Hash of the parent skin bin (used to keep it out of the plan
+        // when we're overriding it with the chroma bytes), and the
+        // WAD-relative path the skin bin is ultimately written to.
+        let parent_bin_hash: Option<u64> = parent_bin
+            .as_ref()
+            .and_then(|p| u64::from_str_radix(&p.path_hash_hex, 16).ok());
+        let skin_bin_out_rel: String = match (chroma_skin_num, &parent_bin) {
+            (Some(_), Some(p)) => p.path.to_lowercase(),
+            _ => bin_match.path.to_lowercase(),
+        };
 
         // SKN folder = parent of the SKN path (used to also grab
         // sibling files Riot conventionally keeps next to the mesh
@@ -759,6 +788,23 @@ pub async fn wad_extract_skin_assets(
                 eprintln!("[vo-extract] export_vo=true but no vo_mount_id supplied");
             }
         }
+
+        // Normalize the skin-BIN plan entry: exactly one, written at the
+        // chosen output path. For a chroma this redirects the chroma BIN
+        // bytes onto the PARENT skin bin path (so the parent slot renders
+        // as the chroma — same trick as `viewer_extract_for_studio`), and
+        // drops the parent bin's own chunk if the walk happened to pull
+        // it in. It also rescues the BIN when its own WAD path isn't
+        // resolved in the mount, which would otherwise silently drop it.
+        plan.retain(|(c, _, _)| {
+            c.path_hash != bin_hash
+                && (chroma_skin_num.is_none() || Some(c.path_hash) != parent_bin_hash)
+        });
+        plan.push((
+            skin_bin_chunk,
+            skin_bin_out_rel.clone(),
+            wad_path_snapshot.clone(),
+        ));
 
         if plan.is_empty() {
             return Err("nothing to extract — skin BIN walk produced no paths".to_string());

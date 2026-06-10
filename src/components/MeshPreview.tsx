@@ -59,6 +59,15 @@ import {
 import type { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import type { Bone } from '@babylonjs/core/Bones/bone';
 
+/** Serializable ArcRotateCamera orbit — enough to restore the exact
+ *  view after MeshPreview is unmounted (Babylon torn down) and remounted. */
+export interface MeshPreviewCameraState {
+    alpha: number;
+    beta: number;
+    radius: number;
+    target: [number, number, number];
+}
+
 interface MeshPreviewProps {
     /** Disk path or `wad://<mountId>/<pathHashHex>` source identifier. */
     source:
@@ -128,6 +137,19 @@ interface MeshPreviewProps {
      *  seeks the active animation player to a given time (seconds).
      *  No-op when no clip is loaded. */
     seekRef?: React.MutableRefObject<((time: number) => void) | null>;
+    /** Host-owned ref for camera persistence. MeshPreview reads it when
+     *  framing a freshly-loaded model — restoring a saved orbit instead
+     *  of the default 3/4 view — and writes the live camera into it as
+     *  the user orbits. Lets a host unmount MeshPreview to free Babylon
+     *  on tab-switch and restore the exact view on remount. */
+    cameraStateRef?: React.MutableRefObject<MeshPreviewCameraState | null>;
+    /** Host-owned ref for animation-player persistence. MeshPreview reads
+     *  it ONCE when (re)creating the player after a remount — restoring
+     *  the exact frame + paused-state the user left on instead of
+     *  resetting to playing@0 — and the host keeps it current via
+     *  onPlayerProgress. Lets the Viewer free Babylon on tab-switch
+     *  without unpausing / losing a paused shot. */
+    playerRestoreRef?: React.MutableRefObject<{ time: number; paused: boolean } | null>;
 }
 
 type ShadingMode = 'flat' | 'lit';
@@ -173,10 +195,15 @@ export function MeshPreview({
     exportStlRef,
     onPlayerProgress,
     seekRef,
+    cameraStateRef,
+    playerRestoreRef,
 }: MeshPreviewProps) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const sceneRef = useRef<Scene | null>(null);
     const meshesRef = useRef<Mesh[]>([]);
+    // One-shot guard: restore the saved player frame/pause only on the
+    // first clip load after a (re)mount, not on later clip switches.
+    const hasRestoredPlayerRef = useRef(false);
 
     /// Per-submesh material slots keyed by index. Materials, hue
     /// colors, and currently-applied chunk hash all live here.
@@ -603,6 +630,23 @@ export function MeshPreview({
                 setPlayerSpeed(1);
                 setPlayerTime(0);
                 setPlayerDuration(player.duration);
+
+                // One-shot: if a host persisted a frame/pause (e.g. the
+                // Viewer rebuilt Babylon after a tab-switch), restore the
+                // exact shot instead of starting over at frame 0 playing.
+                // Only on the FIRST clip load of this mount; the flag trips
+                // on that first load either way, so later clip switches
+                // keep the normal reset-to-start behavior.
+                const isFirstLoad = !hasRestoredPlayerRef.current;
+                hasRestoredPlayerRef.current = true;
+                const restore = playerRestoreRef?.current;
+                if (isFirstLoad && restore) {
+                    const t = Math.max(0, Math.min(player.duration, restore.time));
+                    player.time = t;
+                    player.paused = restore.paused;
+                    setPlayerPaused(restore.paused);
+                    setPlayerTime(t);
+                }
 
                 // Drive the player from Babylon's beforeRender — fires
                 // once per render frame regardless of monitor refresh,
@@ -1121,6 +1165,36 @@ export function MeshPreview({
                 camera.radius = radius;
                 camera.lowerRadiusLimit = radius * 0.1;
                 camera.upperRadiusLimit = radius * 8;
+
+                // Restore a host-persisted orbit (e.g. the Viewer rebuilt
+                // Babylon after a tab-switch). Clamp the saved radius to the
+                // freshly-computed limits so a stale value can't shove the
+                // camera inside the model or out to infinity.
+                const savedCam = cameraStateRef?.current;
+                if (savedCam) {
+                    camera.setTarget(Vector3.FromArray(savedCam.target));
+                    camera.alpha = savedCam.alpha;
+                    camera.beta = savedCam.beta;
+                    camera.radius = Math.min(
+                        camera.upperRadiusLimit,
+                        Math.max(camera.lowerRadiusLimit, savedCam.radius),
+                    );
+                }
+                // Mirror the live camera into the host ref so the next
+                // remount can restore it. Ref write only — no React churn.
+                if (cameraStateRef) {
+                    const writeCam = () => {
+                        const t = camera.target;
+                        cameraStateRef.current = {
+                            alpha: camera.alpha,
+                            beta: camera.beta,
+                            radius: camera.radius,
+                            target: [t.x, t.y, t.z],
+                        };
+                    };
+                    camera.onViewMatrixChangedObservable.add(writeCam);
+                    writeCam();
+                }
 
 
                 if (cancelled) {

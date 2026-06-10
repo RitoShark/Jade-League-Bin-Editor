@@ -263,10 +263,28 @@ body.welcome-active .title-bar > * {
     overflow: hidden;
     padding: 32px 36px 28px 24px;
     background: var(--editor-bg, #1e1e1e);
+    /* Host the welcome effect canvas: position = its containing block,
+       isolation = scope its negative z-index so it sits above this pane's
+       background but below the content. */
+    position: relative;
+    isolation: isolate;
     /* 1px line that separates the title bar from the main pane.
        Lives on main (right column only) so it never crosses the
        rail — meets the rail's right-border at a clean corner. */
     border-top: 1px solid var(--border-color, #3e3e42);
+}
+
+/* Welcome-screen effect canvas — plays the active theme effect on the main
+   pane's own background, so the welcome screen gets the effect without going
+   transparent and revealing the editor. Above the pane background, below the
+   content (cards / text sit on top). */
+.welcome-effect-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: -1;
 }
 
 .welcome-greeting {

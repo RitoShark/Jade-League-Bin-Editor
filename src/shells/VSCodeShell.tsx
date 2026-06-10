@@ -1,9 +1,14 @@
 import TitleBar from '../components/TitleBar';
 import MenuBar from '../components/MenuBar';
-import TabBar from '../components/TabBar';
 import StatusBar from '../components/StatusBar';
 import { WelcomeScreenWithExit } from '../components/WelcomeScreen';
-import EditorPane from './EditorPane';
+import EditorGroupLayout from './EditorGroupLayout';
+import EditorGroupView from './EditorGroupView';
+import GeneralEditPanel from '../components/GeneralEditPanel';
+import ParticleEditorPanel from '../components/ParticleEditorPanel';
+import BinNavPanel from '../components/BinNavPanel';
+import MarkdownEditPanel from '../components/MarkdownEditPanel';
+import { getFileExtension } from '../lib/binOperations';
 import SharedDialogs from './SharedDialogs';
 import { useShell } from './ShellContext';
 
@@ -15,6 +20,50 @@ export default function VSCodeShell() {
     const s = useShell();
     const welcomeVisible = s.welcomeOverride === 'force'
         || (s.welcomeOverride !== 'hide' && s.tabs.length === 0);
+
+    // Floating edit panels (VSCode shell only) anchor to the editor area
+    // and target the focused group's editor via `editorRef`.
+    const at = s.activeTab;
+    const showPanels = !!at && s.isEditorTab(at);
+    const ext = at ? getFileExtension(at.filePath ?? at.fileName) : '';
+    const isMarkdown = ext === 'md' || ext === 'markdown';
+    const editorContent = at ? (s.editorRef.current?.getValue() || at.content) : '';
+    const floatingPanels = showPanels && at ? (
+        <>
+            {isMarkdown ? (
+                <MarkdownEditPanel
+                    isOpen={s.generalEditPanelOpen}
+                    onClose={() => s.setGeneralEditPanelOpen(false)}
+                    wrapSelection={s.mdWrapSelection}
+                    prefixLines={s.mdPrefixLines}
+                    insertAtCaret={s.mdInsertAtCaret}
+                />
+            ) : (
+                <GeneralEditPanel
+                    isOpen={s.generalEditPanelOpen}
+                    onClose={() => s.setGeneralEditPanelOpen(false)}
+                    editorContent={editorContent}
+                    onContentChange={s.handleGeneralEditContentChange}
+                    filePath={at.filePath ?? undefined}
+                    onLibraryInsert={s.recordJadelibInsert}
+                />
+            )}
+            <ParticleEditorPanel
+                isOpen={s.particlePanelOpen}
+                onClose={() => s.setParticlePanelOpen(false)}
+                editorContent={editorContent}
+                onContentChange={s.handleGeneralEditContentChange}
+                onScrollToLine={s.handleScrollToLine}
+                onStatusUpdate={s.setStatusMessage}
+            />
+            <BinNavPanel
+                isOpen={s.binNavOpen}
+                onClose={() => s.setBinNavOpen(false)}
+                editorContent={editorContent}
+                onScrollToLine={s.handleScrollToLine}
+            />
+        </>
+    ) : null;
 
     return (
         <div className={`app-container ${s.isDragging ? 'dragging' : ''}`}>
@@ -76,74 +125,6 @@ export default function VSCodeShell() {
                 onMainPage={() => s.setWelcomeOverride('force')}
             />
 
-            {s.tabs.length > 0 && (
-                s.splitMode ? (
-                    // Split mode: two pane-filtered tab bars side by
-                    // side. The split-toggle button lives only on
-                    // the left bar so there's a single source of
-                    // truth for the action. Drag-drop wires both
-                    // bars together via `onTabSetPane`.
-                    <div style={{ display: 'flex', flexDirection: 'row' }}>
-                        <div
-                            style={{
-                                flex: `0 0 calc(${s.splitRatio * 100}% - 2px)`,
-                                minWidth: 0,
-                            }}
-                        >
-                            <TabBar
-                                tabs={s.tabs}
-                                activeTabId={s.leftActiveTabId}
-                                onTabSelect={s.onTabSelect}
-                                onTabClose={s.onTabClose}
-                                onTabCloseAll={s.onTabCloseAll}
-                                onTabPin={s.onTabPin}
-                            onRevealInExplorer={s.revealInExplorer}
-                                splitMode={s.splitMode}
-                                onToggleSplit={() => s.setSplitMode(!s.splitMode)}
-                                paneFilter="left"
-                                onDropTabIntoPane={s.onTabSetPane}
-                            />
-                        </div>
-                        {/* Spacer column matches the editor divider's
-                            width so the bar split lines up with the
-                            pane divider below. */}
-                        <div style={{ flex: '0 0 4px' }} />
-                        <div
-                            style={{
-                                flex: `0 0 calc(${(1 - s.splitRatio) * 100}% - 2px)`,
-                                minWidth: 0,
-                            }}
-                        >
-                            <TabBar
-                                tabs={s.tabs}
-                                activeTabId={s.rightActiveTabId}
-                                onTabSelect={s.onTabSelect}
-                                onTabClose={s.onTabClose}
-                                onTabCloseAll={s.onTabCloseAll}
-                                onTabPin={s.onTabPin}
-                            onRevealInExplorer={s.revealInExplorer}
-                                paneFilter="right"
-                                onDropTabIntoPane={s.onTabSetPane}
-                            />
-                        </div>
-                    </div>
-                ) : (
-                    <TabBar
-                        tabs={s.tabs}
-                        activeTabId={s.activeTabId}
-                        onTabSelect={s.onTabSelect}
-                        onTabClose={s.onTabClose}
-                        onTabCloseAll={s.onTabCloseAll}
-                        onTabPin={s.onTabPin}
-                        onRevealInExplorer={s.revealInExplorer}
-                        onReorderTab={s.onTabReorder}
-                        splitMode={s.splitMode}
-                        onToggleSplit={() => s.setSplitMode(!s.splitMode)}
-                        splitDisabled={s.tabs.length < 2}
-                    />
-                )
-            )}
-
             <WelcomeScreenWithExit
                 visible={welcomeVisible && !s.fileLoading}
                 onOpenFile={s.onOpen}
@@ -172,8 +153,13 @@ export default function VSCodeShell() {
             {/* Wrapper takes flex:1 so the StatusBar stays pinned to the
                 bottom even when EditorPane has no active tab to render
                 (no welcome overlay, e.g. after "Continue without file"). */}
-            <div className="vscode-editor-area">
-                <EditorPane />
+            <div className="vscode-editor-area editor-container" style={{ position: 'relative', display: 'flex', minHeight: 0 }}>
+                <EditorGroupLayout
+                    node={s.layout}
+                    renderGroup={(g) => <EditorGroupView group={g} />}
+                    onResize={s.onResizeSplit}
+                />
+                {floatingPanels}
             </div>
 
             <StatusBar

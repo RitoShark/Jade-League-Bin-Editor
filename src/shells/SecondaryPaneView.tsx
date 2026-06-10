@@ -253,6 +253,15 @@ export default function SecondaryPaneView() {
         >
             <Editor
                 height="100%"
+                // The model is SHARED (owned by monacoModelsRef, also used
+                // by the left pane). `keepCurrentModel` stops the
+                // @monaco-editor/react wrapper from disposing it when this
+                // pane unmounts on unsplit — the root cause of the
+                // "split → unsplit nukes the editor" bug. The wrapper
+                // tracks the model it was handed and disposes it on unmount
+                // unless this is set, which is why the manual setModel(null)
+                // detach below wasn't enough on its own.
+                keepCurrentModel
                 defaultLanguage={RITOBIN_LANGUAGE_ID}
                 theme={s.editorTheme}
                 beforeMount={s.handleBeforeMount}
@@ -289,8 +298,8 @@ export default function SecondaryPaneView() {
                         autoFindInSelection: 'never',
                         seedSearchStringFromSelection: 'always',
                     },
+                    bracketPairColorization: { enabled: isOn(s.perfPrefs.bracketColors) },
                     ...({
-                        'bracketPairColorization.enabled': isOn(s.perfPrefs.bracketColors),
                         'suggest.maxVisibleSuggestions': 5,
                         'semanticHighlighting.enabled': false,
                         'guides.indentation': true,

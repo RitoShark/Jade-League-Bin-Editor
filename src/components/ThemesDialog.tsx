@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import FontPicker from './FontPicker';
+import ThemeCard from './ThemeCard';
 import {
     THEMES,
     PRESET_FONTS,
@@ -16,7 +17,8 @@ import {
 import {
     applyTheme, applyRoundedCorners, applyModernUI, applyCustomBackground,
     applyUIFont, injectFontFaces, fontFileNameToFamily,
-    ensurePresetFontLoaded, preloadBundledFonts,
+    ensurePresetFontLoaded, preloadBundledFonts, cacheThemeForBoot,
+    type ThemeAppliedInfo,
 } from '../lib/themeApplicator';
 import { PaletteIcon, SettingsIcon, FontSourceWindowsIcon, FontSourceBundledIcon, FontSourceImportedIcon } from './Icons';
 import {
@@ -25,13 +27,19 @@ import {
     Wallpaper as BackgroundLucide,
     Type as FontLucide,
     Columns3Cog as LayoutLucide,
+    Info as InfoLucide,
+    Sparkles as EffectsLucide,
 } from 'lucide-react';
+import EffectPreview from './EffectPreview';
+import {
+    THEME_EFFECTS, getThemeEffect, resolveEffectId, applyLiveThemeEffect, setEffectsOnEditor, setEffectsOnWelcome,
+} from '../lib/themeEffects';
 import './ThemesDialog.css';
 
 interface ThemesDialogProps {
     isOpen: boolean;
     onClose: () => void;
-    onThemeApplied?: (themeId: string) => void;
+    onThemeApplied?: (info: ThemeAppliedInfo) => void;
 }
 
 interface CustomTheme {
@@ -44,7 +52,7 @@ interface CustomTheme {
     selectedTab: string;
 }
 
-type NavSection = 'ui' | 'syntax' | 'background' | 'workspace' | 'options' | 'fonts';
+type NavSection = 'ui' | 'syntax' | 'background' | 'effects' | 'workspace' | 'options' | 'fonts';
 
 type ShellVariant = 'vscode' | 'word' | 'visualstudio';
 
@@ -52,10 +60,28 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: React.ReactNode }[] = [
     { id: 'ui',         label: 'UI Theme',      icon: <UIThemeLucide size={16} />    },
     { id: 'syntax',     label: 'Syntax Colors', icon: <SyntaxLucide size={16} />     },
     { id: 'background', label: 'Background',    icon: <BackgroundLucide size={16} /> },
+    { id: 'effects',    label: 'Effects',       icon: <EffectsLucide size={16} />    },
     { id: 'fonts',      label: 'Fonts',         icon: <FontLucide size={16} />       },
     { id: 'workspace',  label: 'Workspace',     icon: <LayoutLucide size={16} />     },
     { id: 'options',    label: 'Options',       icon: <SettingsIcon size={15} />     },
 ];
+
+// Curated "main" themes shown in the top box (6 slots). Two are reserved
+// placeholders for themes we'll add after the UI rework — a proper light
+// theme and a high-contrast theme.
+type MainSlot =
+    | { kind: 'theme'; id: string }
+    | { kind: 'placeholder'; name: string; sub: string };
+const MAIN_THEME_SLOTS: MainSlot[] = [
+    { kind: 'theme', id: 'Default' },      // gray
+    { kind: 'theme', id: 'DarkBlue' },     // blue
+    { kind: 'theme', id: 'DarkRed' },      // red
+    { kind: 'theme', id: 'Light' },        // light (MS Word-ish)
+    { kind: 'theme', id: 'AMOLED' },       // amoled
+    { kind: 'theme', id: 'HighContrast' }, // black + white
+];
+const MAIN_THEME_IDS = new Set(['Default', 'DarkBlue', 'DarkRed', 'Light', 'AMOLED', 'HighContrast']);
+const ALT_THEMES = THEMES.filter(t => !MAIN_THEME_IDS.has(t.id));
 
 
 // Persisted in localStorage so the active tab survives a shell switch.
@@ -63,7 +89,7 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: React.ReactNode }[] = [
 // because SharedDialogs lives inside the shell, so without this the
 // user would get bounced back to the UI Theme tab on every change.)
 const ACTIVE_SECTION_KEY = 'jade-themes-active-section';
-const VALID_SECTIONS: NavSection[] = ['ui', 'syntax', 'background', 'fonts', 'workspace', 'options'];
+const VALID_SECTIONS: NavSection[] = ['ui', 'syntax', 'background', 'effects', 'fonts', 'workspace', 'options'];
 function readSavedSection(): NavSection {
     try {
         const raw = window.localStorage.getItem(ACTIVE_SECTION_KEY);
@@ -124,6 +150,15 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
     // Workspace shell state — moved here from SettingsDialog so all
     // visual layout choices (theme + chrome) live in one place.
     const [shellVariant, setShellVariant] = useState<ShellVariant>('vscode');
+
+    // Theme background effects (Effects tab). effectsEnabled = master toggle;
+    // overrideEffect = pick a specific effect instead of following the theme;
+    // selectedEffect = the chosen/displayed effect id.
+    const [effectsEnabled, setEffectsEnabled] = useState(true);
+    const [overrideEffect, setOverrideEffect] = useState(false);
+    const [selectedEffect, setSelectedEffect] = useState('none');
+    const [effectsOnEditor, setEffectsOnEditorState] = useState(true);
+    const [effectsOnWelcome, setEffectsOnWelcomeState] = useState(true);
 
     const [useCustomSyntaxTheme, setUseCustomSyntaxTheme] = useState(false);
     const [customSyntax, setCustomSyntax] = useState<SyntaxColors>({
@@ -322,6 +357,11 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             const useBackground = await invoke<string>('get_preference', { key: 'UseCustomBackgroundImage', defaultValue: 'false' });
             const useThemeBg = await invoke<string>('get_preference', { key: 'UseThemeBackground', defaultValue: 'true' });
             const themeBgBlurRaw = await invoke<string>('get_preference', { key: 'ThemeBackgroundBlur', defaultValue: '4' });
+            const effEnabled  = await invoke<string>('get_preference', { key: 'ThemeEffectsEnabled', defaultValue: 'true' });
+            const effOverride = await invoke<string>('get_preference', { key: 'OverrideEffect',       defaultValue: 'false' });
+            const effId       = await invoke<string>('get_preference', { key: 'ThemeEffect',          defaultValue: '' });
+            const effEditor   = await invoke<string>('get_preference', { key: 'ThemeEffectsEditor',   defaultValue: 'true' });
+            const effWelcome  = await invoke<string>('get_preference', { key: 'ThemeEffectsWelcome',  defaultValue: 'true' });
             // Background image bytes are stored as a real file in the
             // config dir (not inlined into preferences.json). Read via
             // the dedicated command which returns a data URL on demand.
@@ -348,6 +388,15 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             setCustomBackgroundName(backgroundName);
             setUseCustomBackground(useBackground === 'true' && backgroundImage.length > 0);
             setUseThemeBackground(useThemeBg !== 'false');
+            {
+                const isOverride = effOverride === 'true';
+                setEffectsEnabled(effEnabled !== 'false');
+                setOverrideEffect(isOverride);
+                setEffectsOnEditorState(effEditor !== 'false');
+                setEffectsOnWelcomeState(effWelcome !== 'false');
+                // When not overriding, show the loaded theme's own default effect.
+                setSelectedEffect(isOverride ? (effId || 'none') : (getTheme(theme)?.effect ?? 'none'));
+            }
             {
                 const bl = Number.parseInt(themeBgBlurRaw, 10);
                 if (Number.isFinite(bl)) setThemeBgBlur(Math.max(0, Math.min(40, bl)));
@@ -484,61 +533,28 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
 
     const handleApply = async () => {
         try {
+            // Resolve the Monaco syntax-theme id the same way loadSavedTheme
+            // does, so the editor surfaces match what a fresh reload shows.
+            let syntaxThemeId = useCustomSyntaxTheme ? 'CustomSyntax' : selectedSyntaxTheme;
+            if (syntaxThemeId === 'Default') {
+                syntaxThemeId = useCustomTheme ? 'Default' : selectedTheme;
+            }
+
+            // ─────────────────────────────────────────────────────────────
+            // 1. Apply every visual change up front, synchronously, from the
+            //    dialog's current state. None of it depends on the
+            //    set_preference writes below, so doing it first makes the
+            //    whole theme switch instantly — including the minimap /
+            //    sticky-scroll / syntax surfaces driven by the Monaco theme,
+            //    which previously trailed ~40 IPC writes + font CDN fetches
+            //    (the multi-second lag) and silently never applied when one
+            //    of those awaits threw.
+            // ─────────────────────────────────────────────────────────────
             if (useCustomTheme) {
-                await invoke('set_preference', { key: 'Custom_Bg',          value: customTheme.windowBg    });
-                await invoke('set_preference', { key: 'Custom_EditorBg',    value: customTheme.editorBg    });
-                await invoke('set_preference', { key: 'Custom_TitleBar',    value: customTheme.titleBar    });
-                await invoke('set_preference', { key: 'Custom_StatusBar',   value: customTheme.statusBar   });
-                await invoke('set_preference', { key: 'Custom_Text',        value: customTheme.text        });
-                await invoke('set_preference', { key: 'Custom_TabBg',       value: customTheme.tabBg       });
-                await invoke('set_preference', { key: 'Custom_SelectedTab', value: customTheme.selectedTab });
-                await invoke('set_preference', { key: 'UseCustomTheme',     value: 'true'                  });
-                await invoke('set_preference', { key: 'Theme',              value: 'Custom'                });
                 applyTheme('Custom', customTheme);
             } else {
-                await invoke('set_preference', { key: 'Theme',          value: selectedTheme  });
-                await invoke('set_preference', { key: 'UseCustomTheme', value: 'false'        });
                 applyTheme(selectedTheme);
             }
-
-            await invoke('set_preference', { key: 'SyntaxTheme',   value: selectedSyntaxTheme        });
-            await invoke('set_preference', { key: 'OverrideSyntax', value: overrideSyntax.toString() });
-            await invoke('set_preference', { key: 'UseCustomSyntaxTheme', value: useCustomSyntaxTheme.toString() });
-
-            if (useCustomSyntaxTheme) {
-                await invoke('set_preference', { key: 'CustomSyntax_Keyword',  value: customSyntax.keyword });
-                await invoke('set_preference', { key: 'CustomSyntax_Comment',  value: customSyntax.comment });
-                await invoke('set_preference', { key: 'CustomSyntax_String',   value: customSyntax.stringColor });
-                await invoke('set_preference', { key: 'CustomSyntax_Number',   value: customSyntax.number });
-                await invoke('set_preference', { key: 'CustomSyntax_Property', value: customSyntax.propertyColor });
-                await invoke('set_preference', { key: 'CustomSyntax_Bracket1', value: customBrackets.color1 });
-                await invoke('set_preference', { key: 'CustomSyntax_Bracket2', value: customBrackets.color2 });
-                await invoke('set_preference', { key: 'CustomSyntax_Bracket3', value: customBrackets.color3 });
-            }
-            await invoke('set_preference', { key: 'RoundedCorners', value: roundedCorners.toString()  });
-            await invoke('set_preference', { key: 'ModernUI',       value: modernUI.toString()         });
-            await invoke('set_preference', { key: 'CigaretteMode',  value: cigaretteMode.toString()    });
-            await invoke('set_preference', { key: 'JamesMode',      value: jamesMode.toString()        });
-            await invoke('set_preference', { key: 'UseCustomBackgroundImage', value: (useCustomBackground && customBackgroundImage.length > 0).toString() });
-            await invoke('set_preference', { key: 'UseThemeBackground', value: useThemeBackground.toString() });
-            await invoke('set_preference', { key: 'ThemeBackgroundBlur', value: String(themeBgBlur) });
-            // Background image bytes go to a real file via dedicated command;
-            // we never store the data URL in preferences.json anymore.
-            if (customBackgroundImage.length > 0) {
-                await invoke('set_custom_background_image', { dataUrl: customBackgroundImage });
-            } else {
-                await invoke('clear_custom_background_image');
-            }
-            await invoke('set_preference', { key: 'CustomBackgroundImageName', value: customBackgroundName });
-            await invoke('set_preference', { key: 'CustomBackgroundBlur', value: String(customBackgroundBlur) });
-            await invoke('set_preference', { key: 'CustomBackgroundBrightness', value: String(customBackgroundBrightness) });
-            await invoke('set_preference', { key: 'CustomBackgroundSaturation', value: String(customBackgroundSaturation) });
-            await invoke('set_preference', { key: 'CustomBackgroundOpacity', value: String(customBackgroundOpacity) });
-            await invoke('set_preference', { key: 'CustomBackgroundVignette', value: String(customBackgroundVignette) });
-            await invoke('set_preference', { key: 'CustomBackgroundPositionX', value: String(customBackgroundPosX) });
-            await invoke('set_preference', { key: 'CustomBackgroundPositionY', value: String(customBackgroundPosY) });
-            await invoke('set_preference', { key: 'CustomBackgroundZoom', value: String(customBackgroundZoom) });
-
             applyRoundedCorners(roundedCorners);
             applyModernUI(modernUI);
 
@@ -580,11 +596,101 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
                     applyCustomBackground({ enabled: false, imageDataUrl: '', blur: 0 });
                 }
             }
-            // Save font preferences
+
+            // Animated background effect (Effects tab). Resolved + applied
+            // imperatively here (it owns its own canvas, not a Monaco/CSS
+            // surface), mirroring the theme-driven resolution.
+            setEffectsOnEditor(effectsOnEditor);
+            setEffectsOnWelcome(effectsOnWelcome);
+            applyLiveThemeEffect(resolveEffectId({
+                enabled: effectsEnabled,
+                override: overrideEffect,
+                chosenId: selectedEffect,
+                themeEffect: useCustomTheme ? undefined : getTheme(selectedTheme)?.effect,
+            }));
+
+            // Monaco editor theme — the minimap / sticky-scroll / syntax
+            // colors. The host (App.tsx) applies this synchronously from the
+            // info below. This is the surface that used to lag.
+            onThemeApplied?.({
+                themeId: useCustomTheme ? 'Custom' : selectedTheme,
+                syntaxThemeId,
+                customSyntax: useCustomSyntaxTheme ? customSyntax : undefined,
+                customBrackets: useCustomSyntaxTheme ? customBrackets : undefined,
+            });
+
+            window.dispatchEvent(new CustomEvent('cigarette-mode-changed', { detail: cigaretteMode }));
+            window.dispatchEvent(new CustomEvent('james-mode-changed', { detail: jamesMode }));
+
+            // ─────────────────────────────────────────────────────────────
+            // 2. Persist preferences in the background. The visuals are
+            //    already on screen, so these writes no longer gate (nor, on
+            //    failure, swallow) the theme switch.
+            // ─────────────────────────────────────────────────────────────
+            if (useCustomTheme) {
+                await invoke('set_preference', { key: 'Custom_Bg',          value: customTheme.windowBg    });
+                await invoke('set_preference', { key: 'Custom_EditorBg',    value: customTheme.editorBg    });
+                await invoke('set_preference', { key: 'Custom_TitleBar',    value: customTheme.titleBar    });
+                await invoke('set_preference', { key: 'Custom_StatusBar',   value: customTheme.statusBar   });
+                await invoke('set_preference', { key: 'Custom_Text',        value: customTheme.text        });
+                await invoke('set_preference', { key: 'Custom_TabBg',       value: customTheme.tabBg       });
+                await invoke('set_preference', { key: 'Custom_SelectedTab', value: customTheme.selectedTab });
+                await invoke('set_preference', { key: 'UseCustomTheme',     value: 'true'                  });
+                await invoke('set_preference', { key: 'Theme',              value: 'Custom'                });
+            } else {
+                await invoke('set_preference', { key: 'Theme',          value: selectedTheme  });
+                await invoke('set_preference', { key: 'UseCustomTheme', value: 'false'        });
+            }
+
+            await invoke('set_preference', { key: 'SyntaxTheme',   value: selectedSyntaxTheme        });
+            await invoke('set_preference', { key: 'OverrideSyntax', value: overrideSyntax.toString() });
+            await invoke('set_preference', { key: 'UseCustomSyntaxTheme', value: useCustomSyntaxTheme.toString() });
+
+            if (useCustomSyntaxTheme) {
+                await invoke('set_preference', { key: 'CustomSyntax_Keyword',  value: customSyntax.keyword });
+                await invoke('set_preference', { key: 'CustomSyntax_Comment',  value: customSyntax.comment });
+                await invoke('set_preference', { key: 'CustomSyntax_String',   value: customSyntax.stringColor });
+                await invoke('set_preference', { key: 'CustomSyntax_Number',   value: customSyntax.number });
+                await invoke('set_preference', { key: 'CustomSyntax_Property', value: customSyntax.propertyColor });
+                await invoke('set_preference', { key: 'CustomSyntax_Bracket1', value: customBrackets.color1 });
+                await invoke('set_preference', { key: 'CustomSyntax_Bracket2', value: customBrackets.color2 });
+                await invoke('set_preference', { key: 'CustomSyntax_Bracket3', value: customBrackets.color3 });
+            }
+            await invoke('set_preference', { key: 'RoundedCorners', value: roundedCorners.toString()  });
+            await invoke('set_preference', { key: 'ModernUI',       value: modernUI.toString()         });
+            await invoke('set_preference', { key: 'CigaretteMode',  value: cigaretteMode.toString()    });
+            await invoke('set_preference', { key: 'JamesMode',      value: jamesMode.toString()        });
+            await invoke('set_preference', { key: 'ThemeEffectsEnabled', value: effectsEnabled.toString() });
+            await invoke('set_preference', { key: 'OverrideEffect',      value: overrideEffect.toString() });
+            await invoke('set_preference', { key: 'ThemeEffect',         value: selectedEffect            });
+            await invoke('set_preference', { key: 'ThemeEffectsEditor',   value: effectsOnEditor.toString() });
+            await invoke('set_preference', { key: 'ThemeEffectsWelcome',  value: effectsOnWelcome.toString() });
+            await invoke('set_preference', { key: 'UseCustomBackgroundImage', value: (useCustomBackground && customBackgroundImage.length > 0).toString() });
+            await invoke('set_preference', { key: 'UseThemeBackground', value: useThemeBackground.toString() });
+            await invoke('set_preference', { key: 'ThemeBackgroundBlur', value: String(themeBgBlur) });
+            // Background image bytes go to a real file via dedicated command;
+            // we never store the data URL in preferences.json anymore.
+            if (customBackgroundImage.length > 0) {
+                await invoke('set_custom_background_image', { dataUrl: customBackgroundImage });
+            } else {
+                await invoke('clear_custom_background_image');
+            }
+            await invoke('set_preference', { key: 'CustomBackgroundImageName', value: customBackgroundName });
+            await invoke('set_preference', { key: 'CustomBackgroundBlur', value: String(customBackgroundBlur) });
+            await invoke('set_preference', { key: 'CustomBackgroundBrightness', value: String(customBackgroundBrightness) });
+            await invoke('set_preference', { key: 'CustomBackgroundSaturation', value: String(customBackgroundSaturation) });
+            await invoke('set_preference', { key: 'CustomBackgroundOpacity', value: String(customBackgroundOpacity) });
+            await invoke('set_preference', { key: 'CustomBackgroundVignette', value: String(customBackgroundVignette) });
+            await invoke('set_preference', { key: 'CustomBackgroundPositionX', value: String(customBackgroundPosX) });
+            await invoke('set_preference', { key: 'CustomBackgroundPositionY', value: String(customBackgroundPosY) });
+            await invoke('set_preference', { key: 'CustomBackgroundZoom', value: String(customBackgroundZoom) });
             await invoke('set_preference', { key: 'UIFont',    value: uiFont });
             await invoke('set_preference', { key: 'EditorFont', value: editorFont });
 
-            // Apply font changes immediately (re-inject faces + ui font + editor font event)
+            // ─────────────────────────────────────────────────────────────
+            // 3. Fonts last — decoding can hit the CDN. Colors are already
+            //    applied, so a one-beat font reflow afterwards is harmless.
+            // ─────────────────────────────────────────────────────────────
             const fontData = await Promise.all(
                 fontLibrary.map(async entry => {
                     try {
@@ -616,10 +722,10 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             const resolvedEditorFont = activeFont ? `"${activeFont}", monospace` : "";
             window.dispatchEvent(new CustomEvent('jade-editor-font-changed', { detail: resolvedEditorFont }));
 
-            window.dispatchEvent(new CustomEvent('cigarette-mode-changed', { detail: cigaretteMode }));
-            window.dispatchEvent(new CustomEvent('james-mode-changed', { detail: jamesMode }));
-
-            onThemeApplied?.(useCustomTheme ? 'Custom' : selectedTheme);
+            // Snapshot the now-resolved theme so the next launch paints it on
+            // the first frame (boot script in index.html). Mirrors the tail
+            // of loadSavedTheme, which the apply path no longer calls.
+            cacheThemeForBoot();
         } catch (error) {
             console.error('Failed to save theme preferences:', error);
         }
@@ -628,6 +734,8 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
     const handleThemeSelect = (themeId: string) => {
         setSelectedTheme(themeId);
         if (!overrideSyntax) setSelectedSyntaxTheme(themeId);
+        // Follow the new theme's default effect unless the user has overridden it.
+        if (!overrideEffect) setSelectedEffect(getTheme(themeId)?.effect ?? 'none');
         // When switching to a theme that has its own font, clear any stale font
         // override so the theme font takes effect on Apply. The user can still
         // go to the Fonts tab and pick something else before applying.
@@ -676,16 +784,7 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
         </div>
     );
 
-    const isLightTheme = (hex: string) => {
-        const r = parseInt(hex.slice(1, 3), 16);
-        const g = parseInt(hex.slice(3, 5), 16);
-        const b = parseInt(hex.slice(5, 7), 16);
-        return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5;
-    };
-
     const renderUI = () => {
-        const currentIsLight = isLightTheme(currentTheme.windowBg);
-
         return (
             <>
                 <div className="section-header">
@@ -697,62 +796,91 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
                     </label>
                 </div>
 
-                <div className="syntax-split-layout">
-                    {!useCustomTheme ? (
-                        <div className="theme-list">
-                            {THEMES.map(theme => {
-                                const lockedByModern = !!theme.requiresModernUI && !modernUI;
-                                return (
-                                <div
-                                    key={theme.id}
-                                    className={`theme-item${selectedTheme === theme.id ? ' selected' : ''}${lockedByModern ? ' disabled' : ''}`}
-                                    onClick={() => { if (!lockedByModern) handleThemeSelect(theme.id); }}
-                                    title={lockedByModern ? 'This theme requires Modern UI' : undefined}
-                                >
-                                    <span>{theme.displayName}{lockedByModern && <span className="theme-item-lock"> · Modern UI only</span>}</span>
-                                    {theme.icon ? (
-                                        <img
-                                            src={theme.icon}
-                                            className={`theme-item-icon${
-                                                theme.id === 'YoRHa'
-                                                    ? (currentIsLight ? ' theme-item-icon-light' : ' theme-item-icon-invert')
-                                                    : ''
-                                            }`}
-                                            alt=""
-                                            draggable={false}
-                                        />
-                                    ) : (
-                                        <div className="theme-preview-dots">
-                                            <div className="preview-dot" style={{ backgroundColor: theme.windowBg }} />
-                                            <div className="preview-dot" style={{ backgroundColor: theme.statusBar }} />
-                                        </div>
-                                    )}
+                <div className="ui-theme-body with-preview">
+                    <div className="ui-theme-cards">
+                        {!useCustomTheme ? (
+                            <>
+                                <div className="theme-box">
+                                    <div className="theme-box-title">Main Themes</div>
+                                    <div className="theme-card-grid">
+                                        {MAIN_THEME_SLOTS.map((slot, i) =>
+                                            slot.kind === 'theme' ? (
+                                                <ThemeCard
+                                                    key={slot.id}
+                                                    themeId={slot.id}
+                                                    selected={selectedTheme === slot.id}
+                                                    locked={!!getTheme(slot.id)?.requiresModernUI && !modernUI}
+                                                    onClick={() => handleThemeSelect(slot.id)}
+                                                />
+                                            ) : (
+                                                <ThemeCard
+                                                    key={`ph-${i}`}
+                                                    placeholder={{ name: slot.name, sub: slot.sub }}
+                                                />
+                                            )
+                                        )}
+                                    </div>
                                 </div>
-                                );
-                            })}
-                        </div>
-                    ) : (
-                        <div className="custom-theme-editor compact">
-                            {([
-                                ['Window Bg',    'windowBg'],
-                                ['Editor Bg',    'editorBg'],
-                                ['Title Bar',    'titleBar'],
-                                ['Status Bar',   'statusBar'],
-                                ['Text',         'text'],
-                                ['Tab Bg',       'tabBg'],
-                                ['Selected Tab', 'selectedTab'],
-                            ] as [string, keyof CustomTheme][]).map(([label, key]) => (
-                                <div key={key} className="color-input-group">
-                                    <label>{label}</label>
-                                    <input type="color" value={customTheme[key]}
-                                        onChange={e => setCustomTheme({ ...customTheme, [key]: e.target.value })} />
-                                    <input type="text" value={customTheme[key]}
-                                        onChange={e => setCustomTheme({ ...customTheme, [key]: e.target.value })} />
+
+                                <div className="theme-box">
+                                    <div className="theme-box-title">Alternate Themes</div>
+                                    <div className="theme-card-grid">
+                                        {ALT_THEMES.map(theme => {
+                                            const lockedByModern = !!theme.requiresModernUI && !modernUI;
+                                            return (
+                                                <ThemeCard
+                                                    key={theme.id}
+                                                    themeId={theme.id}
+                                                    selected={selectedTheme === theme.id}
+                                                    locked={lockedByModern}
+                                                    title={lockedByModern ? `${theme.displayName} — requires Modern UI` : undefined}
+                                                    onClick={() => handleThemeSelect(theme.id)}
+                                                />
+                                            );
+                                        })}
+                                    </div>
                                 </div>
-                            ))}
-                        </div>
-                    )}
-                    {uiPreview}
+                            </>
+                        ) : (
+                            <div className="custom-theme-editor compact">
+                                {([
+                                    ['Window Bg',    'windowBg'],
+                                    ['Editor Bg',    'editorBg'],
+                                    ['Title Bar',    'titleBar'],
+                                    ['Status Bar',   'statusBar'],
+                                    ['Text',         'text'],
+                                    ['Tab Bg',       'tabBg'],
+                                    ['Selected Tab', 'selectedTab'],
+                                ] as [string, keyof CustomTheme][]).map(([label, key]) => (
+                                    <div key={key} className="color-input-group">
+                                        <label>{label}</label>
+                                        <input type="color" value={customTheme[key]}
+                                            onChange={e => setCustomTheme({ ...customTheme, [key]: e.target.value })} />
+                                        <input type="text" value={customTheme[key]}
+                                            onChange={e => setCustomTheme({ ...customTheme, [key]: e.target.value })} />
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Live full-app preview — the silly iframe, bigger and
+                        parked on the side. Always shown. */}
+                    <div className="ui-theme-preview-side">
+                        {uiPreview}
+                        {!useCustomTheme && getTheme(selectedTheme)?.disableModernUIEffects && (
+                            <div className="ui-theme-flat-note">
+                                <InfoLucide size={14} />
+                                <span>Applying this theme will toggle Modern UI off.</span>
+                            </div>
+                        )}
+                        {!useCustomTheme && getTheme(selectedTheme)?.effect && (
+                            <div className="ui-theme-flat-note">
+                                <InfoLucide size={14} />
+                                <span>This theme has a background effect — change or disable it in the Effects tab.</span>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </>
         );
@@ -863,6 +991,91 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
             </div>
         </>
     );
+
+    const renderEffects = () => {
+        const themeDefault = (!useCustomTheme ? getTheme(selectedTheme)?.effect : undefined) ?? 'none';
+        const activeId = !effectsEnabled ? 'none' : (overrideEffect ? selectedEffect : themeDefault);
+        const previewBg = currentTheme.editorBg;
+        return (
+            <>
+                <div className="section-header">
+                    <h4>Background Effects</h4>
+                    <div className="section-header-checks">
+                        <label className="checkbox-label">
+                            <input type="checkbox" checked={effectsEnabled}
+                                onChange={e => setEffectsEnabled(e.target.checked)} />
+                            Enabled
+                        </label>
+                        <label className="checkbox-label">
+                            <input type="checkbox" checked={overrideEffect} disabled={!effectsEnabled}
+                                onChange={e => {
+                                    const on = e.target.checked;
+                                    setOverrideEffect(on);
+                                    if (!on) setSelectedEffect(getTheme(selectedTheme)?.effect ?? 'none');
+                                }} />
+                            Override
+                        </label>
+                        <label className="checkbox-label" title="Play effects in the editor.">
+                            <input type="checkbox" checked={effectsOnEditor} disabled={!effectsEnabled}
+                                onChange={e => setEffectsOnEditorState(e.target.checked)} />
+                            Editor
+                        </label>
+                        <label className="checkbox-label" title="Play effects on the welcome screen.">
+                            <input type="checkbox" checked={effectsOnWelcome} disabled={!effectsEnabled}
+                                onChange={e => setEffectsOnWelcomeState(e.target.checked)} />
+                            Welcome screen
+                        </label>
+                    </div>
+                </div>
+
+                <p className="themes-section-subtitle">
+                    Alternate themes carry a lightweight animated effect on the window background.
+                    Leave <strong>Override</strong> off to follow the current theme, or turn it on to pick your own.
+                </p>
+
+                {!modernUI && (
+                    <div className="ui-theme-flat-note">
+                        <InfoLucide size={14} />
+                        <span>Effects only render with Modern UI enabled — the preview below still shows them.</span>
+                    </div>
+                )}
+
+                <div className="syntax-split-layout">
+                    <div className={`theme-list${!effectsEnabled ? ' is-disabled' : ''}`}>
+                        {THEME_EFFECTS.map(eff => {
+                            const isPlaceholder = !eff.implemented && eff.id !== 'none';
+                            return (
+                                <div
+                                    key={eff.id}
+                                    className={`theme-item effect-item${activeId === eff.id ? ' selected' : ''}`}
+                                    onClick={() => {
+                                        if (!effectsEnabled) return;
+                                        if (!overrideEffect) setOverrideEffect(true);
+                                        setSelectedEffect(eff.id);
+                                    }}
+                                >
+                                    <span>{eff.displayName}</span>
+                                    <span className="effect-item-tags">
+                                        {themeDefault === eff.id && eff.id !== 'none' && (
+                                            <span className="effect-tag">theme</span>
+                                        )}
+                                        {isPlaceholder && <span className="effect-tag muted">soon</span>}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <div className="effect-preview-side">
+                        <EffectPreview effectId={activeId} bg={previewBg} />
+                        <div className="effect-preview-caption">
+                            {getThemeEffect(activeId)?.description}
+                        </div>
+                    </div>
+                </div>
+            </>
+        );
+    };
 
     const renderBackground = () => {
         const themeForBg = !useCustomTheme ? getTheme(selectedTheme) : undefined;
@@ -1279,7 +1492,7 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
                     <span>
                         <strong>Modern UI</strong>
                         <span style={{ display: 'block', fontSize: 11, opacity: 0.5, fontWeight: 400 }}>
-                            Quartz-inspired glass morphism — frosted panels, glows and gradients
+                            A more modern, fresh look
                         </span>
                     </span>
                 </label>
@@ -1509,6 +1722,7 @@ export default function ThemesDialog({ isOpen, onClose, onThemeApplied }: Themes
         ui:         renderUI,
         syntax:     renderSyntax,
         background: renderBackground,
+        effects:    renderEffects,
         fonts:      renderFonts,
         workspace:  renderWorkspace,
         options:    renderOptions,

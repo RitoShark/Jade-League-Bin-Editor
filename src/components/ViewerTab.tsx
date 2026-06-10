@@ -442,7 +442,13 @@ export default function ViewerTab({
     }
   }, []);
 
-  if (!active) return null;
+  // NB: we deliberately do NOT unmount when inactive. The parent hides
+  // this subtree (display:none) while keeping it mounted, so all viewer
+  // state — selected champion/skin, stage, the open WAD mount, and (in
+  // stage 3) the animation/pause/chroma/camera state — survives a
+  // tab-switch. Babylon itself is still torn down: ModelViewerStage
+  // unmounts its MeshPreview canvas whenever `active` is false, freeing
+  // the GPU scene without losing what the user had loaded.
 
   const sourceLabel = (s: InstallSource) =>
     s.kind === 'live' ? 'Live' : s.kind === 'pbe' ? 'PBE' : 'Custom';
@@ -474,6 +480,7 @@ export default function ViewerTab({
         skin={selectedSkin}
         branch={branch}
         mountId={mount?.id ?? null}
+        active={active}
         onBack={() => setStage('skins')}
         onOpenSkinBinAsText={onOpenSkinBinAsText}
         onSendMeshToStudio={onSendMeshToStudio}

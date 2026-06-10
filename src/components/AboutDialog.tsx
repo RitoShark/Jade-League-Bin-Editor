@@ -53,7 +53,7 @@ const CREDIT_GROUPS: CreditGroup[] = [
         label: 'Donors',
         icon: <Coffee size={11} />,
         variant: 'donor',
-        names: ['konradosj', 'hellgoat2'],
+        names: ['konradosj', 'hellgoat2', 'Keithly'],
     },
     {
         label: 'Code contributors',

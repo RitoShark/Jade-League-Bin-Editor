@@ -270,9 +270,11 @@
 
 /*
  * Editor container: fully transparent so the app-container gradient
- * shows through the editor.
+ * shows through the editor. Same for each split-group pane surface, so
+ * every pane reveals the gradient instead of a flat fill.
  */
-[data-ui-mode="modern"] .editor-container {
+[data-ui-mode="modern"] .editor-container,
+[data-ui-mode="modern"] .editor-pane-surface {
   background: transparent !important;
 }
 

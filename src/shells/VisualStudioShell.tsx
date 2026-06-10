@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import TabBar from '../components/TabBar';
 import StatusBar from '../components/StatusBar';
 import { WelcomeScreenWithExit } from '../components/WelcomeScreen';
 import GeneralEditPanel from '../components/GeneralEditPanel';
@@ -14,7 +13,10 @@ import VSDockPane from './VSDockPane';
 import VSDockGroup from './VSDockGroup';
 import FloatingEditorPane from './FloatingEditorPane';
 import MaterialOverridePanel from './MaterialOverridePanel';
-import EditorPane from './EditorPane';
+import EditorGroupLayout from './EditorGroupLayout';
+import EditorGroupView from './EditorGroupView';
+import StudioFullView from './StudioFullView';
+import { TabDragProvider } from './tabDrag';
 import StudioAnimPanel from '../components/StudioAnimPanel';
 import StudioBackgroundPanel from '../components/StudioBackgroundPanel';
 import StudioActionsPanel from '../components/StudioActionsPanel';
@@ -395,7 +397,10 @@ export default function VisualStudioShell() {
 
     const reDockEditor = useCallback(() => setEditorFloating(null), []);
 
-    const visibleTabs = s.tabs;
+    // A studio (Photo / Anim) takes over the whole editor area as one
+    // unsplit view — the split layout is hidden (kept mounted) and
+    // restored as soon as the user switches back to any other tab.
+    const studioActive = s.activeTab?.tabType === 'studio' || s.activeTab?.tabType === 'animstudio';
 
     useEffect(() => {
         if (!draggingTool) return;
@@ -700,6 +705,7 @@ export default function VisualStudioShell() {
         || (s.welcomeOverride !== 'hide' && s.tabs.length === 0);
 
     return (
+        <TabDragProvider>
         <div className={`app-container visualstudio-shell ${s.isDragging ? 'dragging' : ''}`}>
             <VSTitleBar />
 
@@ -714,77 +720,9 @@ export default function VisualStudioShell() {
                     {renderDock('outer-top')}
                     {renderDock('inner-top')}
 
-                    {/* Tab strip lives inside the editor column so any
-                        top dock pushes tabs + editor down together. In
-                        VS the tabs belong to the editor pane, not the
-                        workspace top. */}
-                    {visibleTabs.length > 0 && (
-                        s.splitMode ? (
-                            // Split mode: two pane-filtered bars. We
-                            // skip the pop-out pointer-down hook here
-                            // — TabBar's internal cross-pane drag
-                            // already consumes pointerdown, and the
-                            // user said "moving the tab just pops it
-                            // out" was a bug. Pop-out remains
-                            // available in single-pane mode below.
-                            <div style={{ display: 'flex', flexDirection: 'row' }}>
-                                <div
-                                    style={{
-                                        flex: `0 0 calc(${s.splitRatio * 100}% - 2px)`,
-                                        minWidth: 0,
-                                    }}
-                                >
-                                    <TabBar
-                                        tabs={visibleTabs}
-                                        activeTabId={s.leftActiveTabId}
-                                        onTabSelect={s.onTabSelect}
-                                        onTabClose={s.onTabClose}
-                                        onTabCloseAll={s.onTabCloseAll}
-                                        onTabPin={s.onTabPin}
-                                onRevealInExplorer={s.revealInExplorer}
-                                        splitMode={s.splitMode}
-                                        onToggleSplit={() => s.setSplitMode(!s.splitMode)}
-                                        paneFilter="left"
-                                        onDropTabIntoPane={s.onTabSetPane}
-                                    />
-                                </div>
-                                <div style={{ flex: '0 0 4px' }} />
-                                <div
-                                    style={{
-                                        flex: `0 0 calc(${(1 - s.splitRatio) * 100}% - 2px)`,
-                                        minWidth: 0,
-                                    }}
-                                >
-                                    <TabBar
-                                        tabs={visibleTabs}
-                                        activeTabId={s.rightActiveTabId}
-                                        onTabSelect={s.onTabSelect}
-                                        onTabClose={s.onTabClose}
-                                        onTabCloseAll={s.onTabCloseAll}
-                                        onTabPin={s.onTabPin}
-                                onRevealInExplorer={s.revealInExplorer}
-                                        paneFilter="right"
-                                        onDropTabIntoPane={s.onTabSetPane}
-                                    />
-                                </div>
-                            </div>
-                        ) : (
-                            <TabBar
-                                tabs={visibleTabs}
-                                activeTabId={s.activeTabId}
-                                onTabSelect={s.onTabSelect}
-                                onTabClose={s.onTabClose}
-                                onTabCloseAll={s.onTabCloseAll}
-                                onTabPin={s.onTabPin}
-                                onRevealInExplorer={s.revealInExplorer}
-                                onTabPointerDown={e => startEditorDrag(e, 'pop')}
-                                onReorderTab={s.onTabReorder}
-                                splitMode={s.splitMode}
-                                onToggleSplit={() => s.setSplitMode(!s.splitMode)}
-                                splitDisabled={s.tabs.length < 2}
-                            />
-                        )
-                    )}
+                    {/* Per-group tab bars now live inside each editor
+                        group (EditorGroupView), so the old shell-level
+                        tab strip is gone. */}
 
                     <div className={`vs-shell-editor${editorFloating ? ' editor-popped-out' : ''}`}>
                         <WelcomeScreenWithExit
@@ -811,7 +749,32 @@ export default function VisualStudioShell() {
                             isMaximized={s.isMaximized}
                         />
                         {welcomeVisible && s.fileLoading && <div className="file-loading-backdrop" />}
-                        <EditorPane />
+                        {/* Editor groups (VSCode-style split tree). Heavy
+                            single-instance tabs (Studio / Anim Studio /
+                            Compare) stay mounted inside their group. */}
+                        <div
+                            className="vs-editor-stack"
+                            style={{ position: 'relative', flex: '1 1 auto', minHeight: 0, display: 'flex' }}
+                        >
+                            {/* The split layout (bins/text). Hidden — but kept
+                                mounted — while a studio takes over. */}
+                            <div
+                                style={{
+                                    display: studioActive ? 'none' : 'flex',
+                                    flex: '1 1 auto', minWidth: 0, minHeight: 0,
+                                    position: 'relative', width: '100%',
+                                }}
+                            >
+                                <EditorGroupLayout
+                                    node={s.layout}
+                                    renderGroup={(g) => <EditorGroupView group={g} />}
+                                    onResize={s.onResizeSplit}
+                                />
+                            </div>
+                            {/* Full-area studio takeover (shows itself when a
+                                studio tab is focused). */}
+                            <StudioFullView />
+                        </div>
                     </div>
 
                     {renderDock('inner-bottom')}
@@ -874,5 +837,6 @@ export default function VisualStudioShell() {
 
             <SharedDialogs />
         </div>
+        </TabDragProvider>
     );
 }

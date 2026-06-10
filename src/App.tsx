@@ -7,13 +7,20 @@ import type { StudioSceneData } from "./lib/babylon/studioScene";
 import { Monaco } from "@monaco-editor/react";
 import type * as MonacoType from 'monaco-editor';
 import { registerRitobinLanguage, registerRitobinTheme, RITOBIN_LANGUAGE_ID, RITOBIN_THEME_ID } from "./lib/ritobinLanguage";
+import { patchBracketPairLimit, setBracketAstPolicy } from "./lib/monacoBracketPatch";
 import { registerColorProvider } from "./lib/colorProvider";
 import {
   saveBinFile, readBinDirect, writeBinDirect,
   openAnyEditorFile, saveAnyFileAs, saveAnyFileToPath, readTextDirect,
   isBinLikePath, isPlainTextPath, getFileExtension,
 } from "./lib/binOperations";
-import { loadSavedTheme } from "./lib/themeApplicator";
+import { loadSavedTheme, applyMonacoTheme, type ThemeAppliedInfo } from "./lib/themeApplicator";
+import {
+  singleGroupLayout, firstGroup, findGroup, reconcileInto, setGroupActiveTab,
+  splitGroupWithTab, setSplitSizes, moveTabToGroup, updateGroup, allGroups,
+  groupOfTab, mergeAllGroups,
+  type EditorLayoutNode, type SplitEdge,
+} from "./shells/editorLayout";
 import { checkSyntax, suggestType } from "./lib/syntaxChecker";
 import { texBufferToDataURL, ddsBufferToDataURL, ddsFormatName } from "./lib/texFormat";
 import { EditorTab, createQuartzDiffTab, createMarkdownPreviewTab, createStudioTab, createAnimStudioTab, createTab, createTexPreviewTab, createCompareTab, getFileName } from "./components/TabBar";
@@ -149,8 +156,21 @@ function App() {
   // `pane` field). New tabs created via the focused pane therefore
   // become active in THAT pane, and clicks in either tab bar follow
   // naturally.
-  const [leftActiveTabId, setLeftActiveTabId] = useState<string | null>(null);
-  const [rightActiveTabIdState, setRightActiveTabIdState] = useState<string | null>(null);
+  // ── Editor group layout (VSCode-style splitting) ──────────────────
+  // The recursive `layout` tree is the SINGLE source of truth for the
+  // editor area. Legacy split values (splitMode / left+right active /
+  // focusedPane / tab.pane) are DERIVED from it further below so the
+  // not-yet-migrated VS/Word shells keep working unchanged.
+  const initialLayoutRef = useRef<EditorLayoutNode | null>(null);
+  if (!initialLayoutRef.current) initialLayoutRef.current = singleGroupLayout();
+  const [layout, setLayout] = useState<EditorLayoutNode>(initialLayoutRef.current);
+  const [focusedGroupId, setFocusedGroupId] = useState<string>(
+    () => firstGroup(initialLayoutRef.current!).id,
+  );
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const focusedGroupIdRef = useRef(focusedGroupId);
+  focusedGroupIdRef.current = focusedGroupId;
   const viewStatesRef = useRef<Map<string, EditorViewState>>(new Map());
 
   // UI state
@@ -236,144 +256,132 @@ function App() {
   // clamped to [0.1, 0.9] by the divider's drag handler. `focusedPane`
   // tracks the pane the user last interacted with so shell-level
   // shortcuts (save, find, etc.) and new file opens go to that pane.
-  const [splitMode, setSplitModeState] = useState(false);
   const [splitRatio, setSplitRatioState] = useState(0.5);
-  const [focusedPane, setFocusedPane] = useState<'left' | 'right'>('left');
-
-  // The exposed `activeTabId` is whichever pane is focused, so every
-  // existing consumer (and the existing 17 `setActiveTabId` call
-  // sites) keeps working without change. `setActiveTabId` writes are
-  // ROUTED below to the per-pane state matching the target tab's
-  // `pane` field.
-  const activeTabId = (splitMode && focusedPane === 'right')
-    ? rightActiveTabIdState
-    : leftActiveTabId;
-  // Expose under the existing name. Real consumers downstream read
-  // `rightActiveTabId` from this same value.
-  const rightActiveTabId = rightActiveTabIdState;
-
-  const setSplitMode = useCallback((b: boolean) => {
-    setSplitModeState(b);
-    if (b) {
-      // Turning split ON: immediately move the currently-active tab
-      // to the RIGHT pane so the user doesn't have to manually drag
-      // anything to get a useful side-by-side view. The left pane
-      // falls back to whichever other tab is available.
-      //
-      // We read `tabs` / active id from the latest closure values
-      // and use functional setters to avoid stale reads when this
-      // gets called inside an async toggle.
-      const currentActive = activeTabId;
-      if (currentActive && tabs.length >= 2) {
-        setTabs(prev => prev.map(t =>
-          t.id === currentActive ? { ...t, pane: 'right' } : t
-        ));
-        setRightActiveTabIdState(currentActive);
-        // Pick any other tab to keep the left pane non-empty.
-        const fallback = tabs.find(t => t.id !== currentActive);
-        setLeftActiveTabId(fallback?.id ?? null);
-        setFocusedPane('right');
-      }
-    } else {
-      // Turning split OFF: collapse all tabs back into the left
-      // pane (so the single-pane tab bar shows everything), preserve
-      // whichever tab was active, and clear right-pane state.
-      setTabs(prev => prev.map(t => t.pane === 'right' ? { ...t, pane: 'left' } : t));
-      setRightActiveTabIdState(null);
-      setFocusedPane('left');
-    }
-  }, [activeTabId, tabs]);
-
-  // Auto-collapse split when fewer than two files remain — splitting
-  // with one tab open is useless and (per the user's report) makes
-  // the layout feel stuck. Toggling off here runs the same collapse
-  // path as the manual toggle, so the lone tab returns to the left.
-  useEffect(() => {
-    if (splitMode && tabs.length < 2) {
-      setSplitModeState(false);
-      setTabs(prev => prev.map(t => t.pane === 'right' ? { ...t, pane: 'left' } : t));
-      setRightActiveTabIdState(null);
-      setFocusedPane('left');
-    }
-  }, [splitMode, tabs.length]);
   const setSplitRatio = useCallback((n: number) => {
     setSplitRatioState(Math.max(0.1, Math.min(0.9, n)));
   }, []);
 
-  // Wrap the per-pane active-tab setters into the legacy
-  // `setActiveTabId(id)` shape so existing code doesn't need to
-  // change. Routes the write based on which pane the target tab
-  // belongs to, and pulls focus to that pane.
+  // Keep the tree's tab membership synced with the canonical tab list:
+  // new tabs land in the focused group; closed tabs leave + collapse.
+  useEffect(() => {
+    setLayout(prev => reconcileInto(
+      prev,
+      tabs.map(t => t.id),
+      findGroup(prev, focusedGroupIdRef.current) ? focusedGroupIdRef.current : firstGroup(prev).id,
+    ));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs]);
+
+  // Keep focus on a group that still exists.
+  useEffect(() => {
+    if (!findGroup(layout, focusedGroupId)) setFocusedGroupId(firstGroup(layout).id);
+  }, [layout, focusedGroupId]);
+
+  // Mirror group membership onto each tab's legacy `pane` field so the
+  // not-yet-migrated VS/Word shells (whose tab bars filter by `pane`)
+  // keep working: group 0 → left, any other group → right. Becomes a
+  // no-op once those shells render the layout tree directly.
+  useEffect(() => {
+    const groups = allGroups(layout);
+    const firstId = groups[0]?.id;
+    setTabs(prev => {
+      let changed = false;
+      const next = prev.map(t => {
+        const g = groupOfTab(layout, t.id);
+        const pane: 'left' | 'right' = g && g.id !== firstId ? 'right' : 'left';
+        if ((t.pane ?? 'left') !== pane) { changed = true; return { ...t, pane }; }
+        return t;
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout]);
+
+  // A studio is a full-app view, not a split pane — so when we're NOT
+  // viewing one, no group should rest on a studio as its active tab
+  // (that would render a blank/placeholder pane in the split). Fall any
+  // such group back to its first non-studio tab. The studio stays open
+  // (still in the group's tab strip) — clicking it re-enters the studio.
+  useEffect(() => {
+    const fg = findGroup(layout, focusedGroupId) ?? firstGroup(layout);
+    const fgActive = tabs.find(t => t.id === fg.activeTabId);
+    const viewingStudio = fgActive?.tabType === 'studio' || fgActive?.tabType === 'animstudio';
+    if (viewingStudio) return; // viewing it — leave actives alone
+    setLayout(prev => {
+      let next = prev;
+      for (const g of allGroups(prev)) {
+        const at = tabs.find(t => t.id === g.activeTabId);
+        if (!at || (at.tabType !== 'studio' && at.tabType !== 'animstudio')) continue;
+        const altId = g.tabIds.find(id => {
+          const t = tabs.find(x => x.id === id);
+          return t && t.tabType !== 'studio' && t.tabType !== 'animstudio';
+        });
+        if (altId) next = setGroupActiveTab(next, g.id, altId);
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout, focusedGroupId, tabs]);
+
+  // ── Legacy split values, DERIVED from the layout tree ──
+  // `activeTabId` follows the focused group. left/right/splitMode/
+  // focusedPane feed the not-yet-migrated VS/Word shells.
+  const _groups = allGroups(layout);
+  const _focusedGroup = findGroup(layout, focusedGroupId) ?? _groups[0];
+  const activeTabId = _focusedGroup?.activeTabId ?? null;
+  const leftActiveTabId = _groups[0]?.activeTabId ?? null;
+  const rightActiveTabId = _groups[1]?.activeTabId ?? null;
+  const splitMode = _groups.length > 1;
+  const focusedPane: 'left' | 'right' =
+    _focusedGroup && _groups[0] && _focusedGroup.id !== _groups[0].id ? 'right' : 'left';
+
+  // ── Setters routed onto the tree (read latest via refs) ──
   const setActiveTabId = useCallback((id: string | null) => {
-    if (id === null) {
-      setLeftActiveTabId(null);
-      setRightActiveTabIdState(null);
+    if (id === null) return;
+    const prev = layoutRef.current;
+    const g = groupOfTab(prev, id);
+    if (!g) return; // not in the tree yet — reconcile activates it
+    setFocusedGroupId(g.id);
+    setLayout(setGroupActiveTab(prev, g.id, id));
+  }, []);
+
+  const setFocusedPane = useCallback((p: 'left' | 'right') => {
+    const groups = allGroups(layoutRef.current);
+    const target = p === 'right' ? (groups[1] ?? groups[0]) : groups[0];
+    if (target) setFocusedGroupId(target.id);
+  }, []);
+
+  const setSplitMode = useCallback((b: boolean) => {
+    const prev = layoutRef.current;
+    if (b) {
+      const g = findGroup(prev, focusedGroupIdRef.current) ?? firstGroup(prev);
+      if (!g.activeTabId || g.tabIds.length < 2) return;
+      const { layout: next, newGroupId } = splitGroupWithTab(prev, g.id, 'right', g.activeTabId);
+      setLayout(next);
+      setFocusedGroupId(newGroupId);
+    } else {
+      const keep = (findGroup(prev, focusedGroupIdRef.current) ?? firstGroup(prev)).activeTabId;
+      const merged = mergeAllGroups(prev, keep);
+      setLayout(merged);
+      setFocusedGroupId(firstGroup(merged).id);
+    }
+  }, []);
+
+  const onTabSetPane = useCallback((tabId: string, pane: 'left' | 'right') => {
+    const prev = layoutRef.current;
+    const groups = allGroups(prev);
+    if (pane === 'right' && !groups[1]) {
+      if (!groups[0] || groups[0].tabIds.length < 2) return;
+      const { layout: next, newGroupId } = splitGroupWithTab(prev, groups[0].id, 'right', tabId);
+      setLayout(next);
+      setFocusedGroupId(newGroupId);
       return;
     }
-    // Look up the tab's pane (default left). When split is OFF
-    // every tab is effectively on the left pane.
-    const tab = tabs.find(t => t.id === id);
-    const pane = (splitMode && tab?.pane === 'right') ? 'right' : 'left';
-    if (pane === 'right') {
-      setRightActiveTabIdState(id);
-      setFocusedPane('right');
-    } else {
-      setLeftActiveTabId(id);
-      if (splitMode) setFocusedPane('left');
-    }
-  }, [tabs, splitMode]);
-
-  // Tab close cleanup: if either pane's active tab no longer exists,
-  // clear or fall back to another tab in the same pane.
-  useEffect(() => {
-    const ids = new Set(tabs.map(t => t.id));
-    if (leftActiveTabId && !ids.has(leftActiveTabId)) {
-      const fallback = tabs.find(t => (t.pane ?? 'left') === 'left');
-      setLeftActiveTabId(fallback?.id ?? null);
-    }
-    if (rightActiveTabIdState && !ids.has(rightActiveTabIdState)) {
-      const fallback = tabs.find(t => t.pane === 'right');
-      setRightActiveTabIdState(fallback?.id ?? null);
-    }
-  }, [tabs, leftActiveTabId, rightActiveTabIdState]);
-
-  // Drag-drop tab between panes. Reassigns the tab's `pane` field
-  // and reshuffles active-tab pointers so the moved tab becomes
-  // active in its new pane (matches VSCode's behavior) while the
-  // origin pane falls back to a sibling.
-  const onTabSetPane = useCallback((tabId: string, pane: 'left' | 'right') => {
-    setTabs(prev => {
-      const tab = prev.find(t => t.id === tabId);
-      if (!tab) return prev;
-      const currentPane = tab.pane ?? 'left';
-      if (currentPane === pane) return prev;
-      return prev.map(t => t.id === tabId ? { ...t, pane } : t);
-    });
-    // Pull active state after reshuffle. Read latest via functional
-    // update on each setter to avoid stale closures.
-    setLeftActiveTabId(prev => {
-      if (pane === 'right' && prev === tabId) {
-        // Moved away from left — pick another left tab as fallback
-        const fallback = tabs.find(t => t.id !== tabId && (t.pane ?? 'left') === 'left');
-        return fallback?.id ?? null;
-      }
-      if (pane === 'left' && prev !== tabId) {
-        return tabId; // make it active in left
-      }
-      return prev;
-    });
-    setRightActiveTabIdState(prev => {
-      if (pane === 'left' && prev === tabId) {
-        const fallback = tabs.find(t => t.id !== tabId && t.pane === 'right');
-        return fallback?.id ?? null;
-      }
-      if (pane === 'right' && prev !== tabId) {
-        return tabId;
-      }
-      return prev;
-    });
-    setFocusedPane(pane);
-  }, [tabs]);
+    const target = pane === 'right' ? groups[1] : groups[0];
+    if (!target) return;
+    setFocusedGroupId(target.id);
+    setLayout(moveTabToGroup(prev, tabId, target.id, true));
+  }, []);
 
   // Model creation helper that's safe to call from anywhere — both
   // App's tab-switch effect AND the right pane's mount can hit this
@@ -620,13 +628,22 @@ function App() {
           if (raw === 'on' || raw === 'auto' || raw === 'off') next[key] = raw as PerfMode;
         } catch { /* fall through to default */ }
       }
-      if (!cancelled) setPerfPrefs(next);
+      if (!cancelled) {
+        setPerfPrefs(next);
+        // Keep the bracket-AST line budget in sync with the loaded pref.
+        setBracketAstPolicy(next.bracketColors, BIG_FILE_LINES);
+      }
     })();
 
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ key: PerfKey; mode: PerfMode }>).detail;
       if (!detail) return;
       setPerfPrefs(prev => ({ ...prev, [detail.key]: detail.mode }));
+      // Update the budget synchronously (before re-render) so monaco sees
+      // it the moment colorization is re-requested.
+      if (detail.key === 'bracketColors') {
+        setBracketAstPolicy(detail.mode, BIG_FILE_LINES);
+      }
     };
     window.addEventListener('perf-pref-changed', handler);
     return () => { cancelled = true; window.removeEventListener('perf-pref-changed', handler); };
@@ -2278,6 +2295,9 @@ function App() {
   function handleBeforeMount(monaco: Monaco) {
     registerRitobinLanguage(monaco);
     registerRitobinTheme(monaco);
+    // Lift monaco's hardcoded ~5MB bracket-colorization cap (gated to the
+    // user's "always on" pref) so big bin dumps still colorize brackets.
+    patchBracketPairLimit(monaco);
     monacoRef.current = monaco;
     setMonacoInstance(monaco);
     loadSavedTheme(invoke, monaco).then(() => setEditorTheme('jade-dynamic'));
@@ -2333,6 +2353,11 @@ function App() {
   // avoids the left editor flipping its model whenever the user
   // simply focuses the right pane.
   useEffect(() => {
+    // The VSCode shell renders the layout tree, where each group's
+    // editor manages its own model (EditorGroupView). This legacy
+    // single-primary-editor attach effect only drives the old
+    // EditorPane used by the VS/Word shells.
+    if (shellVariant === 'vscode') return;
     const editor = editorRef.current;
     const monaco = monacoRef.current;
     // Local alias so the rest of the (long) effect body stays as
@@ -2445,10 +2470,28 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leftActiveTabId]); // Left editor only re-mounts on left-pane tab changes
 
-  const handleThemeApplied = () => {
-    if (monacoInstance) {
-      loadSavedTheme(invoke, monacoInstance).then(() => setEditorTheme('jade-dynamic'));
+  const handleThemeApplied = (info?: ThemeAppliedInfo) => {
+    if (!monacoInstance) return;
+    // The dialog hands us the resolved selection and has already applied
+    // every CSS-driven surface itself. All that's left is the Monaco editor
+    // theme (minimap / sticky-scroll / syntax token colors), applied
+    // SYNCHRONOUSLY here so it switches in the same frame as the rest.
+    //
+    // We deliberately do NOT call loadSavedTheme on this path: it re-reads
+    // ~40 preferences one IPC at a time (the multi-second lag), and on Apply
+    // it would race the dialog's own set_preference writes — reading stale
+    // values and re-applying the OLD theme at the tail (the "reverts / never
+    // updates" symptom). loadSavedTheme stays a startup-only concern.
+    if (info) {
+      const opts = info.customSyntax
+        ? { customSyntax: info.customSyntax, customBrackets: info.customBrackets }
+        : undefined;
+      applyMonacoTheme(monacoInstance, info.themeId, info.syntaxThemeId, opts);
+      setEditorTheme('jade-dynamic');
+      return;
     }
+    // Fallback for any caller that doesn't pass resolved info: full re-read.
+    loadSavedTheme(invoke, monacoInstance).then(() => setEditorTheme('jade-dynamic'));
   };
 
   // â”€â”€ Texture hover helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -6089,6 +6132,99 @@ function App() {
     }
   };
 
+  // ── Editor group layout handlers (multi-group editor) ─────────────
+  const onFocusGroup = useCallback((groupId: string) => {
+    setFocusedGroupId(groupId);
+  }, []);
+
+  const setPrimaryEditor = useCallback((editor: MonacoType.editor.IStandaloneCodeEditor) => {
+    editorRef.current = editor;
+    const model = editor.getModel();
+    if (model) { try { setLineCount(model.getLineCount()); } catch { /* noop */ } }
+    try { updateSyntaxMarkers(editor); } catch { /* noop */ }
+    try { updateEmitterNameDecorations(editor); } catch { /* noop */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onGroupSelectTab = useCallback((groupId: string, tabId: string) => {
+    setLayout(prev => setGroupActiveTab(prev, groupId, tabId));
+    setFocusedGroupId(groupId);
+    const selected = tabsRef.current.find(t => t.id === tabId);
+    if (selected?.tabType === 'studio') ensureStudioShell();
+    setActiveTabId(tabId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setActiveTabId, ensureStudioShell]);
+
+  const onGroupCloseTab = useCallback((_groupId: string, tabId: string) => {
+    handleTabClose(tabId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handleTabClose]);
+
+  const onGroupCloseAll = useCallback((groupId: string) => {
+    const g = findGroup(layout, groupId);
+    if (!g) return;
+    for (const id of [...g.tabIds]) handleTabClose(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout, handleTabClose]);
+
+  const onGroupReorderTab = useCallback((groupId: string, from: number, to: number) => {
+    setLayout(prev => updateGroup(prev, groupId, g => {
+      if (from === to || from < 0 || to < 0 || from >= g.tabIds.length || to >= g.tabIds.length) return g;
+      const tabIds = [...g.tabIds];
+      const [m] = tabIds.splice(from, 1);
+      tabIds.splice(to, 0, m);
+      return { ...g, tabIds };
+    }));
+  }, []);
+
+  const onSplitEditor = useCallback((edge: SplitEdge, groupId?: string) => {
+    const prev = layoutRef.current;
+    const g = findGroup(prev, groupId ?? focusedGroupIdRef.current) ?? firstGroup(prev);
+    const activeId = g.activeTabId;
+    // Only split when the source group keeps at least one tab behind.
+    if (!activeId || g.tabIds.length < 2) return;
+    // Studios are full-app views — never split them out.
+    const at = tabsRef.current.find(t => t.id === activeId);
+    if (at?.tabType === 'studio' || at?.tabType === 'animstudio') return;
+    const { layout: next, newGroupId } = splitGroupWithTab(prev, g.id, edge, activeId);
+    setLayout(next);
+    setFocusedGroupId(newGroupId);
+  }, []);
+
+  const onResizeSplit = useCallback((splitId: string, sizes: number[]) => {
+    setLayout(prev => setSplitSizes(prev, splitId, sizes));
+  }, []);
+
+  // Collapse every split back into one group holding all tabs.
+  const onUnsplitAll = useCallback(() => {
+    const prev = layoutRef.current;
+    const keep = (findGroup(prev, focusedGroupIdRef.current) ?? firstGroup(prev)).activeTabId;
+    const merged = mergeAllGroups(prev, keep);
+    setLayout(merged);
+    setFocusedGroupId(firstGroup(merged).id);
+  }, []);
+
+  const onMoveTabToGroup = useCallback((tabId: string, targetGroupId: string) => {
+    setLayout(prev => moveTabToGroup(prev, tabId, targetGroupId, true));
+    setFocusedGroupId(targetGroupId);
+  }, []);
+
+  // Drag-to-split: split `targetGroupId` along `edge`, dropping the
+  // dragged tab into the new group (it leaves its old group).
+  const onDropTabSplit = useCallback((tabId: string, targetGroupId: string, edge: SplitEdge) => {
+    const prev = layoutRef.current;
+    // Studios are never a split pane — a dropped studio just moves.
+    const at = tabsRef.current.find(t => t.id === tabId);
+    if (at?.tabType === 'studio' || at?.tabType === 'animstudio') {
+      setLayout(moveTabToGroup(prev, tabId, targetGroupId, true));
+      setFocusedGroupId(targetGroupId);
+      return;
+    }
+    const { layout: next, newGroupId } = splitGroupWithTab(prev, targetGroupId, edge, tabId);
+    setLayout(next);
+    setFocusedGroupId(newGroupId);
+  }, []);
+
   // Build status message
   const statusText = `${statusMessage}${activeTab?.isModified ? ' (Modified)' : ''}`;
   // Hash updates run in the background and never gate file opening.
@@ -6164,6 +6300,11 @@ function App() {
     splitMode, setSplitMode, splitRatio, setSplitRatio,
     leftActiveTabId, rightActiveTabId, focusedPane, setFocusedPane,
     onTabSetPane, ensureModelForTab, setupRightEditor,
+
+    // -- Editor group layout (VSCode-style splitting)
+    layout, focusedGroupId, onFocusGroup, setPrimaryEditor,
+    onGroupSelectTab, onGroupCloseTab, onGroupCloseAll, onGroupReorderTab,
+    onSplitEditor, onResizeSplit, onMoveTabToGroup, onUnsplitAll, onDropTabSplit,
 
     // -- Photo Studio
     onNewStudioScene, onStudioOpen: studioOpenScene, notifyStudioDirty,

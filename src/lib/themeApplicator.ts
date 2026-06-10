@@ -2,12 +2,24 @@
 // Applies themes dynamically to the application
 
 import { getTheme, getSyntaxColors, getBracketColors } from './themes';
+import { resolveEffectId, applyLiveThemeEffect, refreshLiveThemeEffect, setEffectsOnEditor, setEffectsOnWelcome } from './themeEffects';
 import type { SyntaxColors, BracketColors, FontSettings, FontLibraryEntry } from './themes';
 import type { Monaco } from '@monaco-editor/react';
 
 export type { FontSettings, FontLibraryEntry };
 
 interface CustomSyntaxOptions {
+    customSyntax?: SyntaxColors;
+    customBrackets?: BracketColors;
+}
+
+/** Resolved theme + syntax selection handed from the Themes dialog to
+ *  the host on Apply, so the host can apply the Monaco editor theme
+ *  synchronously (minimap / sticky-scroll token colors) instead of
+ *  waiting on the async preference re-read in `loadSavedTheme`. */
+export interface ThemeAppliedInfo {
+    themeId: string;
+    syntaxThemeId: string;
     customSyntax?: SyntaxColors;
     customBrackets?: BracketColors;
 }
@@ -384,6 +396,10 @@ function reconcileModernUI() {
         root.removeAttribute('data-ui-mode');
     }
 
+    // Theme effects are Modern-UI only — re-evaluate against the mode we just
+    // set so they appear / disappear when Modern UI is toggled.
+    refreshLiveThemeEffect();
+
     // Re-apply Monaco's background — updateMonacoBackground reads the
     // attribute itself, so toggling it changes whether the editor surface
     // is transparent (modern) or solid (flat).
@@ -606,6 +622,46 @@ export function applyMonacoTheme(
 /**
  * Load and apply saved theme from preferences
  */
+/** localStorage key shared with the inline boot script in index.html. */
+export const BOOT_THEME_KEY = 'jade-boot-theme';
+
+/**
+ * Snapshot the resolved theme — the root element's inline CSS variables
+ * (window/editor bg, gradient, fonts, etc.) plus the `data-*` attributes
+ * that drive modern-UI / gradient / background CSS — into localStorage.
+ *
+ * The inline script in index.html reads this back and applies it to
+ * <html> BEFORE the app bundle and stylesheet evaluate, so the very first
+ * paint already shows the user's theme instead of flashing the default
+ * gray vars while loadSavedTheme's async preference read is in flight.
+ */
+export function cacheThemeForBoot() {
+    try {
+        const root = document.documentElement;
+        const attrs: Record<string, string> = {};
+        for (const name of [
+            'data-ui-mode',
+            'data-theme-gradient',
+            'data-active-theme',
+            'data-custom-background',
+            'data-modern-ui-pref',
+        ]) {
+            const v = root.getAttribute(name);
+            if (v != null) attrs[name] = v;
+        }
+        // Strip the custom-background image data URL — it can be several
+        // MB, which would blow the localStorage quota and slow the boot
+        // script. The image loads normally with the app; only its color
+        // fallback (--custom-bg-color, small) is kept so the boot frame
+        // isn't jarring.
+        const style = (root.getAttribute('style') || '')
+            .replace(/--custom-bg-image\s*:[^;]*;?/g, '');
+        localStorage.setItem(BOOT_THEME_KEY, JSON.stringify({ style, attrs }));
+    } catch {
+        /* localStorage unavailable (private mode / quota) — skip silently */
+    }
+}
+
 export async function loadSavedTheme(
     invoke: (cmd: string, args?: any) => Promise<any>,
     monaco?: Monaco
@@ -745,8 +801,29 @@ export async function loadSavedTheme(
             applyMonacoTheme(monaco, activeThemeId, activeSyntaxTheme, customSyntaxOpts);
         }
 
+        // Animated background effect (Effects tab). Theme-driven by default;
+        // an override / disable in preferences wins. Placeholders collapse to
+        // 'none' (nothing to render live yet).
+        const effEnabled  = await invoke('get_preference', { key: 'ThemeEffectsEnabled', defaultValue: 'true' }) as string;
+        const effOverride = await invoke('get_preference', { key: 'OverrideEffect',       defaultValue: 'false' }) as string;
+        const effId       = await invoke('get_preference', { key: 'ThemeEffect',          defaultValue: '' }) as string;
+        const effEditor   = await invoke('get_preference', { key: 'ThemeEffectsEditor',   defaultValue: 'true' }) as string;
+        const effWelcome  = await invoke('get_preference', { key: 'ThemeEffectsWelcome',  defaultValue: 'true' }) as string;
+        setEffectsOnEditor(effEditor !== 'false');
+        setEffectsOnWelcome(effWelcome !== 'false');
+        applyLiveThemeEffect(resolveEffectId({
+            enabled: effEnabled !== 'false',
+            override: effOverride === 'true',
+            chosenId: effId || 'none',
+            themeEffect: getTheme(activeThemeId)?.effect,
+        }));
+
         // Apply font preferences after theme so syntax color CSS vars are set.
         await loadSavedFonts(invoke);
+
+        // Snapshot the now-resolved theme so the next launch paints it on
+        // the first frame (see cacheThemeForBoot / the index.html script).
+        cacheThemeForBoot();
 
         return {
             theme,
@@ -766,6 +843,8 @@ export async function loadSavedTheme(
         if (monaco) {
             applyMonacoTheme(monaco, 'Default', 'Default');
         }
+        applyLiveThemeEffect('none');
+        cacheThemeForBoot();
 
         return { theme: 'Default', useCustom: false, roundedCorners: true, modernUI: true };
     }

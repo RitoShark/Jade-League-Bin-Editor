@@ -41,7 +41,62 @@ import {
     Clapperboard,
     CircleHelp as HelpIcon,
 } from 'lucide-react';
+import { startEffectOnCanvas, setEffectsWelcomeOpen } from '../lib/themeEffects';
 import './WelcomeScreen.css';
+
+/**
+ * A dedicated effect canvas for the welcome screen's main area. It mirrors
+ * whatever effect the app's live layer has active — read from the
+ * `data-theme-effect` attribute the live layer sets (present only in Modern UI
+ * with an effect on) — so the welcome screen gets the same animated background
+ * in its main column WITHOUT going transparent and revealing the editor behind.
+ *
+ * Only runs while the welcome screen is actually visible (`active`) AND the app
+ * window is focused/visible — otherwise it stops, so it never animates
+ * off-screen or while you're in another app.
+ */
+function WelcomeEffectLayer({ active }: { active: boolean }) {
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    const [effectId, setEffectId] = useState(
+        () => document.documentElement.getAttribute('data-theme-effect') || 'none'
+    );
+    const [windowActive, setWindowActive] = useState(
+        () => !document.hidden && document.hasFocus()
+    );
+
+    useEffect(() => {
+        const read = () => setEffectId(document.documentElement.getAttribute('data-theme-effect') || 'none');
+        const obs = new MutationObserver(read);
+        obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme-effect'] });
+        read();
+        return () => obs.disconnect();
+    }, []);
+
+    useEffect(() => {
+        const update = () => setWindowActive(!document.hidden && document.hasFocus());
+        document.addEventListener('visibilitychange', update);
+        window.addEventListener('blur', update);
+        window.addEventListener('focus', update);
+        update();
+        return () => {
+            document.removeEventListener('visibilitychange', update);
+            window.removeEventListener('blur', update);
+            window.removeEventListener('focus', update);
+        };
+    }, []);
+
+    const running = active && windowActive && effectId !== 'none';
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas || !running) return;
+        const handle = startEffectOnCanvas(effectId, canvas, { density: 1 });
+        return () => handle.stop();
+    }, [running, effectId]);
+
+    if (!running) return null;
+    return <canvas ref={canvasRef} className="welcome-effect-canvas" />;
+}
 
 interface WelcomeScreenProps {
     onOpenFile: () => void;
@@ -382,6 +437,14 @@ export default function WelcomeScreen({
         return () => document.body.classList.remove('welcome-active');
     }, [hidden]);
 
+    // Pause the editor's effect layer while the welcome screen is open (it has
+    // its own effect canvas, so the occluded editor one is wasted GPU). Closing
+    // it — or unmounting the welcome screen entirely — brings it back.
+    useEffect(() => {
+        setEffectsWelcomeOpen(!hidden);
+    }, [hidden]);
+    useEffect(() => () => setEffectsWelcomeOpen(false), []);
+
     return (
         <div
             className={`welcome-screen-v2${isClosing ? ' welcome-screen-v2-closing' : ''}${isOpening ? ' welcome-screen-v2-opening' : ''}`}
@@ -519,6 +582,7 @@ export default function WelcomeScreen({
             </aside>
 
             <main className="welcome-main">
+                <WelcomeEffectLayer active={!hidden} />
                 {view === 'home' && (
                     <HomeView
                         greeting={greeting}
