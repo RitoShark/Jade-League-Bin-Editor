@@ -1,0 +1,476 @@
+/* Node graph tab — Blender-shader-editor-inspired styling over React Flow,
+   wearing Jade's theme variables so it recolours with every theme. Inputs
+   (textures) flow left → right into the big mesh "output" node. Both classic
+   and modern UI looks are covered (modern overrides at the bottom).
+
+   NOTE: several heights below are load-bearing — the mesh node's per-row
+   socket handles are positioned in JS using the same pixel constants
+   (MESH_HEADER_H / MESH_SCALE_H / MESH_META_H / MESH_ROW_H, and TEX_*).
+   Keep them in sync with NodeGraphTab.tsx. */
+
+.jade-rf-root {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--editor-bg, #1e1e1e);
+}
+
+.jade-rf-root .react-flow__background.jade-rf-bg {
+    color: color-mix(in srgb, var(--text-color, #888) 22%, transparent);
+}
+
+/* ── shared node chrome ──────────────────────────────────────────── */
+.jade-rf-node {
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--window-bg, #252526) 92%, #000 8%);
+    border: 1px solid var(--border-color, #3e3e42);
+    color: var(--text-color, #e0e0e0);
+    font-size: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+    user-select: none;
+}
+.jade-rf-root .react-flow__node.selected .jade-rf-node {
+    border-color: var(--jade-accent, #3794ff);
+    box-shadow: 0 0 0 1px var(--jade-accent, #3794ff), 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.jade-rf-node-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 9px;
+    height: 26px;            /* TEX_HEADER_H */
+    box-sizing: border-box;
+    font-weight: 600;
+    color: #fff;
+}
+.jade-rf-node-icon { display: inline-flex; align-items: center; }
+.jade-rf-node-title {
+    flex: 1 1 auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.jade-rf-node-warn { display: inline-flex; color: #ffd479; }
+
+/* ── texture node (Image Texture) ────────────────────────────────── */
+.jade-rf-node.kind-texture { width: 190px; }
+.kind-texture .jade-rf-node-head { background: #b8650f; }
+.jade-rf-color-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;           /* TEX_COLOR_H */
+    padding: 0 9px;
+    box-sizing: border-box;
+    justify-content: flex-end;
+    font-size: 11px;
+    opacity: 0.9;
+}
+.jade-rf-color-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #e0902e;
+    margin-right: auto;
+}
+.jade-rf-tex-name {
+    padding: 5px 9px 8px;
+    font-size: 10.5px;
+    opacity: 0.7;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--mono-font, ui-monospace, "Cascadia Code", Consolas, monospace);
+    border-top: 1px solid color-mix(in srgb, var(--border-color, #3e3e42) 60%, transparent);
+    cursor: text;
+}
+.jade-rf-tex-name:hover { opacity: 1; color: var(--jade-accent, #3794ff); }
+.jade-rf-tex-input {
+    width: calc(100% - 12px);
+    margin: 5px 6px 7px;
+    font-size: 10.5px;
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: var(--editor-bg, #1e1e1e);
+    border: 1px solid var(--jade-accent, #3794ff);
+    color: var(--text-color, #e0e0e0);
+    outline: none;
+    font-family: var(--mono-font, ui-monospace, "Cascadia Code", Consolas, monospace);
+}
+
+/* image-box controls (Blender-style: New / Open / Pick) */
+.jade-rf-tex-tools {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px;
+    border-top: 1px solid color-mix(in srgb, var(--border-color, #3e3e42) 60%, transparent);
+}
+.jade-rf-tex-tools button {
+    flex: 0 0 auto;
+    padding: 3px 7px;
+    font-size: 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color, #3e3e42);
+    background: color-mix(in srgb, var(--window-bg, #252526) 60%, transparent);
+    color: var(--text-color, #ddd);
+    cursor: pointer;
+}
+.jade-rf-tex-tools button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--jade-accent, #3794ff) 30%, var(--window-bg, #252526));
+    border-color: var(--jade-accent, #3794ff);
+}
+.jade-rf-tex-tools button:disabled { opacity: 0.4; cursor: default; }
+.jade-rf-tex-color {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: 4px;
+    background: none;
+    cursor: pointer;
+}
+.jade-rf-tex-pickwrap { margin-left: auto; }
+/* Portalled to <body>, positioned inline (position:fixed). */
+.jade-rf-tex-picklist {
+    z-index: 9999;
+    max-height: 240px;
+    overflow-y: auto;
+    min-width: 170px;
+    padding: 3px;
+    border-radius: 6px;
+    background: var(--window-bg, #252526);
+    border: 1px solid var(--border-color, #3e3e42);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+.jade-rf-tex-picklist button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: none;
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 11px;
+    background: transparent;
+    color: var(--text-color, #e0e0e0);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+.jade-rf-tex-picklist button:hover {
+    background: color-mix(in srgb, var(--jade-accent, #3794ff) 30%, transparent);
+}
+[data-ui-mode="modern"] .jade-rf-tex-picklist {
+    background: color-mix(in srgb, var(--modern-dialog-bg, #1c1c28) 92%, transparent);
+    backdrop-filter: blur(var(--modern-blur, 12px));
+    -webkit-backdrop-filter: blur(var(--modern-blur, 12px));
+    border-color: var(--modern-glass-border, rgba(255, 255, 255, 0.1));
+}
+
+/* ── material node ───────────────────────────────────────────────── */
+.jade-rf-node.kind-material { width: 180px; }
+.kind-material .jade-rf-node-head { background: #6c4796; }
+.jade-rf-mat-body {
+    padding: 6px 9px 8px;
+    font-size: 10.5px;
+    opacity: 0.6;
+}
+.jade-rf-node.is-external { opacity: 0.72; }
+.jade-rf-node.is-external .jade-rf-node-head { background: #4a4a52; }
+
+/* ── mesh node (big output node) ─────────────────────────────────── */
+.jade-rf-node.kind-mesh.jade-rf-mesh { width: 250px; }
+.jade-rf-mesh-head {
+    height: 50px;           /* MESH_HEADER_H */
+    background: #1e6b3a;
+    align-items: center;
+}
+.jade-rf-mesh-titles { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.jade-rf-mesh-sub {
+    font-size: 10px;
+    font-weight: 400;
+    opacity: 0.8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--mono-font, ui-monospace, "Cascadia Code", Consolas, monospace);
+}
+
+/* skin-scale field — Blender-style: drag the bar to scrub, click to type */
+.jade-rf-scale {
+    height: 46px;           /* MESH_SCALE_H */
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 10px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color, #3e3e42) 60%, transparent);
+}
+.jade-rf-scale-scrub { cursor: ew-resize; }
+.jade-rf-scale-label { font-size: 11px; opacity: 0.85; flex: 0 0 auto; }
+.jade-rf-scale-val {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    min-width: 58px;
+    text-align: center;
+    padding: 3px 10px;
+    border-radius: 5px;
+    /* fill bar mirrors Blender's value slider; --fill set inline per value */
+    background: linear-gradient(
+        to right,
+        color-mix(in srgb, var(--jade-accent, #3794ff) 45%, transparent) var(--fill, 0%),
+        color-mix(in srgb, var(--text-color, #888) 14%, transparent) var(--fill, 0%)
+    );
+}
+.jade-rf-scale-input {
+    width: 72px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    padding: 3px 8px;
+    border-radius: 5px;
+    background: var(--editor-bg, #1e1e1e);
+    border: 1px solid var(--jade-accent, #3794ff);
+    color: var(--text-color, #e0e0e0);
+    outline: none;
+}
+
+.jade-rf-mesh-meta {
+    height: 18px;           /* MESH_META_H */
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px;
+    font-size: 9.5px;
+}
+.jade-rf-meta-key { opacity: 0.45; text-transform: uppercase; letter-spacing: 0.04em; flex: 0 0 24px; }
+.jade-rf-meta-val {
+    opacity: 0.8;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-family: var(--mono-font, ui-monospace, "Cascadia Code", Consolas, monospace);
+}
+
+/* submesh socket rows — handles are positioned at the node level (see
+   NodeGraphTab.tsx), so the row itself must NOT be a positioning context. */
+.jade-rf-srow {
+    height: 26px;           /* MESH_ROW_H */
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px;
+    border-top: 1px solid color-mix(in srgb, var(--border-color, #3e3e42) 40%, transparent);
+}
+.jade-rf-srow-label {
+    flex: 1 1 auto;
+    font-size: 11px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.jade-rf-srow-tag {
+    flex: 0 0 auto;
+    width: 60px;
+    box-sizing: border-box;
+    text-align: center;
+    font-size: 8.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 0;
+    border-radius: 3px;
+    opacity: 0.9;
+}
+.jade-rf-srow-tag.tag-texture { background: color-mix(in srgb, #e0902e 30%, transparent); color: #f0b46a; }
+.jade-rf-srow-tag.tag-material { background: color-mix(in srgb, #a974d6 30%, transparent); color: #c79ce8; }
+
+/* ── ports ───────────────────────────────────────────────────────── */
+.jade-rf-root .react-flow__handle.jade-rf-handle {
+    width: 9px;
+    height: 9px;
+    background: var(--editor-bg, #1e1e1e);
+    border: 1.5px solid var(--text-color, #999);
+}
+.jade-rf-root .react-flow__handle.handle-tex { border-color: #e0902e; background: #e0902e; }
+.jade-rf-root .react-flow__handle.handle-mat { border-color: #a974d6; background: #a974d6; }
+.jade-rf-root .react-flow__handle.handle-row { border-color: #cfcfd6; background: var(--editor-bg, #1e1e1e); }
+
+/* ── controls / minimap ──────────────────────────────────────────── */
+.jade-rf-root .react-flow__controls.jade-rf-controls {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.jade-rf-root .react-flow__controls-button {
+    background: var(--window-bg, #252526);
+    border-bottom: 1px solid var(--border-color, #3e3e42);
+    color: var(--text-color, #ddd);
+    fill: var(--text-color, #ddd);
+}
+.jade-rf-root .react-flow__controls-button:hover {
+    background: color-mix(in srgb, var(--jade-accent, #3794ff) 25%, var(--window-bg, #252526));
+}
+.jade-rf-root .react-flow__minimap.jade-rf-minimap {
+    background: color-mix(in srgb, var(--window-bg, #252526) 85%, transparent);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: 6px;
+}
+.jade-rf-root .react-flow__minimap-mask {
+    fill: color-mix(in srgb, var(--editor-bg, #1e1e1e) 60%, transparent);
+}
+
+/* ── empty / diagnostics ─────────────────────────────────────────── */
+.jade-rf-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--text-color, #aaa);
+    opacity: 0.7;
+    text-align: center;
+    padding: 24px;
+    background: var(--editor-bg, #1e1e1e);
+}
+.jade-rf-empty p { margin: 0; max-width: 420px; }
+.jade-rf-diag { font-size: 11px; opacity: 0.7; }
+
+/* add-node toolbar */
+.jade-rf-toolbar {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 6;
+    display: flex;
+    gap: 6px;
+}
+.jade-rf-toolbar button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 9px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-color, #e0e0e0);
+    background: color-mix(in srgb, var(--window-bg, #252526) 92%, transparent);
+    border: 1px solid var(--border-color, #3e3e42);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+}
+.jade-rf-toolbar button:hover {
+    background: color-mix(in srgb, var(--jade-accent, #3794ff) 25%, var(--window-bg, #252526));
+    border-color: var(--jade-accent, #3794ff);
+}
+.jade-rf-addtex {
+    position: absolute;
+    top: 44px;
+    left: 10px;
+    z-index: 6;
+    display: flex;
+    gap: 6px;
+    padding: 7px;
+    border-radius: 7px;
+    background: var(--window-bg, #252526);
+    border: 1px solid var(--border-color, #3e3e42);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+.jade-rf-addtex input {
+    width: 280px;
+    font-size: 11px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    background: var(--editor-bg, #1e1e1e);
+    border: 1px solid var(--jade-accent, #3794ff);
+    color: var(--text-color, #e0e0e0);
+    outline: none;
+    font-family: var(--mono-font, ui-monospace, "Cascadia Code", Consolas, monospace);
+}
+.jade-rf-addtex button {
+    padding: 5px 12px;
+    border-radius: 5px;
+    border: none;
+    background: var(--jade-accent, #3794ff);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+[data-ui-mode="modern"] .jade-rf-toolbar button,
+[data-ui-mode="modern"] .jade-rf-addtex {
+    background: color-mix(in srgb, var(--modern-dialog-bg, #1c1c28) 80%, transparent);
+    backdrop-filter: blur(var(--modern-blur, 12px));
+    -webkit-backdrop-filter: blur(var(--modern-blur, 12px));
+    border-color: var(--modern-glass-border, rgba(255, 255, 255, 0.1));
+}
+
+/* knife tool — right-drag across wires to unlink them */
+.jade-rf-root.is-cutting { cursor: crosshair; }
+.jade-rf-knife {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 40;
+    overflow: visible;
+}
+.jade-rf-knife line {
+    stroke: #ff5a52;
+    stroke-width: 2;
+    stroke-dasharray: 6 4;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 3px rgba(255, 90, 82, 0.6));
+}
+
+.jade-rf-diagbar {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 9px;
+    border-radius: 5px;
+    font-size: 11px;
+    color: #e0a92e;
+    background: color-mix(in srgb, var(--window-bg, #252526) 90%, transparent);
+    border: 1px solid color-mix(in srgb, #e0a92e 40%, transparent);
+    cursor: default;
+}
+
+/* ── modern UI ───────────────────────────────────────────────────── */
+[data-ui-mode="modern"] .jade-rf-node {
+    background: color-mix(in srgb, var(--modern-dialog-bg, #1c1c28) 80%, transparent);
+    backdrop-filter: blur(var(--modern-blur, 12px));
+    -webkit-backdrop-filter: blur(var(--modern-blur, 12px));
+    border-color: var(--modern-glass-border, rgba(255, 255, 255, 0.1));
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+}
+[data-ui-mode="modern"] .jade-rf-root .react-flow__node.selected .jade-rf-node {
+    border-color: var(--modern-accent-primary, var(--jade-accent, #3794ff));
+    box-shadow: 0 0 0 1px var(--modern-accent-primary, var(--jade-accent, #3794ff)), 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+[data-ui-mode="modern"] .jade-rf-scale-val {
+    background: linear-gradient(
+        to right,
+        color-mix(in srgb, var(--modern-accent-primary, #3794ff) 45%, transparent) var(--fill, 0%),
+        color-mix(in srgb, var(--text-color, #888) 14%, transparent) var(--fill, 0%)
+    );
+}
+[data-ui-mode="modern"] .jade-rf-root .react-flow__controls-button,
+[data-ui-mode="modern"] .jade-rf-root .react-flow__minimap.jade-rf-minimap {
+    background: color-mix(in srgb, var(--modern-dialog-bg, #1c1c28) 75%, transparent);
+    backdrop-filter: blur(var(--modern-blur, 12px));
+    -webkit-backdrop-filter: blur(var(--modern-blur, 12px));
+    border-color: var(--modern-glass-border, rgba(255, 255, 255, 0.1));
+}
+[data-ui-mode="modern"] .jade-rf-root .react-flow__controls-button:hover {
+    background: color-mix(in srgb, var(--modern-accent-primary, #3794ff) 30%, transparent);
+}

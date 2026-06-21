@@ -15,9 +15,10 @@ export interface EditorTab {
      *  tab bar shows every tab regardless of this field). Drag-and-
      *  drop between the two tab bars flips this field. */
     pane?: 'left' | 'right';
-    /** 'editor' (default), 'texture-preview', 'quartz-diff', 'compare', 'markdown-preview', 'studio', or 'animstudio' */
-    tabType?: 'editor' | 'texture-preview' | 'quartz-diff' | 'compare' | 'markdown-preview' | 'studio' | 'animstudio';
-    /** For markdown-preview tabs: id of the source editor tab whose content we render. */
+    /** 'editor' (default), 'texture-preview', 'quartz-diff', 'compare', 'markdown-preview', 'studio', 'animstudio', or 'nodegraph' */
+    tabType?: 'editor' | 'texture-preview' | 'quartz-diff' | 'compare' | 'markdown-preview' | 'studio' | 'animstudio' | 'nodegraph';
+    /** For markdown-preview AND nodegraph tabs: id of the source editor tab
+     *  whose live content we render. */
     sourceTabId?: string;
     /** For texture-preview tabs: decoded PNG data URL */
     textureDataUrl?: string | null;
@@ -86,6 +87,9 @@ interface TabBarProps {
      *  tabs that have an on-disk file path. When omitted the
      *  context menu falls back to the plain stub. */
     onRevealInExplorer?: (filePath: string) => void;
+    /** Right-click → "Open as Node Graph" handler. Shown only for .bin /
+     *  .py editor tabs. Opens a companion nodegraph tab bound to this one. */
+    onOpenNodeGraph?: (tab: EditorTab) => void;
     /** Visual-Studio-style drag-to-reorder. When provided (single-pane
      *  bars only), grabbing a tab and moving it left/right repositions
      *  it live. `from`/`to` are indices into the rendered tab list,
@@ -113,6 +117,7 @@ export default function TabBar({
     paneFilter,
     onDropTabIntoPane,
     onRevealInExplorer,
+    onOpenNodeGraph,
     onReorderTab,
     groupId,
 }: TabBarProps) {
@@ -156,12 +161,23 @@ export default function TabBar({
         }
     };
 
+    // Node-graph is a skin-bin view, so only offer it on ritobin editor
+    // tabs (.bin / its .py sidecar). Non-skin bins still get the menu item
+    // but the opened graph shows a friendly "not a skin bin" state.
+    const canOpenAsGraph = (tab: EditorTab): boolean => {
+        if ((tab.tabType ?? 'editor') !== 'editor') return false;
+        const name = (tab.filePath ?? tab.fileName).toLowerCase();
+        return name.endsWith('.bin') || name.endsWith('.py');
+    };
+
     const handleContextMenu = (e: React.MouseEvent, tab: EditorTab) => {
         e.preventDefault();
         // Only show the menu when at least one action would be
-        // available — currently that's "Reveal in Explorer" gated
-        // on the tab having a filePath.
-        if (!tab.filePath || !onRevealInExplorer) return;
+        // available — "Reveal in Explorer" (any on-disk tab) or
+        // "Open as Node Graph" (.bin/.py editor tabs).
+        const canReveal = !!tab.filePath && !!onRevealInExplorer;
+        const canGraph = !!onOpenNodeGraph && canOpenAsGraph(tab);
+        if (!canReveal && !canGraph) return;
         setTabCtx({ x: e.clientX, y: e.clientY, tab });
     };
 
@@ -530,15 +546,23 @@ export default function TabBar({
                     )}
                 </div>
             )}
-            {tabCtx && tabCtx.tab.filePath && onRevealInExplorer && (
+            {tabCtx && (
                 <div
                     className="tab-ctx-menu"
                     style={{ position: 'fixed', left: tabCtx.x, top: tabCtx.y }}
                 >
-                    <button onClick={() => {
-                        onRevealInExplorer(tabCtx.tab.filePath!);
-                        setTabCtx(null);
-                    }}>Reveal in Explorer</button>
+                    {onOpenNodeGraph && canOpenAsGraph(tabCtx.tab) && (
+                        <button onClick={() => {
+                            onOpenNodeGraph(tabCtx.tab);
+                            setTabCtx(null);
+                        }}>Open as Node Editor</button>
+                    )}
+                    {tabCtx.tab.filePath && onRevealInExplorer && (
+                        <button onClick={() => {
+                            onRevealInExplorer(tabCtx.tab.filePath!);
+                            setTabCtx(null);
+                        }}>Reveal in Explorer</button>
+                    )}
                 </div>
             )}
         </div>
@@ -643,6 +667,21 @@ export function createMarkdownPreviewTab(sourceTabId: string, sourceFileName: st
         isModified: false,
         isPinned: false,
         tabType: 'markdown-preview',
+        sourceTabId,
+    };
+}
+
+// Create a node-graph tab bound to an existing bin editor tab. Reads the
+// source tab's live model content; the graph is a *view* over that text.
+export function createNodeGraphTab(sourceTabId: string, sourceFileName: string): EditorTab {
+    return {
+        id: generateTabId(),
+        filePath: null,
+        fileName: `Nodes: ${sourceFileName}`,
+        content: '',
+        isModified: false,
+        isPinned: false,
+        tabType: 'nodegraph',
         sourceTabId,
     };
 }

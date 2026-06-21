@@ -1,6 +1,6 @@
 import Editor, { type OnMount } from '@monaco-editor/react';
 import type * as MonacoType from 'monaco-editor';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { RITOBIN_LANGUAGE_ID } from '../lib/ritobinLanguage';
 import TabBar, { getFileName } from '../components/TabBar';
 import MarkdownPreview from '../components/MarkdownPreview';
@@ -10,6 +10,9 @@ import CompareTab from '../components/CompareTab';
 import { Camera, Clapperboard } from 'lucide-react';
 import { useShell } from './ShellContext';
 import { groupCount, type EditorGroup } from './editorLayout';
+
+// Lazy so React Flow only loads when a node-graph tab is actually opened.
+const NodeGraphTab = lazy(() => import('../components/NodeGraphTab'));
 
 /**
  * Renders ONE editor group: its own tab strip + the content of its
@@ -112,6 +115,7 @@ export default function EditorGroupView({ group }: { group: EditorGroup }) {
       onTabPin={s.onTabPin}
       onReorderTab={(from, to) => s.onGroupReorderTab(group.id, from, to)}
       onRevealInExplorer={s.revealInExplorer}
+      onOpenNodeGraph={s.openNodeGraph}
       groupId={group.id}
       onToggleSplit={() => s.onSplitEditor('right', group.id)}
       onSplitDown={() => s.onSplitEditor('bottom', group.id)}
@@ -159,8 +163,9 @@ export default function EditorGroupView({ group }: { group: EditorGroup }) {
     if (activeTab.tabType === 'markdown-preview') {
       return <MarkdownPreview content={mdContent} />;
     }
-    // Compare is mounted all-at-once above — skip here.
+    // Compare + node-graph are mounted all-at-once above — skip here.
     if (activeTab.tabType === 'compare') return null;
+    if (activeTab.tabType === 'nodegraph') return null;
     // A studio can't render inside a split pane (it's a full-app view).
     // If a group is resting on one (e.g. it's the only tab here), show a
     // click-to-focus hint instead of a blank pane.
@@ -271,16 +276,25 @@ export default function EditorGroupView({ group }: { group: EditorGroup }) {
           return (
             <div key={t.id} style={{ position: 'absolute', inset: 0, display: activeTabId === t.id ? 'flex' : 'none', flexDirection: 'column' }}>
               <CompareTab
+                leftTabId={t.compareLeftTabId ?? ''}
+                rightTabId={t.compareRightTabId ?? ''}
                 leftName={leftSrc?.fileName ?? '(missing)'}
                 rightName={rightSrc?.fileName ?? '(missing)'}
-                leftContent={leftSrc?.content ?? ''}
-                rightContent={rightSrc?.content ?? ''}
                 fontFamily={s.editorFontFamily || undefined}
                 onSwap={() => s.swapCompareTabSides(t.id)}
               />
             </div>
           );
         })}
+        {/* Node-graph tabs mount all-at-once too — unmounting disposes the
+            React Flow instance and loses the user's pan/zoom + node layout. */}
+        {groupTabs.filter(t => t.tabType === 'nodegraph').map(t => (
+          <div key={t.id} style={{ position: 'absolute', inset: 0, display: activeTabId === t.id ? 'block' : 'none' }}>
+            <Suspense fallback={<div style={{ padding: 24, opacity: 0.6 }}>Loading node editor…</div>}>
+              <NodeGraphTab tabId={t.id} />
+            </Suspense>
+          </div>
+        ))}
         {renderContent()}
       </div>
     </div>

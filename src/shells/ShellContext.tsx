@@ -200,6 +200,12 @@ export interface ShellContextValue {
      *  a WAD mount (we can't reveal hash-based WAD entries that
      *  way). */
     revealInExplorer: (filePath: string) => void;
+    /** Open (or focus) a node-graph companion tab for a bin editor tab. */
+    openNodeGraph: (tab: EditorTab) => void;
+    /** Apply new full content to a specific tab's Monaco model (minimal
+     *  diff, proper undo) regardless of which tab is active. Used by the
+     *  node-graph tab to write edits back into its source bin. */
+    applyEditToTab: (tabId: string, newContent: string) => void;
     onThemes: () => void;
     onSettings: () => void;
     onPreferences: () => void;
@@ -405,6 +411,7 @@ export interface ShellContextValue {
     comparePicker: { leftId: string; rightId: string } | null;
     setComparePicker: (next: { leftId: string; rightId: string } | null) => void;
     openCompareTab: (leftId: string, rightId: string) => void;
+    markTabModifiedById: (tabId: string) => void;
 
     // -- Quartz diff
     activeDiffRevisionIndex: number;

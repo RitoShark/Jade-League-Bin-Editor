@@ -1,5 +1,5 @@
 import Editor from '@monaco-editor/react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { RITOBIN_LANGUAGE_ID } from '../lib/ritobinLanguage';
 import { getFileExtension } from '../lib/binOperations';
@@ -16,6 +16,10 @@ import StudioTab from '../components/StudioTab';
 import AnimStudioTab from '../components/AnimStudioTab';
 import SecondaryPaneView from './SecondaryPaneView';
 import { useShell, type PerfMode } from './ShellContext';
+
+// Lazy so React Flow (@xyflow/react) only enters the chunk graph when the
+// user actually opens a node-graph tab — keeps it out of the main bundle.
+const NodeGraphTab = lazy(() => import('../components/NodeGraphTab'));
 
 /**
  * The editor surface — Monaco plus the variant tab types (texture, markdown
@@ -165,6 +169,26 @@ export default function EditorPane() {
                     <AnimStudioTab tabId={animTab.id} />
                 </div>
             ))}
+            {/* Node-graph tabs follow the same mount-all/hide-inactive
+                pattern — unmounting on tab-switch would dispose the React
+                Flow instance and lose the user's pan/zoom + dragged node
+                layout. Each tab re-derives its graph from its own source
+                model, so keeping them mounted preserves arrangement. */}
+            {s.tabs.filter(t => t.tabType === 'nodegraph').map(graphTab => (
+                <div
+                    key={graphTab.id}
+                    style={{
+                        flex: '1 1 auto',
+                        minHeight: 0,
+                        position: 'relative',
+                        display: activeTab?.id === graphTab.id ? 'block' : 'none',
+                    }}
+                >
+                    <Suspense fallback={<div style={{ padding: 24, opacity: 0.6 }}>Loading node editor…</div>}>
+                        <NodeGraphTab tabId={graphTab.id} />
+                    </Suspense>
+                </div>
+            ))}
             {/* Compare tabs render all-at-once with `display:none` for
                 inactive ones, mirroring the Studio-tab strategy.
                 Unmounting on every switch was disposing the DiffEditor's
@@ -192,10 +216,10 @@ export default function EditorPane() {
                         }}
                     >
                         <CompareTab
+                            leftTabId={cmpTab.compareLeftTabId ?? ''}
+                            rightTabId={cmpTab.compareRightTabId ?? ''}
                             leftName={leftSrc?.fileName ?? '(missing)'}
                             rightName={rightSrc?.fileName ?? '(missing)'}
-                            leftContent={leftSrc?.content ?? ''}
-                            rightContent={rightSrc?.content ?? ''}
                             fontFamily={s.editorFontFamily || undefined}
                             fontSize={editorFontSize}
                             lineHeight={lineHeightPx}

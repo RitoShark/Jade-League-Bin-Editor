@@ -97,3 +97,8 @@ texture2ddecoder = "0.1"
 # Rust bindings; covers binary + ASCII FBX from FBX 6 through 7.x,
 # handles axis / unit normalization at load time.
 ufbx = "0.10"
+
+# .fantome mod archives (renamed zips) for the Manage tab. Slimmed to
+# deflate-only — fantomes are stored or deflated; we never see bzip2/aes,
+# and dropping them avoids the C build deps.
+zip = { version = "0.6", default-features = false, features = ["deflate"] }

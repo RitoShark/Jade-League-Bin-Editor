@@ -5,6 +5,7 @@ mod extra_commands;
 mod library_commands;
 mod mesh_commands;
 mod wad_commands;
+mod manage_commands;
 mod taskbar_progress;
 mod core;
 mod error;
@@ -332,6 +333,11 @@ pub fn run() {
             // WAD extraction (Phase 4: hash recovery scan)
             wad_commands::wad_extract_hashes,
             wad_commands::wad_sniff_unknown,
+            manage_commands::mod_open,
+            manage_commands::mod_scan,
+            manage_commands::mod_apply_fixes,
+            manage_commands::mod_save,
+            manage_commands::mod_close,
             // 3D mesh previews (Phase 1: SKN parser)
             mesh_commands::read_skn_mesh,
             mesh_commands::read_fbx_static_meshes,

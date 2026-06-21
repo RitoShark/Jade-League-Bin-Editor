@@ -11,6 +11,7 @@ import ExtractionSettingsDialog, { ExtractMode } from './ExtractionSettingsDialo
 import PortalDropdown from './PortalDropdown';
 import { MeshPreview } from './MeshPreview';
 import ViewerTab from './ViewerTab';
+import ManageTab from './ManageTab';
 import Editor from '@monaco-editor/react';
 import {
     RITOBIN_LANGUAGE_ID,
@@ -239,7 +240,7 @@ interface WadHashScanResult {
     elapsed_ms: number;
 }
 
-type WelcomeView = 'home' | 'extract' | 'viewer';
+type WelcomeView = 'home' | 'extract' | 'viewer' | 'manage';
 
 /** Cross-tab navigation request — Viewer asks Extract Files to mount
  *  a WAD (if not already) and reveal a specific path inside it.
@@ -342,6 +343,11 @@ export default function WelcomeScreen({
     const [viewerMounted, setViewerMounted] = useState(false);
     useEffect(() => {
         if (view === 'viewer') setViewerMounted(true);
+    }, [view]);
+    // Manage keeps its loaded mod + scan results alive across tab hops.
+    const [manageMounted, setManageMounted] = useState(false);
+    useEffect(() => {
+        if (view === 'manage') setManageMounted(true);
     }, [view]);
 
     // Viewer → Extract Files cross-tab navigation request. The Viewer's
@@ -559,6 +565,16 @@ export default function WelcomeScreen({
                     <span>Viewer</span>
                 </button>
 
+                <button
+                    type="button"
+                    className={`welcome-rail-item${view === 'manage' ? ' active' : ''}`}
+                    onClick={() => setView('manage')}
+                    title="Check a fantome/WAD mod against the live game and fix what's outdated"
+                >
+                    <LucidePackageOpen size={20} />
+                    <span>Manage</span>
+                </button>
+
                 <div className="welcome-rail-spacer" />
 
                 {/* Bottom rail slot used to host the Editor shortcut.
@@ -626,6 +642,14 @@ export default function WelcomeScreen({
                         />
                     </div>
                 )}
+                {manageMounted && (
+                    <div style={{ display: view === 'manage' ? 'contents' : 'none' }}>
+                        <ManageTab
+                            active={!hidden && view === 'manage'}
+                            onStatus={setExtractStatusText}
+                        />
+                    </div>
+                )}
             </main>
 
             {/* Status bar — shown for both Extract and Viewer (both
@@ -633,7 +657,7 @@ export default function WelcomeScreen({
                 Sits in its own grid slot below `main`, leaving the rail
                 untouched on the left. The fill animates left-to-right;
                 the status text overlays it. */}
-            {(view === 'extract' || view === 'viewer') && (
+            {(view === 'extract' || view === 'viewer' || view === 'manage') && (
                 <div className="welcome-status">
                     <div
                         className="welcome-status-fill"

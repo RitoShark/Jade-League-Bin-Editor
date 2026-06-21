@@ -23,7 +23,7 @@ import {
 } from "./shells/editorLayout";
 import { checkSyntax, suggestType } from "./lib/syntaxChecker";
 import { texBufferToDataURL, ddsBufferToDataURL, ddsFormatName } from "./lib/texFormat";
-import { EditorTab, createQuartzDiffTab, createMarkdownPreviewTab, createStudioTab, createAnimStudioTab, createTab, createTexPreviewTab, createCompareTab, getFileName } from "./components/TabBar";
+import { EditorTab, createQuartzDiffTab, createMarkdownPreviewTab, createStudioTab, createAnimStudioTab, createNodeGraphTab, createTab, createTexPreviewTab, createCompareTab, getFileName } from "./components/TabBar";
 import type { StudioScene } from "./lib/babylon/studioScene";
 import type { AnimStudioScene } from "./lib/babylon/animStudioScene";
 import { ShellProvider, type ShellContextValue, type PerfMode, type PerfKey, type HashSyncToastState, type ShellVariant, type FileExplorerRoot } from "./shells/ShellContext";
@@ -415,6 +415,23 @@ function App() {
     },
     [tabs],
   );
+
+  // Source tabs that an open Compare diff is currently viewing. The diff
+  // editor binds these tabs' shared models directly (so edits in the diff
+  // are real edits to those files, sharing their undo stack), which means
+  // they must not be LRU-evicted out from under it. Tracked in a ref so the
+  // eviction loop can consult it without re-subscribing.
+  const compareSourceTabIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const ids = new Set<string>();
+    for (const t of tabs) {
+      if (t.tabType === 'compare') {
+        if (t.compareLeftTabId) ids.add(t.compareLeftTabId);
+        if (t.compareRightTabId) ids.add(t.compareRightTabId);
+      }
+    }
+    compareSourceTabIdsRef.current = ids;
+  }, [tabs]);
 
   useEffect(() => {
     setWelcomeOverride(null);
@@ -2416,7 +2433,13 @@ function App() {
     modelLruRef.current = modelLruRef.current.filter(id => id !== activeTabId);
     modelLruRef.current.push(activeTabId);
     while (modelLruRef.current.length > MODEL_CACHE_LIMIT) {
-      const evictId = modelLruRef.current.shift()!;
+      // Skip models an open Compare diff is viewing — disposing one would
+      // blank the comparison and sever its shared undo stack. Evict the
+      // oldest NON-pinned model instead; if all that remain are pinned,
+      // stop (we accept going slightly over the cap until the diff closes).
+      const evictIdx = modelLruRef.current.findIndex(id => !compareSourceTabIdsRef.current.has(id));
+      if (evictIdx === -1) break;
+      const evictId = modelLruRef.current.splice(evictIdx, 1)[0];
       const evictModel = monacoModelsRef.current.get(evictId);
       if (evictModel && !evictModel.isDisposed()) {
         // Save the current text back to the tab so it reloads correctly
@@ -4238,6 +4261,24 @@ function App() {
     });
   }, [runFetchVanillaAnimations]);
 
+  // Open (or focus) a node-graph companion tab bound to a bin editor tab.
+  // Mirrors the markdown-preview companion pattern: the graph reads the
+  // source tab's live model content and is a *view* over that text.
+  const handleOpenNodeGraph = useCallback((sourceTab: EditorTab) => {
+    setTabs(prev => {
+      const existing = prev.find(t => t.tabType === 'nodegraph' && t.sourceTabId === sourceTab.id);
+      if (existing) {
+        setActiveTabId(existing.id);
+        return prev;
+      }
+      const graphTab = createNodeGraphTab(sourceTab.id, sourceTab.fileName);
+      // Inherit the source tab's pane so it opens next to its bin in split mode.
+      graphTab.pane = sourceTab.pane;
+      setActiveTabId(graphTab.id);
+      return [...prev, graphTab];
+    });
+  }, []);
+
   const handleRevealInExplorer = useCallback((filePath: string) => {
     if (!filePath) return;
     const norm = filePath.replace(/\\/g, '/');
@@ -4939,6 +4980,16 @@ function App() {
       void studioSaveActiveTab(false);
       return;
     }
+    // A compare tab isn't itself an editor tab, but its diff now edits the
+    // two source tabs' real models. Ctrl+S from here persists both sides
+    // (reusing Save All's per-tab logic, which reads inactive tabs straight
+    // off their shared models — exactly where the diff's edits live).
+    if (activeTab?.tabType === 'compare') {
+      const ids = [activeTab.compareLeftTabId, activeTab.compareRightTabId]
+        .filter((id): id is string => !!id);
+      await handleSaveAll(tabsRef.current.filter(t => ids.includes(t.id)));
+      return;
+    }
     if (!activeTab || !isEditorTab(activeTab)) return;
 
     try {
@@ -5101,8 +5152,8 @@ function App() {
   // model (only the active tab is bound to the visible editor; other
   // models stay live in `monacoModelsRef`) and falls back to the
   // tab's stored `content` if the model was disposed.
-  const handleSaveAll = async () => {
-    const targets = tabsRef.current.filter(t =>
+  const handleSaveAll = async (explicitTargets?: EditorTab[]) => {
+    const targets = (explicitTargets ?? tabsRef.current).filter(t =>
       isEditorTab(t) && t.filePath && t.isModified,
     );
     if (targets.length === 0) {
@@ -5636,6 +5687,74 @@ function App() {
       }
     }
   };
+  // Apply new full content to a SPECIFIC tab's Monaco model, regardless of
+  // which tab is currently active. The node-graph companion tab is active
+  // when its edits fire, so it can't use handleGeneralEditContentChange
+  // (that targets the focused editor). This computes the same minimal diff
+  // so undo/redo stay granular, and works even when the source tab isn't
+  // visible. Falls back to updating the tab's cached content string when the
+  // model hasn't materialised yet.
+  const applyEditToTab = useCallback((tabId: string, newContent: string) => {
+    const model = monacoModelsRef.current.get(tabId);
+    if (model && !model.isDisposed()) {
+      const currentContent = model.getValue();
+      if (currentContent === newContent) return;
+
+      const oldLines = currentContent.split('\n');
+      const newLines = newContent.split('\n');
+      let startLine = 0;
+      while (startLine < oldLines.length && startLine < newLines.length &&
+        oldLines[startLine] === newLines[startLine]) startLine++;
+      let oldEndLine = oldLines.length - 1;
+      let newEndLine = newLines.length - 1;
+      while (oldEndLine > startLine && newEndLine > startLine &&
+        oldLines[oldEndLine] === newLines[newEndLine]) { oldEndLine--; newEndLine--; }
+
+      const startLineNum = startLine + 1;
+      const endLineNum = oldEndLine + 1;
+      const endColumn = (oldLines[oldEndLine]?.length || 0) + 1;
+      const replacementText = newLines.slice(startLine, newEndLine + 1).join('\n');
+
+      // The bin model is usually still attached to the (hidden) editor while
+      // the node tab is active, so editing it would scroll that editor to the
+      // top. Snapshot + restore its viewport so switching back to the bin tab
+      // keeps the user's scroll position.
+      const editor = editorRef.current;
+      const editingVisibleModel = !!editor && editor.getModel() === model;
+      const preEditViewState = editingVisibleModel ? editor!.saveViewState() : null;
+
+      model.pushEditOperations(
+        [],
+        [{
+          range: { startLineNumber: startLineNum, startColumn: 1, endLineNumber: endLineNum, endColumn },
+          text: replacementText,
+        }],
+        () => null,
+      );
+      model.pushStackElement();
+      if (editingVisibleModel && preEditViewState) {
+        try { editor!.restoreViewState(preEditViewState); } catch { /* best effort */ }
+      }
+      setTabs(prev => prev.map(t => (t.id === tabId ? { ...t, isModified: true } : t)));
+    } else {
+      // No live model — stash on the tab so it's there when Monaco loads it.
+      setTabs(prev => prev.map(t => (t.id === tabId ? { ...t, content: newContent, isModified: true } : t)));
+    }
+  }, []);
+
+  // Flip a tab's dirty flag by id without touching its model. The editable
+  // Compare diff edits the shared model directly (the bytes are already
+  // updated), so this just marks the source tab unsaved + snapshots the
+  // session — mirroring what handleEditorChange does for the focused editor.
+  const markTabModifiedById = useCallback((tabId: string) => {
+    setTabs(prev => {
+      const target = prev.find(t => t.id === tabId);
+      if (!target || target.isModified) return prev;
+      return prev.map(t => (t.id === tabId ? { ...t, isModified: true } : t));
+    });
+    scheduleSessionSave();
+  }, [scheduleSessionSave]);
+
   const handleOpenLog = () => console.log('Open Log');
 
   // Tool Operations
@@ -6329,6 +6448,8 @@ function App() {
     onOpenFolder: handleOpenFolder,
     onOpenWadInExplorer: handleOpenWadInExplorer,
     revealInExplorer: handleRevealInExplorer,
+    openNodeGraph: handleOpenNodeGraph,
+    applyEditToTab,
     openFetchAnimationsDialog: handleOpenFetchAnimationsDialog,
 
     // -- Edit panel callbacks
@@ -6343,6 +6464,7 @@ function App() {
     comparePicker,
     setComparePicker,
     openCompareTab,
+    markTabModifiedById,
 
     // -- Quartz diff
     activeDiffRevisionIndex,

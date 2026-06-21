@@ -49,6 +49,7 @@ export default function StudioFullView() {
         onTabCloseAll={s.onTabCloseAll}
         onTabPin={s.onTabPin}
         onRevealInExplorer={s.revealInExplorer}
+        onOpenNodeGraph={s.openNodeGraph}
       />
       <div style={{ flex: '1 1 auto', minHeight: 0, position: 'relative' }}>
         {studios.map(t => (
