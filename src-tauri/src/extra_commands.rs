@@ -1433,8 +1433,8 @@ fn convert_troybin_to_bin_path(input: &std::path::Path) -> Result<std::path::Pat
     // The trailer stays in the corpus-diff baseline because we
     // didn't change `write_bin` itself.
     let compile_text = strip_post_bin_trailer(&text);
-    let tree = match crate::core::bin::text_to_tree(compile_text) {
-        Ok(t) => t,
+    let out_bytes = match crate::core::bin::engine::text_to_bin_engine(compile_text) {
+        Ok(b) => b,
         Err(e) => {
             // Dump the intermediate ritobin text so the user can see
             // which line the compiler rejected — without it the
@@ -1449,8 +1449,6 @@ fn convert_troybin_to_bin_path(input: &std::path::Path) -> Result<std::path::Pat
             ));
         }
     };
-    let out_bytes = crate::core::bin::write_bin_ltk(&tree)
-        .map_err(|e| format!("write_bin {}: {}", input.display(), e))?;
 
     let output = input.with_file_name(format!("{stem}.bin"));
     std::fs::write(&output, &out_bytes)

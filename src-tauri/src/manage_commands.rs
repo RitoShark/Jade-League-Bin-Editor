@@ -33,7 +33,8 @@
 //! with the `.dds ↔ .tex` / `.sco ↔ .scb` alternates checked first.
 
 use crate::core::bin::repath::{is_hud_icon_path, is_referenced_path, visit_strings, visit_strings_mut};
-use crate::core::bin::{read_bin_ltk, write_bin_ltk};
+use crate::core::bin::{read_bin_engine, write_bin_engine, BinValue};
+use crate::core::bin::jade::view;
 use crate::core::hash::get_frogtools_hash_dir;
 use crate::core::wad::extractor::chunk_io::{read_chunk_decompressed_bytes, read_chunk_raw};
 use crate::core::wad::format::{WadChunk, WadCompression};
@@ -1101,7 +1102,7 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
                     continue;
                 }
             };
-            match read_bin_ltk(&data) {
+            match read_bin_engine(&data) {
                 Ok(tree) => {
                     let mut refs: Vec<String> = Vec::new();
                     visit_strings(&tree, &mut |s| {
@@ -1112,7 +1113,7 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
                     new_bin_hashes.push(entry.path_hash);
                     parsed.push(ParsedBin {
                         display,
-                        deps: tree.dependencies.clone(),
+                        deps: view::dependencies(&tree).iter().map(|s| s.to_string()).collect(),
                         refs,
                     });
                 }
@@ -1453,15 +1454,19 @@ fn rewrite_path_in_wad(wad: &mut ModWadState, old_path: &str, new_path: &str) ->
             continue;
         };
         let data = wad.current_entry_bytes(&entry)?;
-        let mut tree = match read_bin_ltk(&data) {
+        let mut tree = match read_bin_engine(&data) {
             Ok(t) => t,
             Err(_) => continue,
         };
         let mut changed = false;
-        for dep in tree.dependencies.iter_mut() {
-            if dep.eq_ignore_ascii_case(old_path) {
-                *dep = new_path.to_string();
-                changed = true;
+        if let Some(deps) = view::dependencies_mut(&mut tree) {
+            for dep in deps.iter_mut() {
+                if let BinValue::String(s) = dep {
+                    if s.eq_ignore_ascii_case(old_path) {
+                        *s = new_path.to_string();
+                        changed = true;
+                    }
+                }
             }
         }
         visit_strings_mut(&mut tree, &mut |s| {
@@ -1471,7 +1476,7 @@ fn rewrite_path_in_wad(wad: &mut ModWadState, old_path: &str, new_path: &str) ->
             }
         });
         if changed {
-            let bytes = write_bin_ltk(&tree).map_err(|e| e.to_string())?;
+            let bytes = write_bin_engine(&tree).map_err(|e| e.to_string())?;
             wad.replaced_data.insert(hash, bytes);
             rewritten += 1;
         }

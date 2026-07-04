@@ -51,13 +51,16 @@
 use std::collections::HashSet;
 use std::hash::Hasher;
 
-use indexmap::IndexMap;
-use ltk_meta::{BinProperty, BinTree, PropertyValueEnum};
+// Canonical engine-agnostic tree: the Jade-native `Bin`/`BinValue`.
+// `read_bin_engine` parses with whichever converter engine is selected,
+// so this walker never references `ltk_meta`.
+use crate::core::bin::{BinField, BinValue, JadeBin as BinTree};
+use crate::core::bin::jade::view;
 use serde::Serialize;
 use twox_hash::XxHash64;
 
 use crate::core::bin::jade::hash_manager as jade_hashes;
-use crate::core::bin::read_bin_ltk;
+use crate::core::bin::read_bin_engine;
 use crate::core::wad::{read_chunk_decompressed_bytes, with_mount};
 
 use super::skin_bin::{
@@ -172,7 +175,7 @@ pub fn read_skn_animations(
         .flatten()?;
 
         let bytes = read_chunk_decompressed_bytes(&info.0, &info.1).ok()?;
-        let skin_tree = read_bin_ltk(&bytes).ok()?;
+        let skin_tree = read_bin_engine(&bytes).ok()?;
 
         let link_hash = find_animation_graph_link(&skin_tree)?;
         let anim_bin_path = resolve_animation_bin_path(&skin_tree, link_hash)?;
@@ -187,12 +190,12 @@ pub fn read_skn_animations(
         .flatten()?;
 
         let anim_bytes = read_chunk_decompressed_bytes(&anim_info.0, &anim_info.1).ok()?;
-        let anim_tree = read_bin_ltk(&anim_bytes).ok()?;
+        let anim_tree = read_bin_engine(&anim_bytes).ok()?;
 
-        let graph_obj = anim_tree.objects.get(&link_hash)?;
-        let clip_map_value = &graph_obj.properties.get(&H_CLIP_DATA_MAP)?.value;
+        let graph_obj = view::object(&anim_tree, link_hash)?;
+        let clip_map_value = view::field(graph_obj.fields, H_CLIP_DATA_MAP)?;
         let map_entries = match clip_map_value {
-            PropertyValueEnum::Map(m) => &m.entries,
+            BinValue::Map { items, .. } => items.as_slice(),
             _ => return None,
         };
 
@@ -350,18 +353,15 @@ fn scan_chunks_for_anims(
 /// logic + dedup/sort post-processing, differing only in how each
 /// ANM resolves to a fetchable address.
 pub(crate) fn collect_clips<F>(
-    map_entries: &indexmap::IndexMap<
-        ltk_meta::value::PropertyValueUnsafeEq,
-        PropertyValueEnum,
-    >,
+    map_entries: &[(BinValue, BinValue)],
     mut resolver: F,
 ) -> Vec<AnimationClip>
 where
     F: FnMut(&str) -> (Option<String>, Option<String>),
 {
     let mut clips = Vec::new();
-    for (key_wrap, value) in map_entries {
-        let Some(name_hash) = clip_key_hash(&key_wrap.0) else {
+    for (key, value) in map_entries {
+        let Some(name_hash) = clip_key_hash(key) else {
             continue;
         };
         let Some(props) = atomic_clip_props(value) else {
@@ -427,7 +427,7 @@ pub fn read_skn_animations_disk(skn_disk_path: &str) -> Result<Option<AnimationL
         let layout = layout_opt.as_ref()?;
         let skin_bin_path = find_skin_bin_disk(skn_disk_path)?;
         let skin_bytes = std::fs::read(&skin_bin_path).ok()?;
-        let skin_tree = read_bin_ltk(&skin_bytes).ok()?;
+        let skin_tree = read_bin_engine(&skin_bytes).ok()?;
 
         let link_hash = find_animation_graph_link(&skin_tree)?;
         let anim_bin_rel = resolve_animation_bin_path(&skin_tree, link_hash)?;
@@ -438,12 +438,12 @@ pub fn read_skn_animations_disk(skn_disk_path: &str) -> Result<Option<AnimationL
             .into_iter()
             .find(|p| std::path::Path::new(p).is_file())?;
         let anim_bytes = std::fs::read(&anim_bin_path).ok()?;
-        let anim_tree = read_bin_ltk(&anim_bytes).ok()?;
+        let anim_tree = read_bin_engine(&anim_bytes).ok()?;
 
-        let graph_obj = anim_tree.objects.get(&link_hash)?;
-        let clip_map_value = &graph_obj.properties.get(&H_CLIP_DATA_MAP)?.value;
+        let graph_obj = view::object(&anim_tree, link_hash)?;
+        let clip_map_value = view::field(graph_obj.fields, H_CLIP_DATA_MAP)?;
         let map_entries = match clip_map_value {
-            PropertyValueEnum::Map(m) => &m.entries,
+            BinValue::Map { items, .. } => items.as_slice(),
             _ => return None,
         };
 
@@ -608,9 +608,9 @@ pub fn scan_anm_dir(dir: &str) -> Vec<AnimationClip> {
 /// u32 hash, which is the `path_hash` of the corresponding entry in
 /// the animation BIN.
 pub(crate) fn find_animation_graph_link(tree: &BinTree) -> Option<u32> {
-    for obj in tree.objects.values() {
-        let sap_value = match obj.properties.get(&H_SKIN_ANIMATION_PROPERTIES) {
-            Some(p) => &p.value,
+    for obj in view::objects(tree) {
+        let sap_value = match view::field(obj.fields, H_SKIN_ANIMATION_PROPERTIES) {
+            Some(p) => p,
             None => continue,
         };
         let sap_props = match embedded_props(sap_value) {
@@ -637,7 +637,7 @@ pub(crate) fn resolve_animation_bin_path(skin_tree: &BinTree, link_hash: u32) ->
     }
     // Dependency-list fallback. The list is small (low-double-digits)
     // so a linear scan is fine.
-    for dep in &skin_tree.dependencies {
+    for dep in view::dependencies(skin_tree) {
         let lower = dep.to_lowercase();
         // Strip the conventional "data/" prefix off the listed path
         // before pattern-matching — both DATA/... and data/... show
@@ -654,23 +654,19 @@ pub(crate) fn resolve_animation_bin_path(skin_tree: &BinTree, link_hash: u32) ->
 /// `None` for any other clip-data variant (Sequencer, Selector,
 /// Parametric, ...) — those reference children by name and don't own
 /// an ANM file directly.
-fn atomic_clip_props(value: &PropertyValueEnum) -> Option<&IndexMap<u32, BinProperty>> {
+fn atomic_clip_props(value: &BinValue) -> Option<&[BinField]> {
     match value {
-        // Map values declared as `pointer` come through as Embedded
-        // (the type-id-prefixed variant of Struct).
-        PropertyValueEnum::Embedded(e) if e.0.class_hash == C_ATOMIC_CLIP_DATA => {
-            Some(&e.0.properties)
-        }
-        // Bare Struct shows up too in some BIN-version emissions.
-        PropertyValueEnum::Struct(s) if s.class_hash == C_ATOMIC_CLIP_DATA => Some(&s.properties),
+        // Map values declared as `pointer` come through as Embed/Pointer.
+        BinValue::Embed { name, fields } if name.hash == C_ATOMIC_CLIP_DATA => Some(fields),
+        BinValue::Pointer { name, fields } if name.hash == C_ATOMIC_CLIP_DATA => Some(fields),
         _ => None,
     }
 }
 
 /// Pull the ANM path out of an AtomicClipData's properties:
 ///   AtomicClipData.mAnimationResourceData (embed) .mAnimationFilePath (string)
-fn atomic_clip_anm_path(props: &IndexMap<u32, BinProperty>) -> Option<String> {
-    let res_value = &props.get(&H_ANIMATION_RESOURCE_DATA)?.value;
+fn atomic_clip_anm_path(props: &[BinField]) -> Option<String> {
+    let res_value = view::field(props, H_ANIMATION_RESOURCE_DATA)?;
     let res_props = embedded_props(res_value)?;
     let path = string_field(res_props, H_ANIMATION_FILE_PATH)?;
     if path.is_empty() {
@@ -679,13 +675,13 @@ fn atomic_clip_anm_path(props: &IndexMap<u32, BinProperty>) -> Option<String> {
     Some(path.to_string())
 }
 
-fn clip_key_hash(value: &PropertyValueEnum) -> Option<u32> {
+fn clip_key_hash(value: &BinValue) -> Option<u32> {
     match value {
-        PropertyValueEnum::Hash(h) => Some(h.0),
+        BinValue::Hash(h) => Some(h.hash),
         // Some clip maps in the wild use `string` keys instead of
         // `hash`. Accept those by hashing on-the-fly so the picker
         // still lists them.
-        PropertyValueEnum::String(s) => Some(fnv1a_runtime_lower(&s.0)),
+        BinValue::String(s) => Some(fnv1a_runtime_lower(s)),
         _ => None,
     }
 }
@@ -737,24 +733,23 @@ fn fnv1a_runtime_lower(s: &str) -> u32 {
 
 // ── Property unwrappers (mirror skin_textures.rs) ──────────────────
 
-fn embedded_props(v: &PropertyValueEnum) -> Option<&IndexMap<u32, BinProperty>> {
+fn embedded_props(v: &BinValue) -> Option<&[BinField]> {
     match v {
-        PropertyValueEnum::Embedded(e) => Some(&e.0.properties),
-        PropertyValueEnum::Struct(s) => Some(&s.properties),
+        BinValue::Embed { fields, .. } | BinValue::Pointer { fields, .. } => Some(fields),
         _ => None,
     }
 }
 
-fn string_field(props: &IndexMap<u32, BinProperty>, name_hash: u32) -> Option<&str> {
-    match &props.get(&name_hash)?.value {
-        PropertyValueEnum::String(sv) => Some(&sv.0),
+fn string_field(fields: &[BinField], name_hash: u32) -> Option<&str> {
+    match view::field(fields, name_hash)? {
+        BinValue::String(s) => Some(s),
         _ => None,
     }
 }
 
-fn object_link_field(props: &IndexMap<u32, BinProperty>, name_hash: u32) -> Option<u32> {
-    match &props.get(&name_hash)?.value {
-        PropertyValueEnum::ObjectLink(link) => Some(link.0),
+fn object_link_field(fields: &[BinField], name_hash: u32) -> Option<u32> {
+    match view::field(fields, name_hash)? {
+        BinValue::Link(link) => Some(link.hash),
         _ => None,
     }
 }

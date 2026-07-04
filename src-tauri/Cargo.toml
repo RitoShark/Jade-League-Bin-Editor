@@ -58,8 +58,17 @@ winreg = "0.52"
 windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Wdk_System_SystemInformation"] }
 
 # League Toolkit for BIN file parsing (crates.io for compatible ltk_primitives version)
-ltk_meta = { version = "0.3.3", features = ["serde"] }
-ltk_ritobin = "0.1.4"
+ltk_meta = { version = "0.5.1", features = ["serde"] }
+ltk_ritobin = "0.3.0"
+# Pulled in explicitly so the ltk<->jade tree adapter can construct
+# `Color<u8>` values. Version pinned to match what ltk_meta 0.5 resolves
+# to, so there's a single unified copy in the tree (no type mismatch).
+ltk_primitives = "0.3.4"
+# ltk_meta uses glam 0.27 internally (our mesh code uses 0.29 — a
+# separate copy). The tree adapter constructs glam vector/matrix values
+# that must be ltk_meta's exact glam type, so we depend on 0.27 under a
+# rename. Same version → unifies with ltk_meta's copy, no type mismatch.
+glam027 = { package = "glam", version = "0.27.0" }
 
 # WAD extraction — LMDB-backed hashtable + zstd for the combined.zst download.
 heed = "0.20"

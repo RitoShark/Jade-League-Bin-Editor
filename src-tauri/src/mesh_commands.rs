@@ -2,7 +2,7 @@
 //! the parser lives in `core/mesh/` and these commands are thin
 //! request-shaping layers that hand bytes to it.
 
-use crate::core::bin::read_bin_ltk;
+use crate::core::bin::read_bin_engine;
 use crate::core::mesh::skin_textures::find_static_mesh_texture;
 use crate::core::mesh::texture_decode::decode_auto;
 use crate::core::mesh::{
@@ -977,7 +977,8 @@ pub async fn wad_read_chroma_textures(
     path_hash_hex: String,
     chroma_id: u32,
 ) -> Result<Option<SknTextureBindings>, String> {
-    use crate::core::bin::{read_bin_ltk, BinTree};
+    use crate::core::bin::{read_bin_engine, JadeBin as BinTree};
+    use crate::core::bin::jade::view;
     use crate::core::mesh::skin_bin::{find_chroma_bin, find_skin_bin};
     use crate::core::mesh::skin_textures::{extract_textures_from_trees, SkinTextureMap};
 
@@ -1024,11 +1025,12 @@ pub async fn wad_read_chroma_textures(
             .ok_or_else(|| format!("{bin_label} bin chunk {bin_hash_hex} not in mount {id}"))?;
             let bytes = read_chunk_decompressed_bytes(&info.0, &info.1)
                 .map_err(|e| format!("read {bin_label} bin chunk: {e}"))?;
-            let primary = read_bin_ltk(&bytes)
+            let primary = read_bin_engine(&bytes)
                 .map_err(|e| format!("parse {bin_label} bin tree: {e}"))?;
 
-            let mut trees: Vec<BinTree> = Vec::with_capacity(1 + primary.dependencies.len());
-            for dep_path in &primary.dependencies {
+            let primary_deps = view::dependencies(&primary);
+            let mut trees: Vec<BinTree> = Vec::with_capacity(1 + primary_deps.len());
+            for dep_path in &primary_deps {
                 let lower = dep_path.to_lowercase();
                 let dep_hash = xxh64_lower(&lower);
                 let dep_info = with_mount(id, |m| {
@@ -1042,7 +1044,7 @@ pub async fn wad_read_chroma_textures(
                 let Ok(dep_bytes) = read_chunk_decompressed_bytes(&dep_info.0, &dep_info.1) else {
                     continue;
                 };
-                if let Ok(t) = read_bin_ltk(&dep_bytes) {
+                if let Ok(t) = read_bin_engine(&dep_bytes) {
                     trees.push(t);
                 }
             }
@@ -1210,7 +1212,7 @@ pub async fn viewer_resolve_skn(
         // Read + parse the skin BIN, pull `simpleSkin` from the first SCDP.
         let bytes = read_chunk_decompressed_bytes(&wad_path, &bin_chunk)
             .map_err(|e| format!("read skin bin: {e}"))?;
-        let tree = read_bin_ltk(&bytes).map_err(|e| format!("parse skin bin: {e}"))?;
+        let tree = read_bin_engine(&bytes).map_err(|e| format!("parse skin bin: {e}"))?;
         let simple_skin = match extract_simple_skin(&tree) {
             Some(s) => s,
             None => return Ok(None),
@@ -1503,11 +1505,14 @@ pub async fn viewer_extract_for_studio(
                 Ok(b) => b,
                 Err(_) => return Vec::new(),
             };
-            let tree = match crate::core::bin::read_bin_ltk(&bytes) {
+            let tree = match crate::core::bin::read_bin_engine(&bytes) {
                 Ok(t) => t,
                 Err(_) => return Vec::new(),
             };
-            tree.dependencies.iter().map(|d| d.to_lowercase()).collect()
+            crate::core::bin::jade::view::dependencies(&tree)
+                .iter()
+                .map(|d| d.to_lowercase())
+                .collect()
         })();
 
         if !dep_lowered.is_empty() {
@@ -1769,12 +1774,12 @@ pub async fn viewer_extract_for_studio(
                         // return the BASE textures, which is the bug
                         // that landed us with "missing texture" on the
                         // model when the chroma was supposed to swap in.
-                        if let Ok(chroma_tree) = crate::core::bin::read_bin_ltk(&chroma_bytes) {
-                            let dep_hashes: Vec<(u64, String)> = chroma_tree
-                                .dependencies
-                                .iter()
-                                .map(|d| (xxh64_lower(&d.to_lowercase()), d.to_lowercase()))
-                                .collect();
+                        if let Ok(chroma_tree) = crate::core::bin::read_bin_engine(&chroma_bytes) {
+                            let dep_hashes: Vec<(u64, String)> =
+                                crate::core::bin::jade::view::dependencies(&chroma_tree)
+                                    .iter()
+                                    .map(|d| (xxh64_lower(&d.to_lowercase()), d.to_lowercase()))
+                                    .collect();
 
                             // Build a `trees` slice (primary chroma BIN +
                             // its parsed deps) and ask the shared texture
@@ -1782,7 +1787,7 @@ pub async fn viewer_extract_for_studio(
                             // Mirrors what the live `wad_read_chroma_textures`
                             // command does at runtime, but materialised
                             // to disk paths for the studio's binder.
-                            let mut linked_trees: Vec<crate::core::bin::BinTree> = Vec::new();
+                            let mut linked_trees: Vec<crate::core::bin::JadeBin> = Vec::new();
                             for (dep_hash, _dep_path) in &dep_hashes {
                                 let dep_chunk_opt = with_mount(id, |m| {
                                     m.chunks
@@ -1797,11 +1802,11 @@ pub async fn viewer_extract_for_studio(
                                 else {
                                     continue;
                                 };
-                                if let Ok(t) = crate::core::bin::read_bin_ltk(&dep_bytes) {
+                                if let Ok(t) = crate::core::bin::read_bin_engine(&dep_bytes) {
                                     linked_trees.push(t);
                                 }
                             }
-                            let mut trees: Vec<crate::core::bin::BinTree> =
+                            let mut trees: Vec<crate::core::bin::JadeBin> =
                                 Vec::with_capacity(1 + linked_trees.len());
                             trees.push(chroma_tree);
                             trees.extend(linked_trees);
@@ -1883,7 +1888,7 @@ pub async fn viewer_extract_for_studio(
                     H_CLIP_DATA_MAP,
                 };
                 let skin_bytes = std::fs::read(&parent_bin_path).ok()?;
-                let skin_tree = crate::core::bin::read_bin_ltk(&skin_bytes).ok()?;
+                let skin_tree = crate::core::bin::read_bin_engine(&skin_bytes).ok()?;
                 let link_hash = find_animation_graph_link(&skin_tree)?;
                 let anim_bin_rel = resolve_animation_bin_path(&skin_tree, link_hash)?;
                 // The anim BIN itself is usually a dep of the skin BIN,
@@ -1891,11 +1896,12 @@ pub async fn viewer_extract_for_studio(
                 // pass above. Read it.
                 let anim_bin_disk = temp_dir.join(&anim_bin_rel);
                 let anim_bytes = std::fs::read(&anim_bin_disk).ok()?;
-                let anim_tree = crate::core::bin::read_bin_ltk(&anim_bytes).ok()?;
-                let graph_obj = anim_tree.objects.get(&link_hash)?;
-                let clip_map_value = &graph_obj.properties.get(&H_CLIP_DATA_MAP)?.value;
+                let anim_tree = crate::core::bin::read_bin_engine(&anim_bytes).ok()?;
+                let graph_obj = crate::core::bin::jade::view::object(&anim_tree, link_hash)?;
+                let clip_map_value =
+                    crate::core::bin::jade::view::field(graph_obj.fields, H_CLIP_DATA_MAP)?;
                 let map_entries = match clip_map_value {
-                    ltk_meta::PropertyValueEnum::Map(m) => &m.entries,
+                    crate::core::bin::BinValue::Map { items, .. } => items.as_slice(),
                     _ => return None,
                 };
                 // Resolver returns nothing — we only care about the
@@ -2072,7 +2078,7 @@ pub async fn wad_find_static_mesh_texture(
     let texture_path: Option<String> = tokio::task::spawn_blocking(move || {
         let bytes = read_chunk_decompressed_bytes(&info.0, &info.1)
             .map_err(|e| format!("read bin: {e}"))?;
-        let tree = read_bin_ltk(&bytes).map_err(|e| format!("parse bin: {e}"))?;
+        let tree = read_bin_engine(&bytes).map_err(|e| format!("parse bin: {e}"))?;
         Ok::<Option<String>, String>(find_static_mesh_texture(&tree, &mesh_path))
     })
     .await

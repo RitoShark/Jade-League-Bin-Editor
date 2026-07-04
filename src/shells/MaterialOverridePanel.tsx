@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import MaterialOverrideDockPanel, { type LibraryPairResult } from './MaterialOverrideDockPanel';
 import { useShell } from './ShellContext';
+import { uniqueMaterialName, renameMaterialInSnippet } from '../lib/materialInsert';
 
 interface AutoMaterialResult {
     matches: { material: string; texture: string }[];
@@ -336,30 +337,12 @@ export default function MaterialOverridePanel({ entryType, onClose }: MaterialOv
                 return;
             }
 
-            // Auto-increment the material name if jadelib_<id> is already
-            // somewhere in this bin so duplicate inserts stack cleanly.
-            const baseName = snippet.materialName;
-            const escapedBase = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const existingRe = new RegExp(`"${escapedBase}(?:_\\d+)?"\\s*=`, 'g');
-            const existingNames = new Set<string>();
-            const content0 = editorContent();
-            let m: RegExpExecArray | null;
-            while ((m = existingRe.exec(content0)) !== null) {
-                const nameMatch = m[0].match(/"([^"]+)"/);
-                if (nameMatch) existingNames.add(nameMatch[1]);
-            }
-            let finalName = baseName;
-            if (existingNames.has(finalName)) {
-                let suffix = 2;
-                while (existingNames.has(`${baseName}_${suffix}`)) suffix++;
-                finalName = `${baseName}_${suffix}`;
-            }
-
-            let snippetText = snippet.snippet;
-            if (finalName !== baseName) {
-                const escBase = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                snippetText = snippetText.replace(new RegExp(`"${escBase}"`, 'g'), `"${finalName}"`);
-            }
+            // Uniquely name the material with a unix timestamp so the same
+            // library material inserted into DIFFERENT mods never collides —
+            // the game merges StaticMaterialDefs by name, so a shared name
+            // would clobber and only one mod's material would apply.
+            const finalName = uniqueMaterialName(snippet.materialName, editorContent());
+            let snippetText = renameMaterialInSnippet(snippet.snippet, snippet.materialName, finalName);
 
             // Replace the Diffuse_Texture placeholder. Prefer the texture
             // the user picked in the dialog; fall back to SKN auto-resolve.

@@ -732,7 +732,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         },
         ltk: {
             title: 'LTK Converter',
-            description: 'Uses the League Toolkit community crates for bin conversion. Broadly compatible but may lag behind on fixes due to external maintenance.',
+            description: 'Uses the League Toolkit community crates (ltk_meta 0.5 / ltk_ritobin 0.3) for bin conversion. Provided mainly for testing and comparison against Jade Custom.',
         },
     };
 
@@ -768,6 +768,27 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                 <span className="engine-description-title">{engineDescriptions[converterEngine].title}</span>
                 <p className="engine-description-text">{engineDescriptions[converterEngine].description}</p>
             </div>
+
+            {converterEngine === 'ltk' && (
+                <div style={{
+                    display: 'flex', gap: 10, alignItems: 'flex-start',
+                    marginTop: 12, padding: '12px 14px', borderRadius: 8,
+                    background: 'var(--warning-bg, rgba(240, 173, 78, 0.12))',
+                    border: '1px solid var(--warning-border, rgba(240, 173, 78, 0.45))',
+                    color: 'var(--warning-text, var(--text-color, #e0b070))',
+                }}>
+                    <span style={{ fontSize: 16, lineHeight: 1.3, flexShrink: 0 }}>⚠️</span>
+                    <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+                        <strong>Don't use this unless you're testing something.</strong>
+                        <p style={{ margin: '4px 0 0' }}>
+                            It's slow, big files can take a few seconds just to save. It also flags a
+                            bunch of perfectly good files as broken, and worst of all it can save bins
+                            that are actually invalid so they won't load in game at all. Just use Jade
+                            Custom, there's no reason to run this for normal work.
+                        </p>
+                    </div>
+                </div>
+            )}
 
             {engineChanged && (
                 <div className="engine-restart-notice">

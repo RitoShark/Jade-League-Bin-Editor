@@ -35,11 +35,14 @@
 //! }
 //! ```
 
-use indexmap::IndexMap;
-use ltk_meta::{BinProperty, BinTree, BinTreeObject, PropertyValueEnum};
+// Canonical engine-agnostic tree: the Jade-native `Bin`/`BinValue`.
+// Whichever converter engine is selected, bytes are parsed into this
+// shape (`read_bin_engine`), so this walker never references `ltk_meta`.
+use crate::core::bin::{BinField, BinValue, JadeBin as BinTree};
+use crate::core::bin::jade::view;
 use serde::Serialize;
 
-use crate::core::bin::read_bin_ltk;
+use crate::core::bin::read_bin_engine;
 use crate::core::wad::{read_chunk_decompressed_bytes, with_mount};
 
 use super::skin_bin::find_skin_bin;
@@ -128,7 +131,7 @@ pub fn read_skin_textures_for_skn_disk(
     };
     let bytes = std::fs::read(&skin_bin_path)
         .map_err(|e| format!("read skin bin '{}': {}", skin_bin_path, e))?;
-    let primary_tree = read_bin_ltk(&bytes).map_err(|e| format!("parse skin bin: {e}"))?;
+    let primary_tree = read_bin_engine(&bytes).map_err(|e| format!("parse skin bin: {e}"))?;
 
     // Parse every BIN listed in the primary's `linked:` dependency list,
     // so champions like Evelynn — whose `Material: link` points at a
@@ -148,7 +151,7 @@ pub fn read_skin_textures_for_skn_disk(
         // (1) Walk the primary's `linked:` dependencies. These are
         //     the BIN files Riot explicitly tags as required. Most
         //     champion-level material defs come through here.
-        for dep in &primary_tree.dependencies {
+        for dep in view::dependencies(&primary_tree) {
             let lower = dep.to_lowercase();
             // Dependencies are `DATA/Characters/...` strings; only the
             // `data/`-rooted ones matter for material resolution.
@@ -168,7 +171,7 @@ pub fn read_skin_textures_for_skn_disk(
                         break;
                     }
                 };
-                match read_bin_ltk(&dep_bytes) {
+                match read_bin_engine(&dep_bytes) {
                     Ok(t) => {
                         loaded_paths.insert(key);
                         linked_trees.push(t);
@@ -217,7 +220,7 @@ pub fn read_skin_textures_for_skn_disk(
                     Ok(b) => b,
                     Err(_) => return,
                 };
-                match read_bin_ltk(&bytes) {
+                match read_bin_engine(&bytes) {
                     Ok(t) => {
                         loaded.insert(key);
                         linked.push(t);
@@ -311,7 +314,7 @@ pub fn read_skin_textures_for_skn(
     .ok_or_else(|| format!("bin chunk {} not in mount {}", bin_match.path_hash_hex, mount_id))?;
     let bytes = read_chunk_decompressed_bytes(&info.0, &info.1)
         .map_err(|e| format!("read bin chunk: {e}"))?;
-    let primary_tree = read_bin_ltk(&bytes).map_err(|e| format!("parse bin tree: {e}"))?;
+    let primary_tree = read_bin_engine(&bytes).map_err(|e| format!("parse bin tree: {e}"))?;
 
     // Parse every BIN in the primary's `linked:` dependency list.
     // Evelynn's MaterialDef lives in a sibling multi-skin BIN, so the
@@ -320,7 +323,8 @@ pub fn read_skin_textures_for_skn(
     // We collect them once here so the extractor can search across the
     // whole bundle. Failures (chunk missing, parse error) are non-fatal:
     // skip the BIN and continue.
-    let deps_paths: Vec<String> = primary_tree.dependencies.clone();
+    let deps_paths: Vec<String> =
+        view::dependencies(&primary_tree).iter().map(|s| s.to_string()).collect();
     let mut linked_trees: Vec<BinTree> = Vec::with_capacity(deps_paths.len());
     for dep_path in &deps_paths {
         let lower = dep_path.to_lowercase();
@@ -340,7 +344,7 @@ pub fn read_skin_textures_for_skn(
                 continue;
             }
         };
-        match read_bin_ltk(&dep_bytes) {
+        match read_bin_engine(&dep_bytes) {
             Ok(t) => linked_trees.push(t),
             Err(e) => eprintln!("[textures] linked BIN '{}' parse failed: {}", lower, e),
         }
@@ -415,10 +419,10 @@ pub fn extract_textures_from_trees(
     eprintln!(
         "[textures] extract_textures_from_trees: {} trees, primary has {} objects",
         trees.len(),
-        primary.objects.len()
+        view::objects(primary).len()
     );
-    for object in primary.objects.values() {
-        if let Some(smp_props) = skin_mesh_props_of(&object.properties) {
+    for object in view::objects(primary) {
+        if let Some(smp_props) = skin_mesh_props_of(object.fields) {
             let result = extract_textures_from_smp(trees, smp_props);
             eprintln!(
                 "[textures] result: default={:?} bindings_count={} shadow={:?}",
@@ -443,8 +447,8 @@ pub fn extract_textures_from_trees(
 /// horse, Mel's main vs alt rigs, etc.). Returns the BIN-form path
 /// (`ASSETS/...`) lowercased, or `None` if no SCDP / no field.
 pub fn extract_simple_skin(tree: &BinTree) -> Option<String> {
-    for object in tree.objects.values() {
-        let smp_props = match skin_mesh_props_of(&object.properties) {
+    for object in view::objects(tree) {
+        let smp_props = match skin_mesh_props_of(object.fields) {
             Some(p) => p,
             None => continue,
         };
@@ -483,18 +487,17 @@ pub fn extract_chroma_textures(
     let primary = &trees[0];
 
     let mut chroma_links: Vec<u32> = Vec::new();
-    for object in primary.objects.values() {
-        let Some(smp_props) = skin_mesh_props_of(&object.properties) else { continue };
+    for object in view::objects(primary) {
+        let Some(smp_props) = skin_mesh_props_of(object.fields) else { continue };
 
-        let scan_sources: [Option<&IndexMap<u32, BinProperty>>; 2] =
-            [Some(&object.properties), Some(smp_props)];
-        for src in scan_sources.iter().flatten() {
+        let scan_sources: [&[BinField]; 2] = [object.fields, smp_props];
+        for src in scan_sources.iter() {
             for key in &[H_CHROMAS, H_CHROMA_LIST] {
-                if let Some(list_prop) = src.get(key) {
-                    if let Some(items) = container_items(&list_prop.value) {
+                if let Some(list_prop) = view::field(src, *key) {
+                    if let Some(items) = container_items(list_prop) {
                         for item in items {
-                            if let PropertyValueEnum::ObjectLink(link) = item {
-                                chroma_links.push(link.0);
+                            if let BinValue::Link(link) = item {
+                                chroma_links.push(link.hash);
                             }
                         }
                     }
@@ -513,20 +516,20 @@ pub fn extract_chroma_textures(
 
     for link_hash in chroma_links {
         // Chroma object can live in any of the linked BINs too.
-        let obj = trees.iter().find_map(|t| t.objects.get(&link_hash));
+        let obj = trees.iter().find_map(|t| view::object(t, link_hash));
         let Some(obj) = obj else { continue };
-        let id_value = u32_field(&obj.properties, H_ID).or_else(|| {
-            object_link_field(&obj.properties, H_CHILD_SKIN)
-                .and_then(|h| trees.iter().find_map(|t| t.objects.get(&h)))
-                .and_then(|target| u32_field(&target.properties, H_ID))
+        let id_value = u32_field(obj.fields, H_ID).or_else(|| {
+            object_link_field(obj.fields, H_CHILD_SKIN)
+                .and_then(|h| trees.iter().find_map(|t| view::object(t, h)))
+                .and_then(|target| u32_field(target.fields, H_ID))
         });
         if id_value != Some(chroma_id) {
             continue;
         }
 
         let chroma_obj = obj;
-        let smp_props = skin_mesh_props_of(&chroma_obj.properties)
-            .unwrap_or(&chroma_obj.properties);
+        let smp_props = skin_mesh_props_of(chroma_obj.fields)
+            .unwrap_or(chroma_obj.fields);
         let (default_texture, materials, _shadow) = extract_textures_from_smp(trees, smp_props);
         return Some((default_texture, materials));
     }
@@ -540,7 +543,7 @@ pub fn extract_chroma_textures(
 /// paths stay in lock-step on which fields they understand.
 fn extract_textures_from_smp(
     trees: &[BinTree],
-    smp_props: &IndexMap<u32, BinProperty>,
+    smp_props: &[BinField],
 ) -> (Option<String>, Vec<MaterialTexture>, Option<String>) {
     let mut default_texture: Option<String> = None;
     let mut materials: Vec<MaterialTexture> = Vec::new();
@@ -571,8 +574,8 @@ fn extract_textures_from_smp(
         }
     }
 
-    if let Some(overrides) = smp_props.get(&H_MATERIAL_OVERRIDE) {
-        if let Some(list) = container_items(&overrides.value) {
+    if let Some(overrides) = view::field(smp_props, H_MATERIAL_OVERRIDE) {
+        if let Some(list) = container_items(overrides) {
             eprintln!("[textures] materialOverride has {} entries", list.len());
             for (i, item) in list.iter().enumerate() {
                 let Some(item_props) = embedded_props(item) else {
@@ -635,10 +638,8 @@ fn extract_textures_from_smp(
 /// Pull the `skinMeshProperties` embedded/struct props out of an
 /// object's properties map, if any. Centralises the field-name +
 /// embedded-vs-struct unwrap so callers don't duplicate the logic.
-fn skin_mesh_props_of(
-    props: &IndexMap<u32, BinProperty>,
-) -> Option<&IndexMap<u32, BinProperty>> {
-    embedded_props(&props.get(&H_SKIN_MESH_PROPERTIES)?.value)
+fn skin_mesh_props_of(fields: &[BinField]) -> Option<&[BinField]> {
+    embedded_props(view::field(fields, H_SKIN_MESH_PROPERTIES)?)
 }
 
 /// Look up a StaticMaterialDef object by its FNV1a path hash across
@@ -666,10 +667,8 @@ fn resolve_material_diffuse_with_shadow(
     mat_path_hash: u32,
 ) -> Option<(String, Option<String>)> {
     // Search every tree (primary first) for the StaticMaterialDef.
-    let mat_obj: &BinTreeObject = trees
-        .iter()
-        .find_map(|t| t.objects.get(&mat_path_hash))?;
-    let samplers = container_items(&mat_obj.properties.get(&H_SAMPLER_VALUES)?.value)?;
+    let mat_obj = trees.iter().find_map(|t| view::object(t, mat_path_hash))?;
+    let samplers = container_items(view::field(mat_obj.fields, H_SAMPLER_VALUES)?)?;
 
     let mut samples: Vec<(String, String)> = Vec::with_capacity(samplers.len());
     for item in samplers {
@@ -782,10 +781,10 @@ fn resolve_material_diffuse_with_shadow(
 pub fn find_static_mesh_texture(tree: &BinTree, mesh_path: &str) -> Option<String> {
     let needle = mesh_path.to_lowercase();
     let mut all_textures: Vec<String> = Vec::new();
-    for obj in tree.objects.values() {
+    for obj in view::objects(tree) {
         let mut found_mesh_ref = false;
         let mut texture_paths: Vec<String> = Vec::new();
-        visit_strings_in_props(&obj.properties, &mut |s| {
+        visit_strings_in_props(obj.fields, &mut |s| {
             let lower = s.to_lowercase();
             if !found_mesh_ref && lower == needle {
                 found_mesh_ref = true;
@@ -840,27 +839,20 @@ fn pick_main_static_texture(paths: &[String]) -> Option<String> {
     paths.first().cloned()
 }
 
-fn visit_strings_in_props<F: FnMut(&str)>(
-    props: &IndexMap<u32, BinProperty>,
-    f: &mut F,
-) {
-    for prop in props.values() {
-        visit_strings_in_value(&prop.value, f);
+fn visit_strings_in_props<F: FnMut(&str)>(fields: &[BinField], f: &mut F) {
+    for field in fields {
+        visit_strings_in_value(&field.value, f);
     }
 }
 
-fn visit_strings_in_value<F: FnMut(&str)>(v: &PropertyValueEnum, f: &mut F) {
+fn visit_strings_in_value<F: FnMut(&str)>(v: &BinValue, f: &mut F) {
     match v {
-        PropertyValueEnum::String(s) => f(&s.0),
-        PropertyValueEnum::Embedded(e) => visit_strings_in_props(&e.0.properties, f),
-        PropertyValueEnum::Struct(s) => visit_strings_in_props(&s.properties, f),
-        PropertyValueEnum::Container(c) => {
-            for item in &c.items {
-                visit_strings_in_value(item, f);
-            }
+        BinValue::String(s) => f(s),
+        BinValue::Embed { fields, .. } | BinValue::Pointer { fields, .. } => {
+            visit_strings_in_props(fields, f)
         }
-        PropertyValueEnum::UnorderedContainer(uc) => {
-            for item in &uc.0.items {
+        BinValue::List { items, .. } | BinValue::List2 { items, .. } => {
+            for item in items {
                 visit_strings_in_value(item, f);
             }
         }
@@ -875,40 +867,36 @@ fn visit_strings_in_value<F: FnMut(&str)>(v: &PropertyValueEnum, f: &mut F) {
 
 // ── Property unwrappers ────────────────────────────────────────────
 //
-// These take the IndexMap directly rather than the StructValue type
-// itself — the pinned ltk_meta keeps its `property` module private,
-// so the inner value types (StructValue, ContainerValue, etc.)
-// aren't reachable by name from outside the crate. Field access on
-// the matched binding (`e.0.properties`, `c.items`, `link.0`) doesn't
-// need the type to be importable, so we work with the structural
-// pieces and stay portable across ltk_meta versions.
+// All operate on the Jade-native tree: object fields are a flat
+// `&[BinField]`, looked up by FNV1a hash via `view::field`, and
+// containers are plain `Vec<BinValue>` (no clone needed).
 
-fn embedded_props(v: &PropertyValueEnum) -> Option<&IndexMap<u32, BinProperty>> {
+fn embedded_props(v: &BinValue) -> Option<&[BinField]> {
     match v {
-        PropertyValueEnum::Embedded(e) => Some(&e.0.properties),
-        PropertyValueEnum::Struct(s) => Some(&s.properties),
+        BinValue::Embed { fields, .. } | BinValue::Pointer { fields, .. } => Some(fields),
         _ => None,
     }
 }
 
-fn container_items(v: &PropertyValueEnum) -> Option<&Vec<PropertyValueEnum>> {
+/// Borrow a container's items. Jade's `List`/`List2` already store a
+/// `Vec<BinValue>`, so this is a cheap reslice (no clone).
+fn container_items(v: &BinValue) -> Option<&[BinValue]> {
     match v {
-        PropertyValueEnum::Container(c) => Some(&c.items),
-        PropertyValueEnum::UnorderedContainer(uc) => Some(&uc.0.items),
+        BinValue::List { items, .. } | BinValue::List2 { items, .. } => Some(items),
         _ => None,
     }
 }
 
-fn string_field(props: &IndexMap<u32, BinProperty>, name_hash: u32) -> Option<&str> {
-    match &props.get(&name_hash)?.value {
-        PropertyValueEnum::String(sv) => Some(&sv.0),
+fn string_field(fields: &[BinField], name_hash: u32) -> Option<&str> {
+    match view::field(fields, name_hash)? {
+        BinValue::String(s) => Some(s),
         _ => None,
     }
 }
 
-fn object_link_field(props: &IndexMap<u32, BinProperty>, name_hash: u32) -> Option<u32> {
-    match &props.get(&name_hash)?.value {
-        PropertyValueEnum::ObjectLink(link) => Some(link.0),
+fn object_link_field(fields: &[BinField], name_hash: u32) -> Option<u32> {
+    match view::field(fields, name_hash)? {
+        BinValue::Link(link) => Some(link.hash),
         _ => None,
     }
 }
@@ -917,14 +905,14 @@ fn object_link_field(props: &IndexMap<u32, BinProperty>, name_hash: u32) -> Opti
 /// (`u8`/`u16`/`u32`) since chroma `id` shows up as different types
 /// across versions. Wider types (`u64`) truncate; if anyone exceeds
 /// `u32::MAX` we have bigger problems.
-fn u32_field(props: &IndexMap<u32, BinProperty>, name_hash: u32) -> Option<u32> {
-    match &props.get(&name_hash)?.value {
-        PropertyValueEnum::U8(v) => Some(v.0 as u32),
-        PropertyValueEnum::U16(v) => Some(v.0 as u32),
-        PropertyValueEnum::U32(v) => Some(v.0),
-        PropertyValueEnum::I8(v) => Some(v.0 as u32),
-        PropertyValueEnum::I16(v) => Some(v.0 as u32),
-        PropertyValueEnum::I32(v) => Some(v.0 as u32),
+fn u32_field(fields: &[BinField], name_hash: u32) -> Option<u32> {
+    match view::field(fields, name_hash)? {
+        BinValue::U8(v) => Some(*v as u32),
+        BinValue::U16(v) => Some(*v as u32),
+        BinValue::U32(v) => Some(*v),
+        BinValue::I8(v) => Some(*v as u32),
+        BinValue::I16(v) => Some(*v as u32),
+        BinValue::I32(v) => Some(*v as u32),
         _ => None,
     }
 }

@@ -18,8 +18,11 @@
 //! rest of the path verbatim. Anything that isn't an asset path
 //! (UUIDs, GUIDs, hash strings, raw words) is left untouched.
 
-use crate::core::bin::{BinProperty, BinTree, PropertyValueEnum};
-use indexmap::IndexMap;
+// Operates on the canonical Jade-native tree. Containers/maps/options
+// are plain `Vec`s here, so the walkers (read and mutate) are simple
+// recursion with no rebuilds.
+use crate::core::bin::{BinField, BinValue, JadeBin as BinTree};
+use crate::core::bin::jade::view;
 use std::collections::HashMap;
 
 /// Lowercase the first segment, check if it's `assets/`. Returns the
@@ -124,51 +127,35 @@ pub fn repath_wad_relative(rel: &str, prefix: &str) -> String {
 /// Recurses into struct/embedded/container values. Used to enumerate
 /// every asset path the BIN references.
 pub fn visit_strings<F: FnMut(&str)>(tree: &BinTree, f: &mut F) {
-    for obj in tree.objects.values() {
-        visit_strings_in_props(&obj.properties, f);
+    for obj in view::objects(tree) {
+        visit_fields(obj.fields, f);
     }
 }
 
-fn visit_strings_in_props<F: FnMut(&str)>(
-    props: &IndexMap<u32, BinProperty>,
-    f: &mut F,
-) {
-    for prop in props.values() {
-        visit_strings_in_value(&prop.value, f);
+fn visit_fields<F: FnMut(&str)>(fields: &[BinField], f: &mut F) {
+    for field in fields {
+        visit_value(&field.value, f);
     }
 }
 
-fn visit_strings_in_value<F: FnMut(&str)>(v: &PropertyValueEnum, f: &mut F) {
+fn visit_value<F: FnMut(&str)>(v: &BinValue, f: &mut F) {
     match v {
-        PropertyValueEnum::String(s) => f(&s.0),
-        PropertyValueEnum::Embedded(e) => visit_strings_in_props(&e.0.properties, f),
-        PropertyValueEnum::Struct(s) => visit_strings_in_props(&s.properties, f),
-        PropertyValueEnum::Container(c) => {
-            for item in &c.items {
-                visit_strings_in_value(item, f);
+        BinValue::String(s) => f(s),
+        BinValue::Embed { fields, .. } | BinValue::Pointer { fields, .. } => visit_fields(fields, f),
+        // Lists, list2s and `option[...]` all hold a `Vec<BinValue>`.
+        // Optionals matter here too — Akali's HUD icons (`iconCircle`,
+        // …) live in `option[string]` fields; without recursing them
+        // the BIN refs never get repathed.
+        BinValue::List { items, .. } | BinValue::List2 { items, .. } | BinValue::Option { items, .. } => {
+            for item in items {
+                visit_value(item, f);
             }
         }
-        PropertyValueEnum::UnorderedContainer(uc) => {
-            for item in &uc.0.items {
-                visit_strings_in_value(item, f);
-            }
-        }
-        // `option[string]` fields — Akali's HUD icons (`iconCircle`,
-        // `iconSquare`, …) live here. Without this branch the walker
-        // skips right past them, files get extracted (caught by the
-        // skin-folder sweep) but BIN refs never get rewritten, so a
-        // repathed mod points at paths that don't exist on disk.
-        PropertyValueEnum::Optional(opt) => {
-            if let Some(inner) = &opt.value {
-                visit_strings_in_value(inner, f);
-            }
-        }
-        // Maps occasionally carry string keys or string values
-        // (rarely for asset paths, but no reason to skip them).
-        PropertyValueEnum::Map(m) => {
-            for (k, v) in &m.entries {
-                visit_strings_in_value(&k.0, f);
-                visit_strings_in_value(v, f);
+        // Maps occasionally carry string keys or values.
+        BinValue::Map { items, .. } => {
+            for (k, v) in items {
+                visit_value(k, f);
+                visit_value(v, f);
             }
         }
         _ => {}
@@ -179,51 +166,36 @@ fn visit_strings_in_value<F: FnMut(&str)>(v: &PropertyValueEnum, f: &mut F) {
 /// string in-place; the caller decides what to do (e.g. only rewrite
 /// asset paths). Used for repath BIN rewriting before re-serializing.
 pub fn visit_strings_mut<F: FnMut(&mut String)>(tree: &mut BinTree, f: &mut F) {
-    for obj in tree.objects.values_mut() {
-        visit_strings_in_props_mut(&mut obj.properties, f);
+    if let Some(entries) = view::entries_mut(tree) {
+        for (_key, val) in entries.iter_mut() {
+            // `_key` is the entry's path-hash (never a string), so we
+            // only descend into the object value.
+            visit_value_mut(val, f);
+        }
     }
 }
 
-fn visit_strings_in_props_mut<F: FnMut(&mut String)>(
-    props: &mut IndexMap<u32, BinProperty>,
-    f: &mut F,
-) {
-    for prop in props.values_mut() {
-        visit_strings_in_value_mut(&mut prop.value, f);
+fn visit_fields_mut<F: FnMut(&mut String)>(fields: &mut [BinField], f: &mut F) {
+    for field in fields.iter_mut() {
+        visit_value_mut(&mut field.value, f);
     }
 }
 
-fn visit_strings_in_value_mut<F: FnMut(&mut String)>(
-    v: &mut PropertyValueEnum,
-    f: &mut F,
-) {
+fn visit_value_mut<F: FnMut(&mut String)>(v: &mut BinValue, f: &mut F) {
     match v {
-        PropertyValueEnum::String(s) => f(&mut s.0),
-        PropertyValueEnum::Embedded(e) => visit_strings_in_props_mut(&mut e.0.properties, f),
-        PropertyValueEnum::Struct(s) => visit_strings_in_props_mut(&mut s.properties, f),
-        PropertyValueEnum::Container(c) => {
-            for item in &mut c.items {
-                visit_strings_in_value_mut(item, f);
+        BinValue::String(s) => f(s),
+        BinValue::Embed { fields, .. } | BinValue::Pointer { fields, .. } => {
+            visit_fields_mut(fields, f)
+        }
+        BinValue::List { items, .. } | BinValue::List2 { items, .. } | BinValue::Option { items, .. } => {
+            for item in items.iter_mut() {
+                visit_value_mut(item, f);
             }
         }
-        PropertyValueEnum::UnorderedContainer(uc) => {
-            for item in &mut uc.0.items {
-                visit_strings_in_value_mut(item, f);
-            }
-        }
-        PropertyValueEnum::Optional(opt) => {
-            if let Some(inner) = opt.value.as_mut() {
-                visit_strings_in_value_mut(inner, f);
-            }
-        }
-        PropertyValueEnum::Map(m) => {
-            // Keys live in the `IndexMap` index, so we can't mutate
-            // them in-place without rebuilding the map. Asset paths
-            // basically never appear as map keys in skin BINs, so we
-            // only mutate values here — a future refactor could swap
-            // to a Vec-of-pairs if a real case comes up.
-            for v in m.entries.values_mut() {
-                visit_strings_in_value_mut(v, f);
+        BinValue::Map { items, .. } => {
+            for (k, v) in items.iter_mut() {
+                visit_value_mut(k, f);
+                visit_value_mut(v, f);
             }
         }
         _ => {}
@@ -321,15 +293,19 @@ pub fn rewrite_bin_strings(
         }
     };
     visit_strings_mut(tree, &mut rewrite_one);
-    // BinTree's `dependencies` list is the linked-deps array Riot
-    // uses to find sibling BINs at load time. It sits OUTSIDE the
-    // property tree, so `visit_strings_mut` doesn't touch it. When
+    // The `linked:` dependency list is the array Riot uses to find
+    // sibling BINs at load time. It sits OUTSIDE the property tree
+    // (its own section), so `visit_strings_mut` doesn't touch it. When
     // we rename a linked BIN (long-path mitigation) the dependency
     // string in the primary BIN must update too — otherwise the
     // game looks for `…/skin0.bin` while the file actually lives at
     // `…/linked1.bin` and the link silently dangles.
-    for dep in tree.dependencies.iter_mut() {
-        rewrite_one(dep);
+    if let Some(deps) = view::dependencies_mut(tree) {
+        for dep in deps.iter_mut() {
+            if let BinValue::String(s) = dep {
+                rewrite_one(s);
+            }
+        }
     }
 }
 

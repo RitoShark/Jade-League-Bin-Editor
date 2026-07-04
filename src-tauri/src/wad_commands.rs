@@ -392,7 +392,8 @@ pub async fn wad_extract_skin_assets(
         collect_asset_paths_lower, is_audio_path, is_hud_icon_path,
         is_voiceover_path, repath_wad_relative, rewrite_bin_strings,
     };
-    use crate::core::bin::{read_bin_ltk, write_bin_ltk};
+    use crate::core::bin::{read_bin_engine, write_bin_engine, BinValue};
+    use crate::core::bin::jade::view;
     use crate::core::mesh::find_skin_bin;
     use crate::core::mesh::skin_bin::find_chroma_bin;
     use crate::core::wad::WadChunk;
@@ -499,10 +500,12 @@ pub async fn wad_extract_skin_assets(
 
     tokio::task::spawn_blocking(move || -> Result<SkinAssetExtractResult, String> {
         // ── 1. Resolve skin BIN from SKN hash ────────────────────────
-        // For a chroma we drive asset collection from the CHROMA bin (so
-        // its textures land in the plan, not the base skin's), but keep
-        // the PARENT skin bin path so we can write the chroma bytes over
-        // it — loading the parent skin then shows the chroma.
+        // For a chroma we resolve the CHROMA bin (`skin{N}.bin`) and treat
+        // it exactly like a base skin bin: asset collection is driven by
+        // it, AND it's written out at its OWN path (`skin{N}.bin`) — not
+        // redirected over the parent skin slot. The parent skin bin is the
+        // chroma's linked dependency, so it (and its shared assets) still
+        // ride along through the BIN-walk below.
         let parent_bin = find_skin_bin(id, skn_hash);
         let bin_match = match chroma_skin_num {
             Some(n) => find_chroma_bin(id, skn_hash, n)
@@ -513,16 +516,9 @@ pub async fn wad_extract_skin_assets(
         };
         let bin_hash = u64::from_str_radix(&bin_match.path_hash_hex, 16)
             .map_err(|e| format!("bad skin bin hash hex: {e}"))?;
-        // Hash of the parent skin bin (used to keep it out of the plan
-        // when we're overriding it with the chroma bytes), and the
-        // WAD-relative path the skin bin is ultimately written to.
-        let parent_bin_hash: Option<u64> = parent_bin
-            .as_ref()
-            .and_then(|p| u64::from_str_radix(&p.path_hash_hex, 16).ok());
-        let skin_bin_out_rel: String = match (chroma_skin_num, &parent_bin) {
-            (Some(_), Some(p)) => p.path.to_lowercase(),
-            _ => bin_match.path.to_lowercase(),
-        };
+        // The WAD-relative path the skin bin is written to — its own path,
+        // for both base skins and chromas.
+        let skin_bin_out_rel: String = bin_match.path.to_lowercase();
 
         // SKN folder = parent of the SKN path (used to also grab
         // sibling files Riot conventionally keeps next to the mesh
@@ -570,15 +566,14 @@ pub async fn wad_extract_skin_assets(
         .ok_or_else(|| "skin bin chunk missing from mount".to_string())?;
         let skin_bin_bytes = read_chunk_decompressed_bytes(&wad_path_snapshot, &skin_bin_chunk)
             .map_err(|e| format!("read skin bin: {e}"))?;
-        let mut primary_tree = read_bin_ltk(&skin_bin_bytes)
+        let mut primary_tree = read_bin_engine(&skin_bin_bytes)
             .map_err(|e| format!("parse skin bin: {e}"))?;
 
         // ── 3. Parse every linked dependency BIN ─────────────────────
         // Same "linked" set used by the texture binder — covers
         // multi-skin / multi-character setups where the materialDef
         // lives in a sibling BIN.
-        let dep_paths: Vec<String> = primary_tree
-            .dependencies
+        let dep_paths: Vec<String> = view::dependencies(&primary_tree)
             .iter()
             .map(|d| d.to_lowercase())
             .collect();
@@ -600,9 +595,9 @@ pub async fn wad_extract_skin_assets(
             };
             linked.push((dep_hash, dep_path.clone(), bytes));
         }
-        let linked_trees: Vec<(u64, String, ltk_meta::BinTree)> = linked
+        let linked_trees: Vec<(u64, String, crate::core::bin::JadeBin)> = linked
             .iter()
-            .filter_map(|(h, p, b)| read_bin_ltk(b).ok().map(|t| (*h, p.clone(), t)))
+            .filter_map(|(h, p, b)| read_bin_engine(b).ok().map(|t| (*h, p.clone(), t)))
             .collect();
 
         // ── 3b. Pre-compute which linked BINs will be merged ─────────
@@ -688,10 +683,21 @@ pub async fn wad_extract_skin_assets(
                 if !do_preserve_hud && is_hud_icon_path(&lower) {
                     continue;
                 }
-                let is_skin_folder_member = skn_folder
-                    .as_deref()
-                    .map(|f| lower.starts_with(f))
-                    .unwrap_or(false);
+                // The blind skin-folder sweep grabs every chunk physically
+                // sitting in the SKN's folder (anims/particles/etc. Riot
+                // keeps next to the mesh but doesn't always name in the
+                // BIN). For a CHROMA that folder is the PARENT skin's
+                // (skin10) — sweeping it would drag in the base skin's own
+                // textures, which the chroma overrides and the user doesn't
+                // want. So we disable the sweep for chromas: extraction is
+                // then driven purely by the chroma BIN's references (and its
+                // linked deps, incl. the parent BIN — which still pulls the
+                // shared mesh/material assets via the BIN-walk below).
+                let is_skin_folder_member = chroma_skin_num.is_none()
+                    && skn_folder
+                        .as_deref()
+                        .map(|f| lower.starts_with(f))
+                        .unwrap_or(false);
                 let is_wanted_asset = wanted_hashes.contains_key(&chunk.path_hash);
                 let is_skin_bin = chunk.path_hash == bin_hash;
                 let is_linked_bin = linked.iter().any(|(h, _, _)| *h == chunk.path_hash);
@@ -789,17 +795,13 @@ pub async fn wad_extract_skin_assets(
             }
         }
 
-        // Normalize the skin-BIN plan entry: exactly one, written at the
-        // chosen output path. For a chroma this redirects the chroma BIN
-        // bytes onto the PARENT skin bin path (so the parent slot renders
-        // as the chroma — same trick as `viewer_extract_for_studio`), and
-        // drops the parent bin's own chunk if the walk happened to pull
-        // it in. It also rescues the BIN when its own WAD path isn't
-        // resolved in the mount, which would otherwise silently drop it.
-        plan.retain(|(c, _, _)| {
-            c.path_hash != bin_hash
-                && (chroma_skin_num.is_none() || Some(c.path_hash) != parent_bin_hash)
-        });
+        // Normalize the skin-BIN plan entry: drop whatever the walk pulled
+        // in for the skin bin itself (we re-push it below with the correct
+        // output path), which also rescues the BIN when its own WAD path
+        // isn't resolved in the mount and would otherwise silently drop.
+        // For a chroma the parent skin bin is deliberately LEFT in the plan
+        // — it's a linked dependency the chroma needs to render.
+        plan.retain(|(c, _, _)| c.path_hash != bin_hash);
         plan.push((
             skin_bin_chunk,
             skin_bin_out_rel.clone(),
@@ -869,18 +871,33 @@ pub async fn wad_extract_skin_assets(
         let mut merged_primary_bytes: Option<Vec<u8>> = None;
         if do_merge_linked && !merged_linked_hashes.is_empty() {
             let mut consumed_deps: HashSet<String> = HashSet::new();
-            for (h, dep_path, tree) in &linked_trees {
-                if !merged_linked_hashes.contains(h) {
-                    continue;
+            // Path hashes already present in the primary — used to avoid
+            // clobbering an object the primary already defines (mirrors
+            // the old `entry().or_insert_with()` semantics).
+            let mut existing: HashSet<u32> =
+                view::objects(&primary_tree).iter().map(|o| o.path_hash).collect();
+            if let Some(prim_entries) = view::entries_mut(&mut primary_tree) {
+                for (h, dep_path, tree) in &linked_trees {
+                    if !merged_linked_hashes.contains(h) {
+                        continue;
+                    }
+                    for (key, val) in view::entries(tree) {
+                        if let BinValue::Hash(hh) = key {
+                            if !existing.insert(hh.hash) {
+                                continue; // already present in primary
+                            }
+                        }
+                        prim_entries.push((key.clone(), val.clone()));
+                    }
+                    consumed_deps.insert(dep_path.to_lowercase());
                 }
-                for (k, v) in &tree.objects {
-                    primary_tree.objects.entry(*k).or_insert_with(|| v.clone());
-                }
-                consumed_deps.insert(dep_path.to_lowercase());
             }
-            primary_tree
-                .dependencies
-                .retain(|d| !consumed_deps.contains(&d.to_lowercase()));
+            if let Some(deps) = view::dependencies_mut(&mut primary_tree) {
+                deps.retain(|d| match d {
+                    BinValue::String(s) => !consumed_deps.contains(&s.to_lowercase()),
+                    _ => true,
+                });
+            }
             rewrite_bin_strings(
                 &mut primary_tree,
                 &prefix,
@@ -890,7 +907,7 @@ pub async fn wad_extract_skin_assets(
                 do_preserve_hud,
                 do_export_vo,
             );
-            match write_bin_ltk(&primary_tree) {
+            match write_bin_engine(&primary_tree) {
                 Ok(b) => {
                     merged_primary_bytes = Some(b);
                 }
@@ -1028,7 +1045,7 @@ pub async fn wad_extract_skin_assets(
                 }
             };
             let final_bytes: Vec<u8> = if needs_rewrite {
-                match read_bin_ltk(&bytes) {
+                match read_bin_engine(&bytes) {
                     Ok(mut tree) => {
                         rewrite_bin_strings(
                             &mut tree,
@@ -1039,7 +1056,7 @@ pub async fn wad_extract_skin_assets(
                             do_preserve_hud,
                             do_export_vo,
                         );
-                        match write_bin_ltk(&tree) {
+                        match write_bin_engine(&tree) {
                             Ok(b) => b,
                             Err(e) => {
                                 let msg = format!(

@@ -6,7 +6,15 @@
 use std::io::Cursor;
 use std::sync::OnceLock;
 use parking_lot::RwLock;
-use ltk_meta::{BinTree, BinTreeObject};
+// ltk_meta 0.5 renamed the core types: `BinTree` → `Bin`, `BinTreeObject`
+// → `BinObject`. We alias them back to the names the rest of the codebase
+// (and these function signatures) already use so the churn stays local.
+use ltk_meta::Bin as BinTree;
+use ltk_meta::BinObject as BinTreeObject;
+// ltk_ritobin 0.3 moved bin↔text behind the `Print` trait (bin → text)
+// and `Cst` (text → bin).
+use ltk_ritobin::{Print, Cst};
+use ltk_ritobin::print::PrintConfig;
 use crate::core::hash::{get_frogtools_hash_dir, get_frogtools_text_hash_dir};
 
 /// Maximum allowed BIN file size (50MB - no legitimate BIN should be larger)
@@ -148,8 +156,8 @@ pub fn write_bin(tree: &BinTree) -> Result<Vec<u8>> {
 /// # Returns
 /// A String containing the ritobin text format
 pub fn tree_to_text(tree: &BinTree) -> Result<String> {
-    ltk_ritobin::write(tree)
-        .map_err(|e| BinError(format!("Failed to convert to text: {}", e)))
+    tree.print()
+        .map_err(|e| BinError(format!("Failed to convert to text: {:?}", e)))
 }
 
 /// Convert a Bin to ritobin text format with hash name lookup.
@@ -164,8 +172,11 @@ pub fn tree_to_text_with_hashes<H: ltk_ritobin::HashProvider>(
     tree: &BinTree,
     hashes: &H,
 ) -> Result<String> {
-    ltk_ritobin::write_with_hashes(tree, hashes)
-        .map_err(|e| BinError(format!("Failed to convert to text: {}", e)))
+    // `&H` is itself a `HashProvider` (blanket impl) and is `Clone`, so we
+    // hand the printer a borrow instead of cloning the (large) hash table.
+    let config = PrintConfig::default().with_hashes(hashes);
+    tree.print_with_config(config)
+        .map_err(|e| BinError(format!("Failed to convert to text: {:?}", e)))
 }
 
 /// Load BIN-specific hash files into a HashMapProvider
@@ -355,8 +366,25 @@ pub fn tree_to_text_with_resolved_names(tree: &BinTree) -> Result<String> {
 /// # Returns
 /// A Bin structure
 pub fn text_to_tree(text: &str) -> Result<BinTree> {
-    ltk_ritobin::parse_to_bin_tree(text)
-        .map_err(|e| BinError(format!("Failed to parse text: {}", e)))
+    // ltk_ritobin 0.3: parse to a CST, then type-check/build the Bin.
+    // `build_bin` is best-effort — any returned diagnostics mean the tree
+    // is only partially constructed, so we treat a non-empty list as a
+    // hard parse failure (matching the old all-or-nothing behaviour).
+    let cst = Cst::parse(text);
+    let (tree, diagnostics) = cst.build_bin(text);
+    if !diagnostics.is_empty() {
+        let preview: Vec<String> = diagnostics
+            .iter()
+            .take(10)
+            .map(|d| format!("{:?} @ {:?}", d.diagnostic, d.span))
+            .collect();
+        return Err(BinError(format!(
+            "Failed to parse text: {} error(s):\n{}",
+            diagnostics.len(),
+            preview.join("\n")
+        )));
+    }
+    Ok(tree)
 }
 
 /// Get the list of linked/dependency BIN files from a Bin.

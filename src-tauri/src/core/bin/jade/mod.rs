@@ -5,6 +5,7 @@ pub mod text_reader;
 pub mod text_writer;
 pub mod unhasher;
 pub mod hash_manager;
+pub mod view;
 
 /// Convert binary .bin data to ritobin text format.
 /// Pipeline: binary → read → unhash → text

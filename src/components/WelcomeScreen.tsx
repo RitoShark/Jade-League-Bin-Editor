@@ -8,15 +8,17 @@ import {
 import { FileTypeIcon, extractExtension } from './FormatIcons';
 import { texBufferToDataURL, ddsBufferToDataURL, ddsFormatName, formatName as texFormatName } from '../lib/texFormat';
 import ExtractionSettingsDialog, { ExtractMode } from './ExtractionSettingsDialog';
-import PortalDropdown from './PortalDropdown';
+import SkinModPicker, { SkinModSkin, SkinModSelectionItem } from './SkinModPicker';
+import { fetchChampions, fetchChampionDetails, CDragonChampionDetails } from '../lib/cdragon';
 import { MeshPreview } from './MeshPreview';
 import ViewerTab from './ViewerTab';
 import ManageTab from './ManageTab';
 import Editor from '@monaco-editor/react';
 import {
-    RITOBIN_LANGUAGE_ID,
+    RITOBIN_LANGUAGE_ID, RITOBIN_THEME_ID,
     registerRitobinLanguage, registerRitobinTheme,
 } from '../lib/ritobinLanguage';
+import { loadSavedTheme } from '../lib/themeApplicator';
 import {
     Folder as LucideFolder,
     FolderOpen as LucideFolderOpen,
@@ -98,6 +100,12 @@ function WelcomeEffectLayer({ active }: { active: boolean }) {
     if (!running) return null;
     return <canvas ref={canvasRef} className="welcome-effect-canvas" />;
 }
+
+// Tracks whether the dynamic Monaco theme (`jade-dynamic`) has been defined
+// this session. It's normally created by the main editor's `beforeMount`, but
+// on a fresh boot straight into the extractor the main editor may never have
+// mounted — so the BIN preview must define it itself before switching to it.
+let dynamicThemeReady = false;
 
 interface WelcomeScreenProps {
     onOpenFile: () => void;
@@ -1086,6 +1094,13 @@ function ExtractView({
     // for the two methods we call. Set in `onMount`.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const binEditorRef = useRef<any>(null);
+    // Theme for the BIN preview. Mirrors the main editor: start on the static
+    // ritobin theme (guaranteed to exist) and flip to `jade-dynamic` only once
+    // it's actually defined, so the preview never resolves an undefined theme
+    // and falls back to Monaco's default (wrong) syntax colors.
+    const [previewTheme, setPreviewTheme] = useState(
+        dynamicThemeReady ? 'jade-dynamic' : RITOBIN_THEME_ID,
+    );
     const triggerBinFind = () => {
         const ed = binEditorRef.current;
         if (!ed) return;
@@ -3054,30 +3069,80 @@ function ExtractView({
         return out;
     }, [mountInfo, wadEntries]);
 
-    // Currently-selected SKN inside the modal. Defaults to the first
-    // ticked SKN candidate, falling back to the first one in the list.
-    const [skinModSelectedHash, setSkinModSelectedHash] = useState<string | null>(null);
-    // Pick a sensible default when the modal opens / candidates change.
+    // Multi-select set of extraction targets inside the modal. Each item is
+    // a (parent SKN hash, chroma slot) pair — `chromaSlot` null = the base
+    // skin, otherwise the chroma's `skin{N}` slot. The user can tick several
+    // skins / chromas and the extractor pulls files for all of them.
+    const [skinModSelection, setSkinModSelection] = useState<SkinModSelectionItem[]>([]);
+    const toggleSkinModSel = (hash: string, chromaSlot: number | null) => {
+        setSkinModSelection(prev => {
+            const i = prev.findIndex(s => s.hash === hash && s.chromaSlot === chromaSlot);
+            if (i >= 0) {
+                const next = [...prev];
+                next.splice(i, 1);
+                return next;
+            }
+            return [...prev, { hash, chromaSlot }];
+        });
+    };
+    // Default the selection when the modal's candidate set changes: prefer a
+    // SKN ticked in the file list, else the first candidate. Existing valid
+    // picks are kept; stale ones (skin no longer present) are dropped.
     useEffect(() => {
         if (skinModCandidates.length === 0) {
-            setSkinModSelectedHash(null);
+            setSkinModSelection([]);
             return;
         }
-        // If a SKN is ticked in the file list, prefer it.
-        const ticked = skinModCandidates.find(c => selectedHashes.has(c.hash));
-        if (ticked) {
-            setSkinModSelectedHash(ticked.hash);
-            return;
-        }
-        setSkinModSelectedHash(prev => prev && skinModCandidates.some(c => c.hash === prev)
-            ? prev
-            : skinModCandidates[0].hash);
+        setSkinModSelection(prev => {
+            const valid = prev.filter(s => skinModCandidates.some(c => c.hash === s.hash));
+            if (valid.length > 0) return valid;
+            const ticked = skinModCandidates.find(c => selectedHashes.has(c.hash));
+            return [{ hash: (ticked ?? skinModCandidates[0]).hash, chromaSlot: null }];
+        });
     }, [skinModCandidates, selectedHashes]);
 
-    const skinModSelected = useMemo(
-        () => skinModCandidates.find(c => c.hash === skinModSelectedHash) ?? null,
-        [skinModCandidates, skinModSelectedHash],
-    );
+    // CDragon champion payloads (skin names + chroma lists), keyed by the
+    // lowercase champion alias we parse out of WAD paths. Fetched lazily
+    // when the dialog opens; names/chromas just don't show if offline.
+    const [cdByChamp, setCdByChamp] = useState<Record<string, CDragonChampionDetails>>({});
+
+    // Enrich the bare SKN candidates with CDragon names + the chromas that
+    // actually have a `skin{N}.bin` present in this WAD. This is what the
+    // picker renders (parent rows + expandable chroma children).
+    const skinModSkins = useMemo<SkinModSkin[]>(() => {
+        const binPaths = new Set<string>();
+        for (const e of wadEntries) {
+            const lower = e.path.toLowerCase();
+            if (lower.endsWith('.bin')) binPaths.add(lower);
+        }
+        const hasBin = (champ: string, slot: number) =>
+            binPaths.has(`data/characters/${champ}/skins/skin${slot}.bin`) ||
+            binPaths.has(`data/characters/${champ}/skins/skin${String(slot).padStart(2, '0')}.bin`);
+        return skinModCandidates.map(c => {
+            const champTitle = c.champion.charAt(0).toUpperCase() + c.champion.slice(1);
+            const cdSkin = cdByChamp[c.champion]?.skins.find(s => s.num === c.skinId);
+            const name = cdSkin?.name;
+            // Format: "<skin name> — Skin N" (base: "<champ> — Base"). The
+            // CDragon base-skin name is just the champion name; fall back to
+            // the WAD-derived champ title when offline / unnamed.
+            const label = c.skinId === 0
+                ? `${name ?? champTitle} — Base`
+                : `${name ?? champTitle} — Skin ${c.skinId}`;
+            // Dedupe chroma slots (CDragon occasionally repeats) and keep
+            // only those whose bin is in the WAD; never list the parent.
+            const seen = new Set<number>();
+            const chromas = (cdSkin?.chromas ?? [])
+                .map(ch => ({ slot: ch.id % 1000, name: ch.name }))
+                .filter(ch => {
+                    if (ch.slot === c.skinId || seen.has(ch.slot)) return false;
+                    if (!hasBin(c.champion, ch.slot)) return false;
+                    seen.add(ch.slot);
+                    return true;
+                })
+                .sort((a, b) => a.slot - b.slot);
+            return { hash: c.hash, skinId: c.skinId, path: c.path, champion: c.champion, label, chromas };
+        });
+    }, [skinModCandidates, cdByChamp, wadEntries]);
 
     // Persistent state for the per-extract options modal — closed by
     // default. Defaults mirror the Viewer's: repath off, merge off,
@@ -3092,16 +3157,48 @@ function ExtractView({
     });
     const [skinModBusy, setSkinModBusy] = useState(false);
 
+    // Fetch CDragon names/chromas lazily once the dialog is open (keyed off
+    // the champions present in the WAD). Declared here because it reads
+    // `skinModOpen`; results feed the `skinModSkins` memo above.
+    useEffect(() => {
+        if (!skinModOpen || skinModCandidates.length === 0) return;
+        const champs = Array.from(new Set(skinModCandidates.map(c => c.champion)));
+        const missing = champs.filter(c => !cdByChamp[c]);
+        if (missing.length === 0) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const list = await fetchChampions('latest');
+                const byAlias = new Map(list.map(c => [c.alias.toLowerCase(), c]));
+                const fetched = await Promise.all(missing.map(async champ => {
+                    const meta = byAlias.get(champ.toLowerCase());
+                    if (!meta) return null;
+                    try {
+                        return [champ, await fetchChampionDetails(meta.id, 'latest')] as const;
+                    } catch { return null; }
+                }));
+                if (cancelled) return;
+                setCdByChamp(prev => {
+                    const next = { ...prev };
+                    for (const r of fetched) if (r) next[r[0]] = r[1];
+                    return next;
+                });
+            } catch { /* network down — fall back to bare numbers */ }
+        })();
+        return () => { cancelled = true; };
+    }, [skinModOpen, skinModCandidates, cdByChamp]);
+
     /** Kick off the BIN-walk extraction. Mirrors `exportSkinFiles` in
      *  ModelViewerStage.tsx — same Rust command, same VO locale-WAD
      *  discovery + mount/unmount dance, same status flow. */
     const runSkinModExtract = async () => {
-        if (!mountInfo || !skinModSelected) return;
+        if (!mountInfo || skinModSelection.length === 0) return;
         const { open: openDialog } = await import('@tauri-apps/plugin-dialog');
         const picked = await openDialog({ directory: true, multiple: false, title: 'Choose output folder' });
         if (!picked || typeof picked !== 'string') return;
         setSkinModBusy(true);
         let voMountId: number | null = null;
+        let progressUnlisten: (() => void) | null = null;
         try {
             // Pull persisted prefs same way the Viewer does.
             let prefix = 'jade';
@@ -3152,45 +3249,114 @@ function ExtractView({
                 }
             }
 
-            const actionId = `extract-skin-${Date.now()}`;
-            onExtractStatus(`Extracting skin mod${skinModFlags.repath ? ' (repath)' : ''}…`);
-            const result = await invoke<{
-                written: number;
-                errors: number;
-                error_messages: string[];
-                renames: { original: string; renamed: string }[];
-            }>('wad_extract_skin_assets', {
-                id: mountInfo.id,
-                outputDir: picked,
-                actionId,
-                sknChunkHashHex: skinModSelected.hash,
-                repath: skinModFlags.repath,
-                repathPrefix: prefix,
-                wadFolderName,
-                mergeLinked: skinModFlags.mergeLinked,
-                preserveHudIcons: skinModFlags.preserveHud,
-                skipSfxRepath: skinModFlags.skipSfx,
-                exportVo: skinModFlags.exportVo,
-                voMountId,
+            // Extract every ticked target into the SAME output folder. Each
+            // call writes its own skin bin + assets; multiple calls merge in
+            // the folder. VO mount + prefs are shared across the batch.
+            const targets = skinModSelection;
+            let totalWritten = 0;
+            let totalErrors = 0;
+            const allErrorMessages: string[] = [];
+            let totalRenames = 0;
+
+            // Drive ONE continuous progress bar across the whole batch
+            // instead of letting each skin reset it 0→100. Same approach as
+            // the multi-WAD loop: suppress the passive listeners and emit an
+            // aggregated percentage ourselves. Each skin owns a `1/N` slice
+            // of the bar; its own `current/total` fills that slice. We can't
+            // know a skin's chunk count up front, so we aggregate by segment
+            // fraction rather than absolute file counts.
+            multiWadActiveRef.current = true;
+            onProgress(0);
+            let completedSegs = 0;
+            let activeAction: string | null = null;
+            progressUnlisten = await listen<WadExtractProgressEvent>('wad-extract-progress', (e) => {
+                if (e.payload.action_id !== activeAction) return;
+                const { phase, current, total } = e.payload;
+                const frac = phase === 'complete'
+                    ? 1
+                    : phase === 'extracting' && total > 0
+                        ? current / total
+                        : 0;
+                const pct = Math.min(100, ((completedSegs + frac) / targets.length) * 100);
+                onProgress(pct);
+                invoke('set_taskbar_progress', {
+                    state: 'normal',
+                    completed: Math.round(pct),
+                    total: 100,
+                }).catch(() => {});
             });
-            const errTail = result.errors > 0 ? ` (${result.errors} errors)` : '';
-            onExtractStatus(`Extracted ${result.written} file${result.written === 1 ? '' : 's'}${errTail}`);
-            if (result.error_messages?.length) {
-                console.group(`[extract] skin mod — ${result.error_messages.length} errors`);
-                for (const m of result.error_messages) console.warn(m);
-                console.groupEnd();
+
+            for (let i = 0; i < targets.length; i++) {
+                const t = targets[i];
+                const chromaTail = t.chromaSlot != null ? ` chroma (skin${t.chromaSlot})` : '';
+                const batchTail = targets.length > 1 ? ` (${i + 1}/${targets.length})` : '';
+                onExtractStatus(`Extracting skin mod${chromaTail}${batchTail}${skinModFlags.repath ? ' (repath)' : ''}…`);
+                const actionId = `extract-skin-${Date.now()}-${i}`;
+                activeAction = actionId;
+                const result = await invoke<{
+                    written: number;
+                    errors: number;
+                    error_messages: string[];
+                    renames: { original: string; renamed: string }[];
+                }>('wad_extract_skin_assets', {
+                    id: mountInfo.id,
+                    outputDir: picked,
+                    actionId,
+                    sknChunkHashHex: t.hash,
+                    repath: skinModFlags.repath,
+                    repathPrefix: prefix,
+                    wadFolderName,
+                    mergeLinked: skinModFlags.mergeLinked,
+                    preserveHudIcons: skinModFlags.preserveHud,
+                    skipSfxRepath: skinModFlags.skipSfx,
+                    exportVo: skinModFlags.exportVo,
+                    voMountId,
+                    // Chroma-aware extraction — when a chroma row is ticked we
+                    // pass its slot so Rust roots the walk on the chroma BIN
+                    // (same path the Viewer's "Export skin files" uses).
+                    chromaSkinNum: t.chromaSlot,
+                });
+                totalWritten += result.written;
+                totalErrors += result.errors;
+                totalRenames += result.renames?.length ?? 0;
+                if (result.error_messages?.length) allErrorMessages.push(...result.error_messages);
+                if (result.renames?.length) {
+                    console.group(`[extract] skin mod target ${i + 1} — ${result.renames.length} long-path renames`);
+                    for (const { original, renamed } of result.renames) console.info(`${original}  →  ${renamed}`);
+                    console.groupEnd();
+                }
+                completedSegs++;
             }
-            if (result.renames?.length) {
-                console.group(`[extract] skin mod — ${result.renames.length} long-path renames`);
-                for (const { original, renamed } of result.renames) console.info(`${original}  →  ${renamed}`);
+            // Land the bar at 100% and fade it (plus the status text + taskbar)
+            // a beat later — the passive listeners are suppressed, so we own
+            // the reset here just like the multi-WAD loop does.
+            onProgress(100);
+            invoke('set_taskbar_progress', { state: 'normal', completed: 100, total: 100 }).catch(() => {});
+            const errTail = totalErrors > 0 ? ` (${totalErrors} errors)` : '';
+            const fromTail = targets.length > 1 ? ` from ${targets.length} skins` : '';
+            const renameTail = totalRenames > 0 ? ` · ${totalRenames} long-path renames` : '';
+            onExtractStatus(`Extracted ${totalWritten} file${totalWritten === 1 ? '' : 's'}${fromTail}${errTail}${renameTail}`);
+            if (allErrorMessages.length) {
+                console.group(`[extract] skin mod — ${allErrorMessages.length} errors`);
+                for (const m of allErrorMessages) console.warn(m);
                 console.groupEnd();
             }
             setSkinModOpen(false);
+            setTimeout(() => {
+                onProgress(0);
+                onExtractStatus(null);
+                invoke('set_taskbar_progress', { state: 'no_progress', completed: 0, total: 0 }).catch(() => {});
+            }, 2000);
         } catch (e) {
             onExtractStatus(`Extract failed: ${e}`);
             console.warn('[extract] skin mod failed:', e);
+            onProgress(0);
+            invoke('set_taskbar_progress', { state: 'no_progress', completed: 0, total: 0 }).catch(() => {});
             setTimeout(() => onExtractStatus(null), 6000);
         } finally {
+            // Stop driving the bar + re-enable the passive listeners.
+            if (progressUnlisten) progressUnlisten();
+            multiWadActiveRef.current = false;
             if (voMountId !== null) {
                 invoke('wad_close', { id: voMountId }).catch(() => {});
             }
@@ -3482,23 +3648,23 @@ function ExtractView({
                                 >×</button>
                             </div>
 
-                            {/* Skin picker — dropdown of every SKN whose
-                                sibling BIN was actually found in the WAD. */}
+                            {/* Skin picker — every SKN whose sibling BIN was
+                                found in the WAD, named via CDragon, with each
+                                skin's WAD-present chromas as expandable rows. */}
                             <div className="welcome-skinmod-section-label">Skin</div>
-                            <PortalDropdown
-                                options={skinModCandidates.map(c => ({ value: c.hash, label: c.label }))}
-                                value={skinModSelectedHash}
-                                onChange={(v) => setSkinModSelectedHash(v)}
-                                placeholder={skinModCandidates.length === 0 ? 'No valid skins in this WAD' : 'Pick a skin…'}
-                                searchable={skinModCandidates.length > 8}
+                            <SkinModPicker
+                                skins={skinModSkins}
+                                selected={skinModSelection}
+                                onToggle={toggleSkinModSel}
+                                placeholder={skinModCandidates.length === 0 ? 'No valid skins in this WAD' : 'Pick skins…'}
+                                disabled={skinModBusy}
                                 className="welcome-skinmod-dropdown"
                             />
-                            {skinModSelected && (
-                                <div
-                                    className="welcome-skinmod-skn-path"
-                                    title={skinModSelected.path}
-                                >
-                                    {skinModSelected.path}
+                            {skinModSelection.length > 0 && (
+                                <div className="welcome-skinmod-skn-path">
+                                    {skinModSelection.length === 1
+                                        ? 'Extracting 1 target'
+                                        : `Extracting ${skinModSelection.length} targets`}
                                 </div>
                             )}
 
@@ -3568,8 +3734,12 @@ function ExtractView({
                                     type="button"
                                     className="welcome-skinmod-go"
                                     onClick={runSkinModExtract}
-                                    disabled={skinModBusy || !skinModSelected}
-                                >{skinModBusy ? 'Extracting…' : 'Extract'}</button>
+                                    disabled={skinModBusy || skinModSelection.length === 0}
+                                >{skinModBusy
+                                    ? 'Extracting…'
+                                    : skinModSelection.length > 1
+                                        ? `Extract ${skinModSelection.length}`
+                                        : 'Extract'}</button>
                             </div>
                         </div>
                     </div>
@@ -4126,31 +4296,40 @@ function ExtractView({
                                         <Editor
                                             height="100%"
                                             defaultLanguage={RITOBIN_LANGUAGE_ID}
-                                            // Always use the editor's active dynamic theme so
-                                            // the welcome preview matches the app theme and
-                                            // doesn't clobber the global Monaco theme. Earlier
-                                            // we passed `ritobin-dark` here: that's a static
-                                            // hardcoded theme, and Monaco's `setTheme` is
-                                            // GLOBAL — once welcome's preview mounted it, the
-                                            // background editor instance also flipped to
-                                            // `ritobin-dark`. Since the editor's own theme
-                                            // prop never changed, the React wrapper never
-                                            // re-called `setTheme` to restore `jade-dynamic`,
-                                            // leaving syntax + sticky-scroll wrong until a
-                                            // theme switch or app restart. Using
-                                            // `jade-dynamic` everywhere avoids the clobber.
-                                            theme="jade-dynamic"
+                                            // Use the app's dynamic theme so the preview
+                                            // matches the editor and doesn't clobber the
+                                            // global Monaco theme. We pass `ritobin-dark`
+                                            // (static) until `jade-dynamic` is proven to
+                                            // exist, then flip — see `previewTheme`. Passing
+                                            // a hardcoded `ritobin-dark` here permanently
+                                            // would also clobber the background editor's
+                                            // theme (Monaco's `setTheme` is GLOBAL) without
+                                            // ever restoring `jade-dynamic`.
+                                            theme={previewTheme}
                                             value={previewState.binText}
                                             beforeMount={(monaco) => {
                                                 registerRitobinLanguage(monaco);
-                                                // Keep registering the static theme as a
-                                                // fallback — `jade-dynamic` is defined by
-                                                // the main editor's mount at app boot, so it
-                                                // is always available by the time the user
-                                                // clicks a BIN preview, but the static one
-                                                // gives Monaco a sane default if anyone
-                                                // requests it.
+                                                // Static theme is always registered as the
+                                                // safe default / first-frame theme.
                                                 registerRitobinTheme(monaco);
+                                                // Guarantee `jade-dynamic` exists. It's
+                                                // usually defined by the main editor's mount,
+                                                // but on a fresh boot straight into the
+                                                // extractor the main editor may never have
+                                                // mounted — so define it here, then flip the
+                                                // preview to it. Without this the preview
+                                                // resolves an undefined theme and Monaco
+                                                // falls back to its default (wrong) colors.
+                                                if (dynamicThemeReady) {
+                                                    setPreviewTheme('jade-dynamic');
+                                                } else {
+                                                    loadSavedTheme(invoke, monaco)
+                                                        .then(() => {
+                                                            dynamicThemeReady = true;
+                                                            setPreviewTheme('jade-dynamic');
+                                                        })
+                                                        .catch(() => { /* keep static fallback */ });
+                                                }
                                             }}
                                             onMount={(editor) => {
                                                 binEditorRef.current = editor;

@@ -6,7 +6,7 @@
 use crate::core::bin::ltk_bridge::{read_bin, write_bin, tree_to_text, text_to_tree};
 use crate::core::hash::Hashtable;
 use crate::error::{Error, Result};
-use ltk_meta::BinTree;
+use ltk_meta::Bin as BinTree;
 
 // Helper function to create BinConversion errors
 fn bin_error(message: impl Into<String>) -> Error {

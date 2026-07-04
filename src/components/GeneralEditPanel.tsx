@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import './GeneralEditPanel.css';
 import MaterialOverrideDialog from './MaterialOverrideDialog';
+import { uniqueMaterialName, renameMaterialInSnippet } from '../lib/materialInsert';
 
 interface MaterialMatch {
   material: string;
@@ -890,33 +891,14 @@ export default function GeneralEditPanel({
         return;
       }
 
-      // 2. Auto-increment material name if jadelib_<id> already exists in the bin
-      const baseName = snippet.materialName;
-      const escapedBase = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const existingRe = new RegExp(`"${escapedBase}(?:_\\d+)?"\\s*=`, 'g');
-      const existingNames = new Set<string>();
-      let m: RegExpExecArray | null;
-      while ((m = existingRe.exec(editorContent)) !== null) {
-        // Pull the actual matched name out of the leading quote
-        const nameMatch = m[0].match(/"([^"]+)"/);
-        if (nameMatch) existingNames.add(nameMatch[1]);
-      }
-      let finalName = baseName;
-      if (existingNames.has(finalName)) {
-        let suffix = 2;
-        while (existingNames.has(`${baseName}_${suffix}`)) suffix++;
-        finalName = `${baseName}_${suffix}`;
-      }
+      // 2. Uniquely name the material with a unix timestamp so the same
+      //    library material inserted into DIFFERENT mods never collides —
+      //    the game merges StaticMaterialDefs by name, so a shared name
+      //    across mods would clobber and only one would apply.
+      const finalName = uniqueMaterialName(snippet.materialName, editorContent);
 
-      // 3. Build the snippet text with the (possibly incremented) name
-      let snippetText = snippet.snippet;
-      if (finalName !== baseName) {
-        const escBase = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        snippetText = snippetText.replace(
-          new RegExp(`"${escBase}"`, 'g'),
-          `"${finalName}"`
-        );
-      }
+      // 3. Build the snippet text with the unique name.
+      let snippetText = renameMaterialInSnippet(snippet.snippet, snippet.materialName, finalName);
 
       // 4. Replace the Diffuse_Texture placeholder with the texture path
       // from the dialog. The user picks a submesh → its texture auto-fills

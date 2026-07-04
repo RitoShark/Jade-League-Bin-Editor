@@ -25,6 +25,7 @@ import { Image as ImageIcon, Palette, Box, AlertTriangle, Plus } from 'lucide-re
 import { useShell } from '../shells/ShellContext';
 import MaterialOverrideDialog from './MaterialOverrideDialog';
 import type { LibraryPairResult } from '../shells/MaterialOverrideDockPanel';
+import { uniqueMaterialName, renameMaterialInSnippet } from '../lib/materialInsert';
 import {
     parseBinGraph, setSkinScale, basename, injectMaterialDef,
     clearOverrideForSubmesh, setOverrideTexture, setOverrideMaterial, setBaseTexture, setSamplerTexture, replaceTexturePath,
@@ -750,16 +751,10 @@ function NodeGraphInner({ tabId }: { tabId: string }) {
             const snippet = await invoke<MaterialSnippet | null>('library_get_cached_material', { path: library.materialPath });
             if (!snippet) { s.setStatusMessage(`Library material ${library.materialPath} not cached`); return; }
             const content0 = readText();
-            const baseName = snippet.materialName;
-            const esc = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const re = new RegExp(`"${esc}(?:_\\d+)?"\\s*=`, 'g');
-            const existing = new Set<string>();
-            let m: RegExpExecArray | null;
-            while ((m = re.exec(content0)) !== null) { const nm = m[0].match(/"([^"]+)"/); if (nm) existing.add(nm[1]); }
-            let finalName = baseName;
-            if (existing.has(finalName)) { let i = 2; while (existing.has(`${baseName}_${i}`)) i++; finalName = `${baseName}_${i}`; }
-            let snippetText = snippet.snippet;
-            if (finalName !== baseName) snippetText = snippetText.replace(new RegExp(`"${esc}"`, 'g'), `"${finalName}"`);
+            // Unique unix-timestamped name so the same library material in
+            // different mods doesn't merge-clobber (game merges defs by name).
+            const finalName = uniqueMaterialName(snippet.materialName, content0);
+            let snippetText = renameMaterialInSnippet(snippet.snippet, snippet.materialName, finalName);
             if (library.texture) {
                 const phRe = /(texturePath:\s*string\s*=\s*")[^"]*YOURCHAMP[^"]*(")/;
                 snippetText = snippetText.replace(phRe, `$1${library.texture}$2`);

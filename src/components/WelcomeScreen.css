@@ -2289,13 +2289,18 @@ body.welcome-active .title-bar > * {
     flex-shrink: 0;
     background: color-mix(in srgb, var(--text-color) 7%, transparent);
     border-radius: 5px;
-    color: color-mix(in srgb, var(--text-color) 75%, transparent);
+    /* OFF = dimmed/inactive. Kept subdued so the lit ON state below clearly
+       reads as the active one (previously this was brighter than ON, which
+       made the toggle look visually inverted). */
+    color: color-mix(in srgb, var(--text-color) 45%, transparent);
     transition: background 0.12s ease, color 0.12s ease;
 }
 
 .welcome-skinmod-opt.on .welcome-skinmod-opt-icon {
-    background: color-mix(in srgb, var(--jade-accent, #4a9870) 22%, transparent);
-    color: var(--jade-accent, #4a9870);
+    /* ON = lit. Solid accent chip + white glyph, mirroring the "On" pill, so
+       the active rows are unmistakably the brighter, higher-contrast ones. */
+    background: var(--jade-accent, #4a9870);
+    color: #fff;
 }
 
 .welcome-skinmod-opt-text {

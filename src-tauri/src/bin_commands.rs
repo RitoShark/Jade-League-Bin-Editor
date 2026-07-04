@@ -23,23 +23,8 @@ fn require_bin_hashes_ready() -> Result<(), String> {
     )
 }
 
-/// Check if the Jade Custom converter engine is selected.
-fn use_jade_engine() -> bool {
-    let pref_file = if let Ok(appdata) = std::env::var("APPDATA") {
-        PathBuf::from(appdata).join("LeagueToolkit").join("Jade").join("preferences.json")
-    } else {
-        return false;
-    };
-
-    if let Ok(content) = fs::read_to_string(&pref_file) {
-        if let Ok(prefs) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(engine) = prefs.get("ConverterEngine").and_then(|v| v.as_str()) {
-                return engine == "jade";
-            }
-        }
-    }
-    true // default to Jade Custom
-}
+// Single source of truth for engine selection lives in `core::bin::engine`.
+use crate::core::bin::use_jade_engine;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BinInfo {

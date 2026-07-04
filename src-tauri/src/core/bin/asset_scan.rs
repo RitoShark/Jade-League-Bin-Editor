@@ -14,7 +14,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::core::bin::{read_bin_ltk, BinTree};
+use crate::core::bin::{read_bin_engine, JadeBin as BinTree};
+use crate::core::bin::jade::view;
 use crate::core::bin::repath::{is_referenced_path, visit_strings};
 
 #[derive(Debug, Serialize)]
@@ -98,7 +99,7 @@ fn label_relative(abs: &Path, mod_root: Option<&Path>) -> String {
 pub fn scan_bin_assets(root: &Path) -> Result<BinAssetReport, String> {
     let bytes = fs::read(root)
         .map_err(|e| format!("read root BIN {}: {}", root.display(), e))?;
-    let tree = read_bin_ltk(&bytes)
+    let tree = read_bin_engine(&bytes)
         .map_err(|e| format!("parse root BIN {}: {}", root.display(), e))?;
 
     let mod_root = find_mod_root(root);
@@ -118,7 +119,7 @@ pub fn scan_bin_assets(root: &Path) -> Result<BinAssetReport, String> {
     // disk in the mod folder.
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     seen.insert(root_label.to_lowercase());
-    for dep in &tree.dependencies {
+    for dep in view::dependencies(&tree) {
         let dep_norm = dep.replace('\\', "/");
         let key = dep_norm.to_lowercase();
         if !seen.insert(key) { continue; }
@@ -136,7 +137,7 @@ pub fn scan_bin_assets(root: &Path) -> Result<BinAssetReport, String> {
         }
         let label = label_relative(&dep_abs, mod_root.as_deref());
         match fs::read(&dep_abs).map_err(|e| e.to_string()).and_then(|b| {
-            read_bin_ltk(&b).map_err(|e| e.to_string())
+            read_bin_engine(&b).map_err(|e| e.to_string())
         }) {
             Ok(dep_tree) => bins.push(BinAssetReportBin {
                 label,
