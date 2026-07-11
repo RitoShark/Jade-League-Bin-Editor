@@ -16,6 +16,52 @@ import {
 } from 'lucide-react';
 import { useShell } from './ShellContext';
 
+// ── Search / replace history ─────────────────────────────────────
+// Module-level so the ↑/↓ recall list survives the pane unmounting (dock
+// re-layouts, shell switches) AND is shared between find and replace modes —
+// switching find↔replace must never wipe what you've already searched for.
+// Newest entry first; capped so it can't grow without bound.
+const HISTORY_LIMIT = 50;
+const findHistoryStore: string[] = [];
+const replaceHistoryStore: string[] = [];
+
+/** Record a committed search/replace term: dedupe, move to front, cap. */
+function pushHistory(store: string[], raw: string) {
+    const value = raw.trim();
+    if (!value) return;
+    const existing = store.indexOf(value);
+    if (existing !== -1) store.splice(existing, 1);
+    store.unshift(value);
+    if (store.length > HISTORY_LIMIT) store.length = HISTORY_LIMIT;
+}
+
+/**
+ * ↑/↓ recall for a history-backed input, mirroring Monaco's find widget.
+ * `idxRef` tracks the position in `store` (-1 == the live, un-recalled value).
+ * Returns true when the key was handled as history navigation so the caller
+ * can `preventDefault()` and stop.
+ */
+function navigateHistory(
+    store: string[],
+    idxRef: { current: number },
+    key: string,
+    setValue: (v: string) => void,
+): boolean {
+    if (key === 'ArrowUp') {
+        if (store.length === 0) return false;
+        idxRef.current = Math.min(idxRef.current + 1, store.length - 1);
+        setValue(store[idxRef.current]);
+        return true;
+    }
+    if (key === 'ArrowDown') {
+        if (idxRef.current < 0) return false;
+        idxRef.current -= 1;
+        setValue(idxRef.current < 0 ? '' : store[idxRef.current]);
+        return true;
+    }
+    return false;
+}
+
 /**
  * Word-style find/replace pane. Lives in the WordShell's left task pane
  * and the VS shell's bottom dock. Drives Monaco via the model's
@@ -41,6 +87,9 @@ export default function WordFindPane({ mode }: { mode: 'find' | 'replace' }) {
 
     const decorationIdsRef = useRef<string[]>([]);
     const queryInputRef = useRef<HTMLInputElement | null>(null);
+    // Position within the ↑/↓ recall lists; -1 == the live, un-recalled value.
+    const queryHistoryIdx = useRef(-1);
+    const replaceHistoryIdx = useRef(-1);
 
     const showReplace = mode === 'replace';
 
@@ -247,13 +296,15 @@ export default function WordFindPane({ mode }: { mode: 'find' | 'replace' }) {
 
     const stepBy = useCallback(
         (delta: 1 | -1) => {
+            // Stepping through matches is a deliberate search — remember it.
+            pushHistory(findHistoryStore, query);
             if (totalMatches === 0) return;
             const next = (currentIdx + delta + totalMatches) % totalMatches;
             setCurrentIdx(next);
             const m = flatMatches[next];
             jumpTo(m.tabId, m.range);
         },
-        [currentIdx, flatMatches, totalMatches, jumpTo],
+        [currentIdx, flatMatches, totalMatches, jumpTo, query],
     );
 
     const goNext = useCallback(() => stepBy(1), [stepBy]);
@@ -270,14 +321,20 @@ export default function WordFindPane({ mode }: { mode: 'find' | 'replace' }) {
         }
         const editor = s.editorRef.current;
         if (!editor) return;
+        // Both terms are now committed — record them for ↑/↓ recall.
+        pushHistory(findHistoryStore, query);
+        pushHistory(replaceHistoryStore, replaceText);
         editor.executeEdits('word-find-replace', [
             { range: target.range, text: replaceText, forceMoveMarkers: true },
         ]);
         setQuery(q => q);
-    }, [currentIdx, flatMatches, totalMatches, replaceText, s, jumpTo]);
+    }, [currentIdx, flatMatches, totalMatches, replaceText, s, jumpTo, query]);
 
     const doReplaceAll = useCallback(() => {
         if (totalMatches === 0) return;
+        // Both terms are now committed — record them for ↑/↓ recall.
+        pushHistory(findHistoryStore, query);
+        pushHistory(replaceHistoryStore, replaceText);
         // Group by tab and apply through each tab's model directly so
         // we don't have to swap the active editor mid-replace. Each
         // model groups its edits in a single undo step.
@@ -293,7 +350,7 @@ export default function WordFindPane({ mode }: { mode: 'find' | 'replace' }) {
             );
         }
         setQuery(q => q);
-    }, [results, totalMatches, replaceText, s]);
+    }, [results, totalMatches, replaceText, s, query]);
 
     const requestReplaceAll = useCallback(async () => {
         if (totalMatches === 0) return;
@@ -479,10 +536,22 @@ export default function WordFindPane({ mode }: { mode: 'find' | 'replace' }) {
                             type="text"
                             className="word-find-field-input"
                             placeholder="Search"
+                            title="↑ / ↓ to recall recent searches"
                             value={query}
-                            onChange={e => setQuery(e.target.value)}
+                            onChange={e => {
+                                setQuery(e.target.value);
+                                // Typing leaves history-recall mode.
+                                queryHistoryIdx.current = -1;
+                            }}
+                            onBlur={() => pushHistory(findHistoryStore, query)}
                             onKeyDown={e => {
+                                if (navigateHistory(findHistoryStore, queryHistoryIdx, e.key, setQuery)) {
+                                    e.preventDefault();
+                                    return;
+                                }
                                 if (e.key === 'Enter') {
+                                    pushHistory(findHistoryStore, query);
+                                    queryHistoryIdx.current = -1;
                                     if (e.shiftKey) goPrev();
                                     else goNext();
                                 } else if (e.key === 'Escape') {
@@ -523,10 +592,24 @@ export default function WordFindPane({ mode }: { mode: 'find' | 'replace' }) {
                                 type="text"
                                 className="word-find-field-input"
                                 placeholder="Replace with"
+                                title="↑ / ↓ to recall recent replacements"
                                 value={replaceText}
-                                onChange={e => setReplaceText(e.target.value)}
+                                onChange={e => {
+                                    setReplaceText(e.target.value);
+                                    // Typing leaves history-recall mode.
+                                    replaceHistoryIdx.current = -1;
+                                }}
+                                onBlur={() => pushHistory(replaceHistoryStore, replaceText)}
                                 onKeyDown={e => {
-                                    if (e.key === 'Enter') replaceCurrent();
+                                    if (navigateHistory(replaceHistoryStore, replaceHistoryIdx, e.key, setReplaceText)) {
+                                        e.preventDefault();
+                                        return;
+                                    }
+                                    if (e.key === 'Enter') {
+                                        pushHistory(replaceHistoryStore, replaceText);
+                                        replaceHistoryIdx.current = -1;
+                                        replaceCurrent();
+                                    }
                                 }}
                             />
                         </div>

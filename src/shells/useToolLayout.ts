@@ -20,7 +20,7 @@ export type ToolId =
     //   - animstudio-mapping: per-bone source→target table with
     //     filter chips + per-row override dropdown.
     //   - animstudio-rig:     dual mini-viewport bone picker (Phase 5).
-    | 'animstudio-options' | 'animstudio-mapping' | 'animstudio-rig' | 'animstudio-guides' | 'animstudio-physics' | 'animstudio-mesh' | 'animstudio-export'
+    | 'animstudio-clips' | 'animstudio-options' | 'animstudio-mapping' | 'animstudio-rig' | 'animstudio-guides' | 'animstudio-physics' | 'animstudio-mesh' | 'animstudio-export'
     // File Explorer — dockable folder/WAD browser with tree + grid
     // views. Default-placed on the outer-left edge so it lives where
     // a VS Code sidebar would.
@@ -98,6 +98,9 @@ const DEFAULT_LAYOUT: LayoutMap = {
     // wide row of toggles fits a bottom strip well), Mapping on the
     // inner-right (tall scrollable list), Rig widget below it in the
     // same column so they tab together.
+    // Clips (animation picker) docks on the left lane so the list sits
+    // beside the viewports, like a media browser.
+    'animstudio-clips':   { kind: 'dock', side: 'inner-left',   group: 0 },
     'animstudio-options': { kind: 'dock', side: 'inner-bottom', group: 0 },
     'animstudio-mapping': { kind: 'dock', side: 'inner-right',  group: 0 },
     'animstudio-rig':     { kind: 'dock', side: 'inner-right',  group: 1 },

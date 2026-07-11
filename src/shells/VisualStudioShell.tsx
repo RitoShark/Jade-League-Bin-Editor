@@ -22,6 +22,7 @@ import StudioBackgroundPanel from '../components/StudioBackgroundPanel';
 import StudioActionsPanel from '../components/StudioActionsPanel';
 import StudioMeshPanel from '../components/StudioMeshPanel';
 import StudioObjectsPanel from '../components/StudioObjectsPanel';
+import AnimStudioClipsPanel from '../components/AnimStudioClipsPanel';
 import AnimStudioOptionsPanel from '../components/AnimStudioOptionsPanel';
 import AnimStudioMappingPanel from '../components/AnimStudioMappingPanel';
 import AnimStudioRigPanel from '../components/AnimStudioRigPanel';
@@ -55,6 +56,7 @@ const TOOL_LABELS: Record<ToolId, string> = {
     'studio-mesh': 'Mesh',
     'studio-objects': 'Objects',
     'studio-spotlight': 'Lighting',
+    'animstudio-clips':   'Animations',
     'animstudio-options': 'Anim Options',
     'animstudio-mapping': 'Bone Mapping',
     'animstudio-rig':     'Bone Rig',
@@ -171,6 +173,7 @@ export default function VisualStudioShell() {
         'studio-mesh':    isStudio && s.studioMeshOpen,
         'studio-objects': isStudio && s.studioObjectsOpen,
         'studio-spotlight': isStudio && s.studioSpotlightOpen,
+        'animstudio-clips':   isAnimStudio && s.animStudioClipsOpen,
         'animstudio-options': isAnimStudio && s.animStudioOptionsOpen,
         'animstudio-mapping': isAnimStudio && s.animStudioMappingOpen,
         'animstudio-rig':     isAnimStudio && s.animStudioRigOpen,
@@ -201,6 +204,7 @@ export default function VisualStudioShell() {
             case 'studio-mesh':    s.setStudioMeshOpen(false); break;
             case 'studio-objects': s.setStudioObjectsOpen(false); break;
             case 'studio-spotlight': s.setStudioSpotlightOpen(false); break;
+            case 'animstudio-clips':   s.setAnimStudioClipsOpen(false); break;
             case 'animstudio-options': s.setAnimStudioOptionsOpen(false); break;
             case 'animstudio-mapping': s.setAnimStudioMappingOpen(false); break;
             case 'animstudio-rig':     s.setAnimStudioRigOpen(false); break;
@@ -531,6 +535,7 @@ export default function VisualStudioShell() {
         // pattern as Photo Studio — gate at the top, switch on id.
         if (activeTab?.tabType === 'animstudio') {
             switch (id) {
+                case 'animstudio-clips':   return <AnimStudioClipsPanel   animStudioTabId={activeTab.id} />;
                 case 'animstudio-options': return <AnimStudioOptionsPanel animStudioTabId={activeTab.id} />;
                 case 'animstudio-mapping': return <AnimStudioMappingPanel animStudioTabId={activeTab.id} />;
                 case 'animstudio-rig':     return <AnimStudioRigPanel     animStudioTabId={activeTab.id} />;

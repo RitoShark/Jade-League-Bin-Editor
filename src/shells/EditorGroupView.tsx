@@ -35,6 +35,10 @@ export default function EditorGroupView({ group }: { group: EditorGroup }) {
   const activeTab = activeTabId ? s.tabs.find(t => t.id === activeTabId) ?? null : null;
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  // The tab whose model is currently attached to this group's editor. Used to
+  // key the outgoing view state when the active tab changes, so switching tabs
+  // restores the previous scroll position instead of snapping to the top.
+  const attachedTabIdRef = useRef<string | null>(null);
 
   const groupTabs = group.tabIds
     .map(id => s.tabs.find(t => t.id === id))
@@ -74,21 +78,57 @@ export default function EditorGroupView({ group }: { group: EditorGroup }) {
     editorRef.current = editor;
     if (activeTabId) {
       const model = s.ensureModelForTab(activeTabId);
-      if (model) { try { editor.setModel(model); } catch { /* effect retries */ } }
+      if (model) {
+        try {
+          editor.setModel(model);
+          attachedTabIdRef.current = activeTabId;
+          const saved = s.viewStatesRef.current.get(activeTabId);
+          if (saved?.viewState) { try { editor.restoreViewState(saved.viewState); } catch { /* best effort */ } }
+        } catch { /* effect retries */ }
+      }
     }
     cleanupRef.current = s.setupRightEditor(editor);
     if (isFocused) s.setPrimaryEditor(editor);
   };
 
-  // Re-attach the model when this group's active tab changes.
+  // Re-attach the model when this group's active tab changes, preserving the
+  // per-tab viewport: save the outgoing tab's scroll/cursor before swapping,
+  // then restore the incoming tab's. Without this, setModel resets the editor
+  // to line 1 and every tab switch reads as "scrolled to the top".
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    if (!activeTabId) { try { editor.setModel(null as never); } catch { /* noop */ } return; }
+
+    const prevTabId = attachedTabIdRef.current;
+    const switching = prevTabId !== activeTabId;
+
+    // Snapshot the tab we're leaving before its model detaches.
+    if (switching && prevTabId) {
+      const vs = editor.saveViewState();
+      if (vs) s.viewStatesRef.current.set(prevTabId, { viewState: vs });
+    }
+
+    if (!activeTabId) {
+      try { editor.setModel(null as never); } catch { /* noop */ }
+      attachedTabIdRef.current = null;
+      return;
+    }
+
     const model = s.ensureModelForTab(activeTabId);
-    if (!model || editor.getModel() === model) return;
-    try { editor.setModel(model); } catch { /* next render retries */ }
-  }, [activeTabId, s.tabs, s.ensureModelForTab]);
+    if (!model) return;
+
+    const modelChanged = editor.getModel() !== model;
+    if (modelChanged) {
+      try { editor.setModel(model); } catch { /* next render retries */ return; }
+    }
+
+    // Restore the incoming tab's viewport whenever we actually swapped to it.
+    if (switching || modelChanged) {
+      const saved = s.viewStatesRef.current.get(activeTabId);
+      if (saved?.viewState) { try { editor.restoreViewState(saved.viewState); } catch { /* best effort */ } }
+    }
+    attachedTabIdRef.current = activeTabId;
+  }, [activeTabId, s.tabs, s.ensureModelForTab, s.viewStatesRef]);
 
   // Detach + clean up before the wrapper disposes this editor.
   useEffect(() => {

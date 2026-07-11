@@ -87,6 +87,18 @@ export interface RetargetOptions {
      *  should drive the target's right arm (mirror-image preview,
      *  or reusing a right-handed swing as left-handed). */
     mirror: boolean;
+    /** Post-pass after Babylon's retarget: force every NON-root bone's
+     *  animated local translation + scale back to the TARGET rig's bind
+     *  values, keeping only the retargeted rotation. Babylon's retarget
+     *  passes source translation/scale through, so a skin-to-skin
+     *  retarget drags the target's bones to the SOURCE skin's
+     *  proportions and the mesh shears (squished / stretched shoulders).
+     *  Locking to target bind keeps each bone at its own rig's
+     *  proportions — the geometrically-correct default. Turn OFF for the
+     *  rare clip that intentionally animates non-root translation/scale
+     *  (stretchy VFX bones, squash-and-stretch). Root is never touched
+     *  (its locomotion is handled by Fix root position / Strip root). */
+    lockBoneLengths: boolean;
     /** Kept on the interface for backward compat with serialised
      *  `.animstudio.json` scenes. No longer drives behaviour —
      *  the world-space three-branch translation handles parent
@@ -225,6 +237,12 @@ export interface PhysicsChain {
     /** When true, distances between successive bones are clamped to
      *  the rest length each frame so the chain can't stretch. */
     lockLength: boolean;
+    /** Swing limit — the maximum angle (degrees) each bone may deviate
+     *  from its combed rest direction. Caps how far the chain can fling
+     *  from its neutral pose, so a fast attack can't swing the hair
+     *  through the body or fold it inside-out. 0 (or ≥180) = off /
+     *  unlimited. Simple solver only. */
+    maxSwing?: number;
     /** Which integrator bakes this chain. `'simple'` (default) uses the
      *  built-in spring-damper-PBD solver; `'havok'` runs a deterministic
      *  headless Havok rigid-body sim for more accurate cloth/hair swing.
@@ -256,9 +274,16 @@ export interface PhysicsChain {
 export interface PhysicsCollider {
     /** Stable id for the React panel. */
     id: string;
-    /** Bone the sphere is attached to (target rig). */
+    /** Bone the sphere is attached to (target rig). For a capsule this is
+     *  endpoint A (and takes the offset below). */
     boneHash: number;
-    /** Sphere radius in world units. */
+    /** Optional second bone. When set, the collider is a CAPSULE whose core
+     *  segment runs from `boneHash` (endpoint A, at its offset) to
+     *  `boneHashB` (endpoint B) — a bone-shaped collider, e.g. Hip → Knee
+     *  to wrap a thigh, so chains collide against the whole limb instead of
+     *  slipping between spheres. Unset = plain sphere. */
+    boneHashB?: number;
+    /** Sphere / capsule radius in world units. */
     radius: number;
     /** Optional offset from the bone's world position in the bone's
      *  local frame. Most colliders sit centred on the joint, but a
@@ -279,6 +304,9 @@ export const DEFAULT_RETARGET_OPTIONS: RetargetOptions = {
     rebaseRotations: true,
     stripRootMotion: false,
     mirror: false,
+    // On by default: keeps each rig's bones at their own proportions so
+    // skin-to-skin retargets don't squish / stretch the mesh.
+    lockBoneLengths: true,
     dropMismatchedParents: false,
     verticalOffset: 0,
     verticalOffsetExcludedMeshes: [],

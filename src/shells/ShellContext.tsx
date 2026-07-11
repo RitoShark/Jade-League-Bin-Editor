@@ -136,7 +136,7 @@ export interface ShellContextValue {
     onOpenAnimStudioScene: () => Promise<void>;
     /** Save the active Animation Studio tab's scene to disk. No-op
      *  when the active tab isn't an Animation Studio tab. */
-    onSaveAnimStudioScene: () => Promise<void>;
+    onSaveAnimStudioScene: () => Promise<boolean>;
 
     // -- Edit operations
     onUndo: () => void;
@@ -228,6 +228,12 @@ export interface ShellContextValue {
      *  edits stay in sync with the main editor (Monaco allows a single
      *  model to be attached to multiple editors). */
     monacoModelsRef: React.MutableRefObject<Map<string, MonacoType.editor.ITextModel>>;
+    /** Per-tab saved Monaco view state (scroll position + cursor + folds),
+     *  keyed by tab id. Editors save the outgoing tab's view state here on
+     *  tab switch and restore the incoming tab's, so switching tabs (or any
+     *  re-attach of a model) keeps the scroll position instead of jumping
+     *  to the top. Shared across every editor group. */
+    viewStatesRef: React.MutableRefObject<Map<string, { viewState: MonacoType.editor.ICodeEditorViewState | null }>>;
     monacoRef: React.MutableRefObject<Monaco | null>;
 
     // -- Split-pane mode
@@ -372,6 +378,7 @@ export interface ShellContextValue {
     /** Animation Studio panel open state — same defaults / pattern
      *  as Photo Studio. Persisted across sessions via the
      *  ToolLayout's localStorage entry. */
+    animStudioClipsOpen: boolean;
     animStudioOptionsOpen: boolean;
     animStudioMappingOpen: boolean;
     animStudioRigOpen: boolean;
@@ -379,6 +386,7 @@ export interface ShellContextValue {
     animStudioPhysicsOpen: boolean;
     animStudioMeshOpen: boolean;
     animStudioExportOpen: boolean;
+    setAnimStudioClipsOpen: (open: boolean) => void;
     setAnimStudioOptionsOpen: (open: boolean) => void;
     setAnimStudioMappingOpen: (open: boolean) => void;
     setAnimStudioRigOpen: (open: boolean) => void;

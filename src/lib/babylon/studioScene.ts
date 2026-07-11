@@ -44,6 +44,7 @@ import {
     createFbxObject,
     createPrimitiveObject,
     setMeshFaceFlipped,
+    isMeshFaceFlipped,
     type StudioObject,
     type PrimitiveKind,
     type StudioSlotOverride,
@@ -102,7 +103,8 @@ export interface StudioObjectData {
 }
 
 export interface StudioSceneData {
-    version: 1;
+    /** 1 = legacy (flip stored as sideOrientation); 2 = winding-flag flip. */
+    version: number;
     objects: StudioObjectData[];
     background: StudioBackground;
     gridVisible: boolean;
@@ -164,6 +166,10 @@ export interface StudioScene {
      *  when the active object isn't an SKN. `extraDir` is merged into
      *  the listing (the borrowed-anim folder, when present). */
     reloadActiveObjectAnimations: (extraDir?: string | null) => Promise<void>;
+    /** Re-read the active object's mesh from disk (picks up SKN / .bin /
+     *  texture edits, e.g. from Maya), preserving its transform + selection.
+     *  Returns false when there's no reloadable active object. */
+    reloadActiveObject: () => Promise<boolean>;
     /** Backwards-compat: replace the current scene contents with one
      *  SKN. Equivalent to clearObjects() + addModelFromDisk(path). */
     loadModelFromDisk: (path: string) => Promise<StudioObject>;
@@ -691,6 +697,37 @@ export function createStudioScene(canvas: HTMLCanvasElement): StudioScene {
         }
     };
 
+    const reloadActiveObject = async (): Promise<boolean> => {
+        const active = getActiveObject();
+        if (!active || !active.sourcePath) return false;
+        const path = active.sourcePath;
+        const oldId = active.id;
+        // Preserve the placed transform + visibility so a reload doesn't
+        // reset where the user positioned the model.
+        const r = active.root;
+        const pos = r.position.clone();
+        const quat = r.rotationQuaternion ? r.rotationQuaternion.clone() : null;
+        const rot = r.rotation.clone();
+        const scl = r.scaling.clone();
+        const enabled = r.isEnabled();
+        let fresh: StudioObject;
+        try {
+            fresh = await addModelFromDisk(path);
+        } catch (e) {
+            console.warn('[Studio] reload active object failed:', e);
+            return false;
+        }
+        fresh.root.position.copyFrom(pos);
+        if (quat) fresh.root.rotationQuaternion = quat;
+        else fresh.root.rotation.copyFrom(rot);
+        fresh.root.scaling.copyFrom(scl);
+        fresh.root.setEnabled(enabled);
+        // Drop the stale copy — `fresh` is already the active object.
+        removeObject(oldId);
+        emitChange();
+        return true;
+    };
+
     const addPrimitive = (kind: PrimitiveKind): StudioObject => {
         const obj = createPrimitiveObject(scene, kind);
         return addObjectInternal(obj);
@@ -997,17 +1034,20 @@ export function createStudioScene(canvas: HTMLCanvasElement): StudioScene {
                 },
                 slots: obj.slots.map((slot, i) => ({
                     visible: slot.mesh.isEnabled(),
-                    // `sideOrientation === 1` is the BACKSIDE / flipped
-                    // state — read directly to avoid importing the
-                    // helper just for one comparison.
-                    flipped: (slot.mesh as Mesh).sideOrientation === 1,
+                    // Flip state now lives on the mesh's winding (see
+                    // setMeshFaceFlipped) rather than sideOrientation.
+                    flipped: isMeshFaceFlipped(slot.mesh),
                     override: obj.slotOverrides[i] ?? { kind: 'none' },
                 })),
             };
         });
         const target = camera.getTarget();
         return {
-            version: 1,
+            // v2: `flipped` means winding-reversed (metadata flag). v1 stored
+            // it as `sideOrientation === 1`, which was ~always false, so v1
+            // scenes must NOT re-apply flips on load (see loadFromData) or
+            // every League mesh would load inverted.
+            version: 2,
             objects: objectData,
             background: currentBackground,
             gridVisible: ground.isEnabled(),
@@ -1022,6 +1062,11 @@ export function createStudioScene(canvas: HTMLCanvasElement): StudioScene {
 
     const loadFromData = async (data: StudioSceneData): Promise<void> => {
         clearObjects();
+        // v1 stored `flipped` as `sideOrientation === 1` (nearly always
+        // false); its semantics don't match the new winding flag, so applying
+        // it would invert every already-correct League mesh. Only honor saved
+        // flips from v2+.
+        const applyFlips = (data.version ?? 1) >= 2;
         for (const od of data.objects) {
             let obj: StudioObject | null = null;
             try {
@@ -1048,7 +1093,7 @@ export function createStudioScene(canvas: HTMLCanvasElement): StudioScene {
             for (let i = 0; i < od.slots.length && i < obj.slots.length; i++) {
                 const sd = od.slots[i];
                 obj.slots[i].mesh.setEnabled(sd.visible);
-                setMeshFaceFlipped(obj.slots[i].mesh, sd.flipped);
+                if (applyFlips) setMeshFaceFlipped(obj.slots[i].mesh, sd.flipped);
                 if (sd.override.kind === 'file') {
                     void obj.applyUserTexture(i, sd.override.path);
                 } else if (sd.override.kind === 'pattern') {
@@ -1163,7 +1208,7 @@ export function createStudioScene(canvas: HTMLCanvasElement): StudioScene {
         setShadingIntensity, setShadingDirection,
         setGlowEnabled, setGlowIntensity,
         screenshot,
-        addModelFromDisk, loadModelFromDisk, reloadActiveObjectAnimations, addPrimitive,
+        addModelFromDisk, loadModelFromDisk, reloadActiveObjectAnimations, reloadActiveObject, addPrimitive,
         frameCamera: frameCameraAroundScene,
         removeObject, clearObjects,
         getObjects: () => objects.slice(),

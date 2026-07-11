@@ -712,10 +712,12 @@ export default function GeneralEditPanel({
   };
 
   // Add material override entry
-  const addMaterialOverrideEntry = (path: string, submesh: string, entryType: 'texture' | 'material') => {
+  // Returns the new full content on success (so callers can refresh derived
+  // UI against the freshest text), or null if the entry couldn't be inserted.
+  const addMaterialOverrideEntry = (path: string, submesh: string, entryType: 'texture' | 'material'): string | null => {
     if (!editorContent) {
       setMaterialOverrideStatus('No file loaded');
-      return;
+      return null;
     }
 
     const lines = editorContent.split('\n');
@@ -732,7 +734,7 @@ export default function GeneralEditPanel({
     
     if (materialOverrideLineIndex === -1) {
       setMaterialOverrideStatus('materialOverride structure not found');
-      return;
+      return null;
     }
 
     // Find the closing brace by tracking brace depth
@@ -755,7 +757,7 @@ export default function GeneralEditPanel({
     
     if (insertLineIndex === -1) {
       setMaterialOverrideStatus('Could not find closing brace');
-      return;
+      return null;
     }
 
     // Get indentation
@@ -790,9 +792,76 @@ export default function GeneralEditPanel({
       newLines.push(lines[i]);
     }
 
-    onContentChange(newLines.join('\n'));
+    const nextContent = newLines.join('\n');
+    onContentChange(nextContent);
     setMaterialOverrideStatus(`Added ${entryType} entry`);
+    return nextContent;
   };
+
+  // Monotonic token so a superseded reload (e.g. an initial open still
+  // in-flight when an insert kicks off a refresh) can't clobber newer lists.
+  const dialogLoadGenRef = useRef(0);
+
+  // Re-scan the SKN + folder textures and rebuild the dialog's submesh /
+  // texture lists, filtering out submeshes that already have an override in
+  // `scanContent`. Re-runnable so the lists stay live: called when the dialog
+  // opens AND after every insert, so an overridden submesh drops off the list
+  // immediately (pass the freshly-built content since the `editorContent`
+  // prop lags a render behind the edit).
+  const refreshDialogSuggestions = useCallback(async (scanContent: string) => {
+    if (!filePath) { setDialogSuggestions([]); setDialogTextures([]); return; }
+    const simpleSkinPath = extractSimpleSkinPath();
+    const texturePath = extractTexturePath();
+    if (!simpleSkinPath || !texturePath) { setDialogSuggestions([]); setDialogTextures([]); return; }
+
+    const gen = ++dialogLoadGenRef.current;
+    try {
+      const matchModeStr = await invoke<string>('get_preference', {
+        key: 'MaterialMatchMode',
+        defaultValue: '3',
+      });
+      const matchMode = parseInt(matchModeStr) || 3;
+      const result = await invoke<AutoMaterialResult>('auto_material_override', {
+        binFilePath: filePath,
+        simpleSkinPath,
+        texturePath,
+        matchMode,
+      });
+      // A newer reload started while we awaited — discard this result.
+      if (gen !== dialogLoadGenRef.current) return;
+
+      // Find already-present submeshes
+      const existingSubmeshes = new Set<string>();
+      for (const line of scanContent.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed.toLowerCase().startsWith('submesh:')) {
+          const parts = trimmed.split('=');
+          if (parts.length >= 2) {
+            const val = parts[1].trim().replace(/^["']|["']$/g, '');
+            existingSubmeshes.add(val.toLowerCase());
+          }
+        }
+      }
+
+      // Build suggestions: matched materials first, then unmatched
+      const suggestions: { material: string; texture: string }[] = [];
+      for (const m of result.matches) {
+        if (!existingSubmeshes.has(m.material.toLowerCase())) {
+          suggestions.push({ material: m.material, texture: m.texture });
+        }
+      }
+      for (const u of result.unmatched) {
+        if (!existingSubmeshes.has(u.toLowerCase())) {
+          suggestions.push({ material: u, texture: '' });
+        }
+      }
+      setDialogSuggestions(suggestions);
+      setDialogTextures(result.textures ?? []);
+    } catch {
+      // Silently fall back to no suggestions
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath, editorContent]);
 
   // Open material dialog — fetch SKN suggestions for unused materials
   const openMaterialDialog = async (type: 'texture' | 'material') => {
@@ -801,64 +870,17 @@ export default function GeneralEditPanel({
     setDialogSuggestions([]);
     setDialogTextures([]);
     setShowMaterialDialog(true);
-
-    // Try to load suggestions from SKN in the background
-    if (filePath) {
-      const simpleSkinPath = extractSimpleSkinPath();
-      const texturePath = extractTexturePath();
-      if (simpleSkinPath && texturePath) {
-        try {
-          const matchModeStr = await invoke<string>('get_preference', {
-            key: 'MaterialMatchMode',
-            defaultValue: '3',
-          });
-          const matchMode = parseInt(matchModeStr) || 3;
-          const result = await invoke<AutoMaterialResult>('auto_material_override', {
-            binFilePath: filePath,
-            simpleSkinPath,
-            texturePath,
-            matchMode,
-          });
-
-          // Find already-present submeshes
-          const existingSubmeshes = new Set<string>();
-          const lines = editorContent.split('\n');
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed.toLowerCase().startsWith('submesh:')) {
-              const parts = trimmed.split('=');
-              if (parts.length >= 2) {
-                const val = parts[1].trim().replace(/^["']|["']$/g, '');
-                existingSubmeshes.add(val.toLowerCase());
-              }
-            }
-          }
-
-          // Build suggestions: matched materials first, then unmatched
-          const suggestions: { material: string; texture: string }[] = [];
-          for (const m of result.matches) {
-            if (!existingSubmeshes.has(m.material.toLowerCase())) {
-              suggestions.push({ material: m.material, texture: m.texture });
-            }
-          }
-          for (const u of result.unmatched) {
-            if (!existingSubmeshes.has(u.toLowerCase())) {
-              suggestions.push({ material: u, texture: '' });
-            }
-          }
-          setDialogSuggestions(suggestions);
-          setDialogTextures(result.textures ?? []);
-        } catch {
-          // Silently fall back to no suggestions
-        }
-      }
-    }
+    refreshDialogSuggestions(editorContent);
   };
 
-  // Handle material dialog submit
+  // Handle material dialog submit. Leaves the dialog open so the user can
+  // add several overrides in one session (one per submesh) — closing after a
+  // single insert forced a reopen for every entry. Dismissal is via Cancel.
   const handleMaterialDialogSubmit = (path: string, submesh: string) => {
-    addMaterialOverrideEntry(path, submesh, materialDialogType);
-    setShowMaterialDialog(false);
+    const nextContent = addMaterialOverrideEntry(path, submesh, materialDialogType);
+    // Re-scan against the just-written content so the overridden submesh
+    // drops off the picker for the next insert.
+    if (nextContent) refreshDialogSuggestions(nextContent);
   };
 
   // Handle material dialog submit when a library material was paired.
@@ -869,7 +891,8 @@ export default function GeneralEditPanel({
     submesh: string,
     library: { materialId: string; materialPath: string; materialName: string; texture?: string }
   ) => {
-    setShowMaterialDialog(false);
+    // Keep the dialog open so the user can pair another material right after
+    // — the status line below the picker reports progress/result.
     setMaterialOverrideStatus(`Inserting ${library.materialName}…`);
 
     try {
@@ -958,6 +981,10 @@ export default function GeneralEditPanel({
       content = injectMaterialDefSnippet(content, snippetText);
 
       onContentChange(content);
+
+      // Re-scan against the just-written content so the overridden submesh
+      // drops off the picker for the next pairing.
+      refreshDialogSuggestions(content);
 
       // 6. Copy the library material's textures into the user's mod folder
       //    at assets/jadelib/<id>/<filename> so the paths embedded in the

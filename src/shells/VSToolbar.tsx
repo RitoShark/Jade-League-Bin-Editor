@@ -202,6 +202,12 @@ export default function VSToolbar() {
                 {folderBtns}
                 <div className="vs-toolbar-sep" />
                 <ToolbarBtn
+                    title="Animations (browse + load clips for the rig)"
+                    onClick={() => s.setAnimStudioClipsOpen(!s.animStudioClipsOpen)}
+                    icon={<Clapperboard size={15} />}
+                    active={s.animStudioClipsOpen}
+                />
+                <ToolbarBtn
                     title="Options panel (rigs + retarget)"
                     onClick={() => s.setAnimStudioOptionsOpen(!s.animStudioOptionsOpen)}
                     icon={<SlidersHorizontal size={15} />}

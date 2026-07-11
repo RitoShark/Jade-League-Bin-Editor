@@ -19,6 +19,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
+import { setFaceOrientationOverlay } from '../lib/babylon/faceOrientation';
+import { applyShadingMode, setEdgesOverlay, loadShadePref, saveShadePref, type ShadingMode } from '../lib/babylon/viewportShading';
+import { RefreshCw as RefreshIcon } from 'lucide-react';
+import StudioShadingToolbar from './StudioShadingToolbar';
 import { useShell } from '../shells/ShellContext';
 import PortalDropdown from './PortalDropdown';
 import {
@@ -56,6 +60,18 @@ export default function StudioMeshPanel({ studioTabId }: StudioMeshPanelProps) {
     // `albedoTexture` on first render returns null even when a
     // texture is about to arrive.
     const [autoResolved, setAutoResolved] = useState<Set<number>>(new Set());
+    // Blender-style viewport shading — a PERSISTENT per-studio preference
+    // (localStorage), separate from Animation Studio's, so it survives tab
+    // switches + restarts instead of resetting to the default.
+    const shadePref0 = useMemo(() => loadShadePref('photo'), []);
+    const [showFaceDirs, setShowFaceDirs] = useState(shadePref0.faceDirs);
+    const [shadeMode, setShadeMode] = useState<ShadingMode>(shadePref0.mode);
+    const [flatShade, setFlatShade] = useState(shadePref0.flat);
+    const [edges, setEdges] = useState(shadePref0.edges);
+    // Persist on any change.
+    useEffect(() => {
+        saveShadePref('photo', { mode: shadeMode, flat: flatShade, edges, faceDirs: showFaceDirs });
+    }, [shadeMode, flatShade, edges, showFaceDirs]);
 
     useEffect(() => {
         const scene = s.getStudioScene(studioTabId);
@@ -69,6 +85,11 @@ export default function StudioMeshPanel({ studioTabId }: StudioMeshPanelProps) {
     // (open editors don't line up with the new submeshes).
     const scene = s.getStudioScene(studioTabId);
     const model = scene?.getActiveObject() ?? null;
+    const onReloadMesh = async () => {
+        if (!scene) return;
+        const ok = await scene.reloadActiveObject();
+        s.setStatusMessage(ok ? 'Studio: reloaded model from disk.' : 'Studio: nothing to reload.');
+    };
     useEffect(() => {
         setOpenProcIdx(null);
         setOpenUvIdx(null);
@@ -125,6 +146,35 @@ export default function StudioMeshPanel({ studioTabId }: StudioMeshPanelProps) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [model, autoResolved, revision]);
 
+    // Blender-style face-orientation overlay (blue = outward, red = inverted).
+    // Enabled/disabled on the submesh materials; the overlay reads
+    // `gl_FrontFacing` live, so flipping a submesh recolors it automatically
+    // without a rebuild. Restored on toggle off / model change / unmount.
+    useEffect(() => {
+        if (!showFaceDirs || !model) return;
+        const meshes = model.slots.map(sl => sl.mesh);
+        try { setFaceOrientationOverlay(meshes, true); } catch { /* noop */ }
+        return () => { try { setFaceOrientationOverlay(meshes, false); } catch { /* noop */ } };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showFaceDirs, model]);
+
+    // Apply the viewport shading mode + flat/smooth. Solid & flat ride on an
+    // in-shader plugin, so async texture loads don't disturb them — no need to
+    // re-apply on `revision`.
+    useEffect(() => {
+        if (!model) return;
+        try { applyShadingMode(model.slots.map(sl => sl.mesh), shadeMode, flatShade); } catch { /* noop */ }
+    }, [model, shadeMode, flatShade]);
+
+    // Edge overlay. Re-applied on `revision` too so it regenerates after a
+    // flip reverses a submesh's index buffer.
+    useEffect(() => {
+        if (!model) return;
+        try { setEdgesOverlay(model.slots.map(sl => sl.mesh), edges); } catch { /* noop */ }
+        return () => { if (model) { try { setEdgesOverlay(model.slots.map(sl => sl.mesh), false); } catch { /* noop */ } } };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [model, edges, revision]);
+
     // Per-slot click lock — blocks re-fires while a previous toggle
     // is still propagating. Without this, mashing the flip button
     // produced visual stutter (Babylon's side-orientation change
@@ -140,15 +190,61 @@ export default function StudioMeshPanel({ studioTabId }: StudioMeshPanelProps) {
         return true;
     };
 
-    const toggleVisibility = (i: number) => {
-        if (!model) return;
-        if (!lockSlot(i)) return;
-        const slot = model.slots[i];
+    // ── Drag-to-paint visibility ──────────────────────────────────
+    // Press on a card and drag across others to hide/show them in one
+    // gesture (Blender-style). The first card sets the target state; every
+    // card the pointer enters is forced to that same state (so a drag can't
+    // flip-flop a card back). One undo step is committed on release.
+    const paintDragRef = useRef(false);
+    const paintTargetRef = useRef(true);
+    const paintedRef = useRef<Set<number>>(new Set());
+    const paintDirtyRef = useRef(false);
+
+    const setSlotVisible = (i: number, visible: boolean) => {
+        const slot = model?.slots[i];
         if (!slot) return;
-        slot.mesh.setEnabled(!slot.mesh.isEnabled());
-        scene?.commitUndoStep();
+        if (slot.mesh.isEnabled() === visible) return;
+        slot.mesh.setEnabled(visible);
+        paintDirtyRef.current = true;
         setRevision((r) => r + 1);
     };
+
+    // Don't start a visibility paint when the press lands on an interactive
+    // child (Flip / Link / Pattern / UV buttons, procedural editor, UV viewer).
+    const isInteractiveTarget = (el: EventTarget | null) =>
+        el instanceof Element && !!el.closest('button, input, label, .studio-mesh-actions, .studio-proc-editor, .studio-uv-viewer');
+
+    const beginPaint = (i: number, e: React.MouseEvent) => {
+        if (e.button !== 0 || isInteractiveTarget(e.target)) return;
+        const slot = model?.slots[i];
+        if (!slot) return;
+        e.preventDefault(); // suppress text selection during the drag
+        paintDragRef.current = true;
+        paintTargetRef.current = !slot.mesh.isEnabled();
+        paintedRef.current = new Set([i]);
+        paintDirtyRef.current = false;
+        setSlotVisible(i, paintTargetRef.current);
+    };
+
+    const paintEnter = (i: number) => {
+        if (!paintDragRef.current || paintedRef.current.has(i)) return;
+        paintedRef.current.add(i);
+        setSlotVisible(i, paintTargetRef.current);
+    };
+
+    // End the paint on mouse-up anywhere; commit a single undo step.
+    useEffect(() => {
+        const onUp = () => {
+            if (!paintDragRef.current) return;
+            paintDragRef.current = false;
+            if (paintDirtyRef.current) {
+                paintDirtyRef.current = false;
+                scene?.commitUndoStep();
+            }
+        };
+        window.addEventListener('mouseup', onUp);
+        return () => window.removeEventListener('mouseup', onUp);
+    }, [scene]);
 
     const toggleFlip = (i: number) => {
         if (!model) return;
@@ -237,13 +333,31 @@ export default function StudioMeshPanel({ studioTabId }: StudioMeshPanelProps) {
                     lives alongside the other rendering options
                     (shading, ground shadow) where users expect to
                     find scene-level appearance controls. */}
+                <StudioShadingToolbar
+                    mode={shadeMode} onMode={setShadeMode}
+                    flat={flatShade} onFlat={() => setFlatShade(v => !v)}
+                    edges={edges} onEdges={() => setEdges(v => !v)}
+                    faceDirs={showFaceDirs} onFaceDirs={() => setShowFaceDirs(v => !v)}
+                />
+                <div style={{ display: 'flex', margin: '0 0 8px' }}>
+                    <button
+                        className="mop-btn"
+                        onClick={() => void onReloadMesh()}
+                        disabled={!model?.sourcePath}
+                        title="Reload this model from disk — picks up SKN / .bin / texture edits (e.g. from Maya)"
+                    >
+                        <RefreshIcon size={13} style={{ verticalAlign: 'middle', marginRight: 5 }} />
+                        Reload mesh
+                    </button>
+                </div>
                 <div className="studio-mesh-grid">
                     {submeshes.map((sm) => (
                         <div
                             key={sm.index}
                             className={`studio-mesh-card ${sm.visible ? 'is-visible' : 'is-hidden'}`}
-                            onClick={() => toggleVisibility(sm.index)}
-                            title={sm.visible ? `Click to hide ${sm.name}` : `Click to show ${sm.name}`}
+                            onMouseDown={(e) => beginPaint(sm.index, e)}
+                            onMouseEnter={() => paintEnter(sm.index)}
+                            title={sm.visible ? `Click / drag to hide ${sm.name}` : `Click / drag to show ${sm.name}`}
                         >
                             <div className="studio-mesh-name" title={sm.name}>{sm.name}</div>
                             <div className="studio-mesh-row">
@@ -252,22 +366,22 @@ export default function StudioMeshPanel({ studioTabId }: StudioMeshPanelProps) {
                                     {sm.resolution === 'manual' && 'manual'}
                                     {sm.resolution === 'missing' && 'no texture'}
                                 </div>
-                                {/* The flip toggle is a tiny stand-alone button INSIDE
-                                    the card. `stopPropagation` on its click handler
-                                    means flipping a face doesn't also toggle the
-                                    card's visibility. */}
-                                <label
-                                    className="studio-mesh-flip"
-                                    title="Flip face winding for this submesh"
-                                    onClick={(e) => e.stopPropagation()}
+                                {/* Flip is an action button (not a checkbox):
+                                    League meshes are almost always wound backwards,
+                                    so "flip on demand per submesh" reads better than
+                                    a bound on/off state. It still highlights while the
+                                    submesh is flipped. `stopPropagation` keeps the
+                                    click from also toggling card visibility. */}
+                                <button
+                                    type="button"
+                                    className={`studio-mesh-flip-btn ${sm.flipped ? 'is-on' : ''}`}
+                                    title={sm.flipped
+                                        ? 'Faces are flipped — click to flip back'
+                                        : 'Flip this submesh’s face winding'}
+                                    onClick={(e) => { e.stopPropagation(); toggleFlip(sm.index); }}
                                 >
-                                    <input
-                                        type="checkbox"
-                                        checked={sm.flipped}
-                                        onChange={() => toggleFlip(sm.index)}
-                                    />
                                     Flip
-                                </label>
+                                </button>
                             </div>
                             {sm.texPath && (
                                 <div className="studio-mesh-path" title={sm.texPath}>

@@ -142,6 +142,20 @@ function getMonacoLanguageForPath(filePath: string | null): string {
   }
 }
 
+// Re-apply a model's emitter-hint stylesheet to the shared <style> element.
+// The element only ever holds ONE model's rules (line-number-based class names
+// collide across models), so switching tabs has to restore the active model's
+// CSS even when we skip the (expensive) rescan.
+function applyEmitterCss(css: string): void {
+  let styleEl = document.getElementById('emitter-hint-styles');
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = 'emitter-hint-styles';
+    document.head.appendChild(styleEl);
+  }
+  if (styleEl.textContent !== css) styleEl.textContent = css;
+}
+
 function App() {
   // Tab management - start with NO tabs (empty)
   const [tabs, setTabs] = useState<EditorTab[]>([]);
@@ -488,12 +502,28 @@ function App() {
   // family through ShellContext instead — EditorPane reads it (TODO:
   // wire fontFamily into shellCtx + EditorPane to actually swap fonts).
 
-  const emitterDecorationIds = useRef<string[]>([]);
   const emitterDecorDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const emitterHintsEnabled = useRef(true);
   const syntaxCheckingEnabled = useRef(true);
   const syntaxCheckDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const syntaxDecorationIds = useRef<string[]>([]);
+  // Per-model cache of computed syntax markers + emitter-hint state, keyed by
+  // the Monaco model. Both computations scan the ENTIRE file (and syntax runs
+  // a full parse), so re-running them on every tab switch made switching to a
+  // big bin visibly laggy. Monaco keeps decorations + markers on the model
+  // across detach/attach, so once a model's current version is processed we
+  // can skip the whole scan on re-visit. `version` is `model.getVersionId()`
+  // (bumps on every edit); `active` folds in the enabled-flag / ritobin gate
+  // so toggling a setting invalidates the cache. `ids` are that model's own
+  // decoration ids (was a single shared ref — wrong across models). `emitCss`
+  // is the model's emitter-hint stylesheet, re-applied to the shared <style>
+  // on re-visit since that element only holds the active model's rules.
+  const decoStateRef = useRef(new WeakMap<
+    MonacoType.editor.ITextModel,
+    {
+      syntaxVersion: number; syntaxActive: boolean; syntaxIds: string[];
+      emitterVersion: number; emitterActive: boolean; emitterIds: string[]; emitterCss: string;
+    }
+  >());
   const mutationObserverRef = useRef<MutationObserver | null>(null);
   const mutationSetupTimeoutRef = useRef<number | null>(null);
   const undoCheckIntervalRef = useRef<number | null>(null);
@@ -577,14 +607,55 @@ function App() {
   // is a Studio scene or a texture preview those panels have nothing
   // to attach to, so leaving them open strands the user (no editor in
   // sight to receive the Esc / close action).
+  // Panels we HID (not the user) when the active tab switched to a special
+  // tab with no editor surface. Remembered so switching back to an editor tab
+  // re-opens exactly what was open — flipping to Photo/Animation Studio and
+  // back no longer nukes the user's Find/Replace + edit panels. Only fields
+  // we actually closed are set true, so a panel the user themselves closed
+  // while away (e.g. Find on a Compare tab) is not resurrected.
+  const reopenPanelsRef = useRef<{
+    find: boolean; replace: boolean; general: boolean; particle: boolean; binNav: boolean;
+  } | null>(null);
   useEffect(() => {
-    if (!isEditorTab(activeTab)) {
-      if (findWidgetOpen) setFindWidgetOpen(false);
-      if (replaceWidgetOpen) setReplaceWidgetOpen(false);
-      if (generalEditPanelOpen) setGeneralEditPanelOpen(false);
-      if (particlePanelOpen) setParticlePanelOpen(false);
-      if (binNavOpen) setBinNavOpen(false);
+    if (isEditorTab(activeTab)) {
+      // Back on an editor tab — restore whatever we auto-hid on the way out.
+      const snap = reopenPanelsRef.current;
+      if (snap) {
+        // In the VSCode shell the native find widget is driven by Monaco's
+        // own DOM (watched by the MutationObserver), not this flag, so we
+        // can't reopen it by flipping state — skip it there. Every other
+        // shell owns these flags outright.
+        if (snap.find && shellVariantRef.current !== 'vscode') setFindWidgetOpen(true);
+        if (snap.replace && shellVariantRef.current !== 'vscode') setReplaceWidgetOpen(true);
+        if (snap.general) setGeneralEditPanelOpen(true);
+        if (snap.particle) setParticlePanelOpen(true);
+        if (snap.binNav) setBinNavOpen(true);
+        reopenPanelsRef.current = null;
+      }
+      return;
     }
+
+    // Non-editor tab. Accumulate a snapshot of what we close so it can be
+    // restored on return; reuse any snapshot from an earlier special-tab hop
+    // so a studio→texture→studio journey doesn't lose the original state.
+    const isCompare = activeTab?.tabType === 'compare';
+    const snap = reopenPanelsRef.current ?? {
+      find: false, replace: false, general: false, particle: false, binNav: false,
+    };
+
+    // A Compare tab still hosts (diff) editors, so Find/Replace stays live and
+    // useful there — don't hide it. Every other special tab has no editor
+    // surface, so search would strand with nothing to attach to.
+    if (!isCompare) {
+      if (findWidgetOpen) { snap.find = true; setFindWidgetOpen(false); }
+      if (replaceWidgetOpen) { snap.replace = true; setReplaceWidgetOpen(false); }
+    }
+    // The bin-editing panels target the active bin model, which no special
+    // tab provides — always hide (and remember) them.
+    if (generalEditPanelOpen) { snap.general = true; setGeneralEditPanelOpen(false); }
+    if (particlePanelOpen) { snap.particle = true; setParticlePanelOpen(false); }
+    if (binNavOpen) { snap.binNav = true; setBinNavOpen(false); }
+    reopenPanelsRef.current = snap;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab?.id, activeTab?.tabType]);
 
@@ -2004,20 +2075,21 @@ function App() {
     // Studio tabs get a save-offering prompt rather than the plain
     // "close anyway?" — composing a scene is real work and there's
     // a real file format to save it to.
-    if (tabToClose.tabType === 'studio' && tabToClose.isModified) {
+    if ((tabToClose.tabType === 'studio' || tabToClose.tabType === 'animstudio') && tabToClose.isModified) {
+      const isAnim = tabToClose.tabType === 'animstudio';
       const save = await askDialog(
         `Save changes to "${tabToClose.fileName}" before closing?`,
-        { title: 'Unsaved studio scene', kind: 'warning' },
+        { title: isAnim ? 'Unsaved Animation Studio scene' : 'Unsaved studio scene', kind: 'warning' },
       );
       if (save) {
-        // Make the tab active so studioSaveActiveTab targets it,
-        // then save. If the user backs out of the Save As dialog
-        // (save returns false), abort the close so work isn't lost.
+        // Make the tab active so the save targets it, then save. If the
+        // user backs out of the Save As dialog (save returns false),
+        // abort the close so work isn't lost.
         if (activeTabIdRef.current !== tabId) {
           setActiveTabId(tabId);
           await new Promise((r) => setTimeout(r, 0));
         }
-        const saved = await studioSaveActiveTab(false);
+        const saved = isAnim ? await onSaveAnimStudioScene() : await studioSaveActiveTab(false);
         if (!saved) {
           lastRejectedTabCloseRef.current = { tabId, at: Date.now() };
           return;
@@ -3004,11 +3076,25 @@ function App() {
     const model = editor.getModel();
     if (!model || model.isDisposed()) return;
 
-    if (!emitterHintsEnabled.current) {
+    const enabled = emitterHintsEnabled.current;
+    const version = model.getVersionId();
+    const cache = decoStateRef.current;
+    const prev = cache.get(model);
+    // Unchanged model + same enabled state → the decorations are still on the
+    // model; just make sure the shared <style> reflects THIS model's rules.
+    if (prev && prev.emitterVersion === version && prev.emitterActive === enabled) {
+      applyEmitterCss(prev.emitterCss);
+      return;
+    }
+
+    if (!enabled) {
       // Clear existing decorations and CSS
-      emitterDecorationIds.current = model.deltaDecorations(emitterDecorationIds.current, []);
-      const styleEl = document.getElementById('emitter-hint-styles');
-      if (styleEl) styleEl.textContent = '';
+      const clearedIds = model.deltaDecorations(prev?.emitterIds ?? [], []);
+      applyEmitterCss('');
+      cache.set(model, {
+        syntaxVersion: prev?.syntaxVersion ?? -1, syntaxActive: prev?.syntaxActive ?? false, syntaxIds: prev?.syntaxIds ?? [],
+        emitterVersion: version, emitterActive: enabled, emitterIds: clearedIds, emitterCss: '',
+      });
       return;
     }
 
@@ -3050,15 +3136,14 @@ function App() {
     }
 
     // Inject dynamic CSS for emitter name hints
-    let styleEl = document.getElementById('emitter-hint-styles');
-    if (!styleEl) {
-      styleEl = document.createElement('style');
-      styleEl.id = 'emitter-hint-styles';
-      document.head.appendChild(styleEl);
-    }
-    styleEl.textContent = cssRules.join('\n');
+    const css = cssRules.join('\n');
+    applyEmitterCss(css);
 
-    emitterDecorationIds.current = model.deltaDecorations(emitterDecorationIds.current, decorations);
+    const newIds = model.deltaDecorations(prev?.emitterIds ?? [], decorations);
+    cache.set(model, {
+      syntaxVersion: prev?.syntaxVersion ?? -1, syntaxActive: prev?.syntaxActive ?? false, syntaxIds: prev?.syntaxIds ?? [],
+      emitterVersion: version, emitterActive: enabled, emitterIds: newIds, emitterCss: css,
+    });
   }, []);
 
   // Run the custom bracket syntax checker and set Monaco markers + line decorations
@@ -3075,10 +3160,26 @@ function App() {
     // from the tab's filename at creation (see getMonacoLanguageForPath),
     // so a fresh `.md` file reads as 'markdown' and is left alone.
     const isRitobinTab = model.getLanguageId() === RITOBIN_LANGUAGE_ID;
+    const active = syntaxCheckingEnabled.current && isRitobinTab;
 
-    if (!syntaxCheckingEnabled.current || !isRitobinTab) {
+    const version = model.getVersionId();
+    const cache = decoStateRef.current;
+    const cachedState = cache.get(model);
+    // Unchanged model + same active state → markers and decorations are still
+    // on the model from last time; skip the full re-parse. This is the big win
+    // for tab switching: `checkSyntax` walks the entire bin.
+    if (cachedState && cachedState.syntaxVersion === version && cachedState.syntaxActive === active) {
+      return;
+    }
+
+    if (!active) {
       monaco.editor.setModelMarkers(model, 'syntax-checker', []);
-      syntaxDecorationIds.current = model.deltaDecorations(syntaxDecorationIds.current, []);
+      const clearedIds = model.deltaDecorations(cachedState?.syntaxIds ?? [], []);
+      cache.set(model, {
+        syntaxVersion: version, syntaxActive: active, syntaxIds: clearedIds,
+        emitterVersion: cachedState?.emitterVersion ?? -1, emitterActive: cachedState?.emitterActive ?? false,
+        emitterIds: cachedState?.emitterIds ?? [], emitterCss: cachedState?.emitterCss ?? '',
+      });
       return;
     }
 
@@ -3157,7 +3258,12 @@ function App() {
         },
       });
     }
-    syntaxDecorationIds.current = model.deltaDecorations(syntaxDecorationIds.current, decorations);
+    const newIds = model.deltaDecorations(cachedState?.syntaxIds ?? [], decorations);
+    cache.set(model, {
+      syntaxVersion: version, syntaxActive: active, syntaxIds: newIds,
+      emitterVersion: cachedState?.emitterVersion ?? -1, emitterActive: cachedState?.emitterActive ?? false,
+      emitterIds: cachedState?.emitterIds ?? [], emitterCss: cachedState?.emitterCss ?? '',
+    });
   }, []);
 
   /**
@@ -4103,6 +4209,7 @@ function App() {
   // Animation Studio panels — default open same as Photo Studio so a
   // fresh tab shows the full UI surface; user can dock / float / hide
   // them individually.
+  const [animStudioClipsOpen, setAnimStudioClipsOpen] = usePersistedBool('panel-animstudio-clips', true);
   const [animStudioOptionsOpen, setAnimStudioOptionsOpen] = usePersistedBool('panel-animstudio-options', true);
   const [animStudioMappingOpen, setAnimStudioMappingOpen] = usePersistedBool('panel-animstudio-mapping', true);
   const [animStudioRigOpen, setAnimStudioRigOpen] = usePersistedBool('panel-animstudio-rig', false);
@@ -4705,22 +4812,22 @@ function App() {
     }
   }, [setStatusMessage]);
 
-  const onSaveAnimStudioScene = useCallback(async () => {
+  const onSaveAnimStudioScene = useCallback(async (): Promise<boolean> => {
     const active = tabsRef.current.find(t => t.id === activeTabIdRef.current);
     if (!active || active.tabType !== 'animstudio') {
       setStatusMessage('Anim Studio: switch to an Animation Studio tab to save its scene.');
-      return;
+      return false;
     }
     const scene = animStudioScenesRef.current.get(active.id);
     if (!scene) {
       setStatusMessage('Anim Studio: scene not ready yet — try again.');
-      return;
+      return false;
     }
     const picked = await saveDialog({
       title: 'Save Animation Studio scene',
       filters: [{ name: 'Animation Studio scene', extensions: ['animstudio.json'] }],
     });
-    if (typeof picked !== 'string') return;
+    if (typeof picked !== 'string') return false;
     try {
       const data = scene.serialize();
       await invoke('write_text_file', { path: picked, content: JSON.stringify(data, null, 2) });
@@ -4729,8 +4836,10 @@ function App() {
       scene.markSaved();
       const fileName = picked.split(/[\\/]/).pop() ?? picked;
       setStatusMessage(`Anim Studio: saved scene → ${fileName}`);
+      return true;
     } catch (e) {
       setStatusMessage(`Anim Studio: save failed — ${e instanceof Error ? e.message : String(e)}`);
+      return false;
     }
   }, [setStatusMessage]);
 
@@ -6266,13 +6375,19 @@ function App() {
   }, []);
 
   const onGroupSelectTab = useCallback((groupId: string, tabId: string) => {
+    // Snapshot the outgoing editor's scroll/cursor NOW, while its Monaco
+    // instance is still alive. Switching to a Studio/AnimStudio tab makes
+    // EditorGroupView unmount the editor, so the group's own save-on-switch
+    // effect would run against a disposed editor (returns null) and lose the
+    // view state — the "scroll jumps to top after visiting a studio" bug.
+    saveCurrentViewState();
     setLayout(prev => setGroupActiveTab(prev, groupId, tabId));
     setFocusedGroupId(groupId);
     const selected = tabsRef.current.find(t => t.id === tabId);
-    if (selected?.tabType === 'studio') ensureStudioShell();
+    if (selected?.tabType === 'studio' || selected?.tabType === 'animstudio') ensureStudioShell();
     setActiveTabId(tabId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setActiveTabId, ensureStudioShell]);
+  }, [setActiveTabId, ensureStudioShell, saveCurrentViewState]);
 
   const onGroupCloseTab = useCallback((_groupId: string, tabId: string) => {
     handleTabClose(tabId);
@@ -6413,7 +6528,7 @@ function App() {
     // -- Editor wiring
     editorTheme, editorFontFamily, perfPrefs, bigFileLines: BIG_FILE_LINES,
     handleBeforeMount, handleEditorMount, handleEditorChange,
-    editorRef, monacoModelsRef, monacoRef,
+    editorRef, monacoModelsRef, viewStatesRef, monacoRef,
 
     // -- Split pane
     splitMode, setSplitMode, splitRatio, setSplitRatio,
@@ -6438,8 +6553,8 @@ function App() {
     onSaveAnimStudioScene,
     studioAnimOpen, studioBgOpen, studioActionsOpen, studioMeshOpen, studioObjectsOpen, studioSpotlightOpen,
     setStudioAnimOpen, setStudioBgOpen, setStudioActionsOpen, setStudioMeshOpen, setStudioObjectsOpen, setStudioSpotlightOpen,
-    animStudioOptionsOpen, animStudioMappingOpen, animStudioRigOpen, animStudioGuidesOpen, animStudioPhysicsOpen, animStudioMeshOpen, animStudioExportOpen,
-    setAnimStudioOptionsOpen, setAnimStudioMappingOpen, setAnimStudioRigOpen, setAnimStudioGuidesOpen, setAnimStudioPhysicsOpen, setAnimStudioMeshOpen, setAnimStudioExportOpen,
+    animStudioClipsOpen, animStudioOptionsOpen, animStudioMappingOpen, animStudioRigOpen, animStudioGuidesOpen, animStudioPhysicsOpen, animStudioMeshOpen, animStudioExportOpen,
+    setAnimStudioClipsOpen, setAnimStudioOptionsOpen, setAnimStudioMappingOpen, setAnimStudioRigOpen, setAnimStudioGuidesOpen, setAnimStudioPhysicsOpen, setAnimStudioMeshOpen, setAnimStudioExportOpen,
     studioPhotoWidth, studioPhotoHeight, setStudioPhotoWidth, setStudioPhotoHeight,
 
     // -- File Explorer

@@ -21,6 +21,7 @@ import {
     Check as CheckIcon,
     FolderOpen as FolderOpenIcon,
     RotateCcw as ResetIcon,
+    RefreshCw as RefreshIcon,
     X as RemoveIcon,
 } from 'lucide-react';
 import { useShell } from '../shells/ShellContext';
@@ -58,6 +59,7 @@ export default function AnimStudioOptionsPanel({ animStudioTabId }: AnimStudioOp
         rebaseRotations: true,
         stripRootMotion: false,
         mirror: false,
+        lockBoneLengths: true,
         dropMismatchedParents: false,
         verticalOffset: 0,
         verticalOffsetExcludedMeshes: [],
@@ -115,9 +117,22 @@ export default function AnimStudioOptionsPanel({ animStudioTabId }: AnimStudioOp
             s.setStatusMessage(`Anim Studio: load failed — ${e instanceof Error ? e.message : String(e)}`);
         }
     };
+    // Re-read the rig from disk (picks up SKN / .bin / texture edits made in
+    // Maya etc. since it was loaded). loadSkn keeps the clip + mapping.
+    const onReload = async (side: AnimStudioSide) => {
+        const p = scene?.getSide(side).path;
+        if (!p || !scene) return;
+        try {
+            await scene.loadSkn(side, p);
+            s.setStatusMessage(`Anim Studio: reloaded ${fileNameOf(p)}`);
+        } catch (e) {
+            s.setStatusMessage(`Anim Studio: reload failed — ${e instanceof Error ? e.message : String(e)}`);
+        }
+    };
     const onToggleRescale = () => scene?.setRetargetOptions({ rescaleTranslations: !opts.rescaleTranslations });
     const onToggleRebase = () => scene?.setRetargetOptions({ rebaseRotations: !opts.rebaseRotations });
     const onToggleStripRoot = () => scene?.setRetargetOptions({ stripRootMotion: !opts.stripRootMotion });
+    const onToggleLockBoneLengths = () => scene?.setRetargetOptions({ lockBoneLengths: !opts.lockBoneLengths });
     const onToggleMirror = () => scene?.setRetargetOptions({ mirror: !opts.mirror });
     const onToggleFixGround = () => scene?.setRetargetOptions({ fixGroundReference: !opts.fixGroundReference });
     const onToggleFixGroundDynamic = () => scene?.setRetargetOptions({ fixGroundReferenceDynamicRefNode: !opts.fixGroundReferenceDynamicRefNode });
@@ -140,6 +155,7 @@ export default function AnimStudioOptionsPanel({ animStudioTabId }: AnimStudioOp
                     path={sourceInfo.path}
                     onPick={() => onPick('source')}
                     onClear={() => onClear('source')}
+                    onReload={() => onReload('source')}
                     onSwap={onSwap}
                     swapDisabled={!sourceInfo.path && !targetInfo.path}
                 />
@@ -148,6 +164,7 @@ export default function AnimStudioOptionsPanel({ animStudioTabId }: AnimStudioOp
                     path={targetInfo.path}
                     onPick={() => onPick('target')}
                     onClear={() => onClear('target')}
+                    onReload={() => onReload('target')}
                     onSwap={onSwap}
                     swapDisabled={!sourceInfo.path && !targetInfo.path}
                 />
@@ -198,6 +215,13 @@ export default function AnimStudioOptionsPanel({ animStudioTabId }: AnimStudioOp
                     checked={opts.fixAnimations}
                     disabled={!canRetarget}
                     onClick={onToggleFixAnims}
+                />
+                <RetargetToggle
+                    label="Lock bone lengths"
+                    title="Keep every non-root bone at the TARGET rig's bind translation + scale, transferring only rotation. Fixes squished / stretched mesh (e.g. shoulders) when retargeting between two skins, because Babylon otherwise drags the target's bones to the source skin's proportions. Turn OFF only for clips that intentionally animate bone translation/scale (stretchy VFX, squash-and-stretch)."
+                    checked={opts.lockBoneLengths}
+                    disabled={!canRetarget}
+                    onClick={onToggleLockBoneLengths}
                 />
                 <RetargetToggle
                     label="Strip root motion"
@@ -344,11 +368,12 @@ function fileNameOf(p: string | null): string {
     return p?.split(/[\\/]/).pop() ?? '';
 }
 
-function SideEditor({ label, path, onPick, onClear, onSwap, swapDisabled }: {
+function SideEditor({ label, path, onPick, onClear, onReload, onSwap, swapDisabled }: {
     label: string;
     path: string | null;
     onPick: () => void;
     onClear: () => void;
+    onReload: () => void;
     onSwap: () => void;
     swapDisabled: boolean;
 }) {
@@ -377,6 +402,14 @@ function SideEditor({ label, path, onPick, onClear, onSwap, swapDisabled }: {
                 </div>
                 <button onClick={onPick} title="Pick a rig from disk" className="anim-mini-btn">
                     <FolderOpenIcon size={12} />
+                </button>
+                <button
+                    onClick={onReload}
+                    disabled={!path}
+                    title="Reload this rig from disk — picks up SKN / .bin / texture edits (e.g. from Maya)"
+                    className="anim-mini-btn"
+                >
+                    <RefreshIcon size={12} />
                 </button>
                 <button
                     onClick={onClear}

@@ -186,6 +186,11 @@ export function buildSknMeshes(
         // hair cards, wing membranes, etc. as single-sided geometry
         // that's expected to be visible from both sides.
         mesh.sideOrientation = Mesh.DOUBLESIDE;
+        // We reversed the winding above so League meshes render right-side-out
+        // under standard culling. Record that as the mesh's flip state so the
+        // Studio mesh panel's Flip button starts selected (League meshes are
+        // "already flipped") and un-flipping returns to the raw SKN winding.
+        mesh.metadata = { ...(mesh.metadata ?? {}), jadeFaceFlipped: true };
         meshes.push(mesh);
     }
 

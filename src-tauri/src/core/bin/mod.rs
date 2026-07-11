@@ -6,6 +6,7 @@ pub mod adapt;
 pub mod engine;
 pub mod repath;
 pub mod asset_scan;
+pub mod modcheck;
 
 // Engine-aware entry points + the canonical Jade tree types. These are
 // what the texture/animation/mesh/repath walkers use so they stay

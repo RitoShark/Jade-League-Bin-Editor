@@ -22,6 +22,9 @@ import {
     isMeshFaceFlipped,
     type StudioObject,
 } from '../lib/babylon/studioObject';
+import { setFaceOrientationOverlay } from '../lib/babylon/faceOrientation';
+import { applyShadingMode, setEdgesOverlay, loadShadePref, saveShadePref } from '../lib/babylon/viewportShading';
+import StudioShadingToolbar from './StudioShadingToolbar';
 import type { AnimStudioScene, AnimStudioSide } from '../lib/babylon/animStudioScene';
 import './StudioPanels.css';
 
@@ -43,6 +46,44 @@ export default function AnimStudioMeshPanel({ animStudioTabId }: Props) {
         return scene.onChange(() => setTick(n => n + 1));
     }, [animStudioTabId, scene]);
     void tick;
+
+    // Viewport shading is a PERSISTENT per-studio preference (localStorage),
+    // so it survives this panel remounting on a tab switch AND app restarts,
+    // and Animation Studio keeps its own choice separate from Photo Studio.
+    // Initialised from storage; `patchShade` writes both state + storage.
+    const [shade, setShade] = useState(() => loadShadePref('anim'));
+    const shadeMode = shade.mode;
+    const flatShade = shade.flat;
+    const edges = shade.edges;
+    const showFaceDirs = shade.faceDirs;
+    const patchShade = (patch: Partial<ReturnType<typeof loadShadePref>>) => {
+        setShade(prev => {
+            const next = { ...prev, ...patch };
+            saveShadePref('anim', next);
+            return next;
+        });
+    };
+
+    // Every submesh across both loaded rigs. `tick` (rig load / structural
+    // change, not per-frame) re-derives it so late-loaded rigs pick up the mode.
+    const collectMeshes = () => {
+        const src = scene?.getSide('source').object;
+        const tgt = scene?.getSide('target').object;
+        return [...(src?.slots ?? []), ...(tgt?.slots ?? [])].map(sl => sl.mesh);
+    };
+    useEffect(() => {
+        const meshes = collectMeshes();
+        if (meshes.length === 0) return;
+        try { applyShadingMode(meshes, shadeMode, flatShade); } catch { /* noop */ }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [scene, tick, shadeMode, flatShade]);
+    useEffect(() => {
+        const meshes = collectMeshes();
+        if (meshes.length === 0) return;
+        try { setEdgesOverlay(meshes, edges); } catch { /* noop */ }
+        return () => { const m = collectMeshes(); if (m.length) { try { setEdgesOverlay(m, false); } catch { /* noop */ } } };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [scene, tick, edges]);
 
     if (!scene) {
         return (
@@ -70,11 +111,18 @@ export default function AnimStudioMeshPanel({ animStudioTabId }: Props) {
     return (
         <div className="mop-dialog mop-dialog-docked studio-panel anim-panel-flush anim-panel-scroll">
             <div className="mop-content">
+                <StudioShadingToolbar
+                    mode={shadeMode} onMode={(m) => patchShade({ mode: m })}
+                    flat={flatShade} onFlat={() => patchShade({ flat: !flatShade })}
+                    edges={edges} onEdges={() => patchShade({ edges: !edges })}
+                    faceDirs={showFaceDirs} onFaceDirs={() => patchShade({ faceDirs: !showFaceDirs })}
+                />
                 {sourceObj && (
                     <SideSection
                         title="Source"
                         model={sourceObj}
                         side="source"
+                        showFaceDirs={showFaceDirs}
                     />
                 )}
                 {targetObj && (
@@ -82,6 +130,7 @@ export default function AnimStudioMeshPanel({ animStudioTabId }: Props) {
                         title="Target"
                         model={targetObj}
                         side="target"
+                        showFaceDirs={showFaceDirs}
                     />
                 )}
             </div>
@@ -91,15 +140,27 @@ export default function AnimStudioMeshPanel({ animStudioTabId }: Props) {
 
 // ── Side section ──────────────────────────────────────────────────
 
-function SideSection({ title, model, side }: {
+function SideSection({ title, model, side, showFaceDirs }: {
     title: string;
     model: StudioObject;
     side: AnimStudioSide;
+    showFaceDirs: boolean;
 }) {
     const s = useShell();
     const [revision, setRevision] = useState(0);
     void side; // reserved for future per-side hooks (e.g. mesh
                 // toggle that survives a clip reload).
+
+    // Blender-style face-orientation overlay for THIS rig (blue = outward,
+    // red = inverted). Reads gl_FrontFacing live, so flipping a submesh
+    // recolors it without a rebuild. Restored on toggle off / unmount.
+    useEffect(() => {
+        if (!showFaceDirs) return;
+        const meshes = model.slots.map(sl => sl.mesh);
+        try { setFaceOrientationOverlay(meshes, true); } catch { /* noop */ }
+        return () => { try { setFaceOrientationOverlay(meshes, false); } catch { /* noop */ } };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showFaceDirs, model]);
 
     // Re-poll auto-resolved textures after model load — Babylon's
     // texture pipeline is async, so an empty `albedoTexture` on the
@@ -157,13 +218,46 @@ function SideSection({ title, model, side }: {
         return true;
     };
 
-    const toggleVisibility = (i: number) => {
-        if (!lockSlot(i)) return;
+    // ── Drag-to-paint visibility ──────────────────────────────────
+    // Press on a card and drag across others to hide/show them in one
+    // gesture. The first card sets the target state; every card entered is
+    // forced to it (so a drag never flip-flops a card). Per-side.
+    const paintDragRef = useRef(false);
+    const paintTargetRef = useRef(true);
+    const paintedRef = useRef<Set<number>>(new Set());
+
+    const setSlotVisible = (i: number, visible: boolean) => {
         const slot = model.slots[i];
-        if (!slot) return;
-        slot.mesh.setEnabled(!slot.mesh.isEnabled());
+        if (!slot || slot.mesh.isEnabled() === visible) return;
+        slot.mesh.setEnabled(visible);
         setRevision(r => r + 1);
     };
+
+    const isInteractiveTarget = (el: EventTarget | null) =>
+        el instanceof Element && !!el.closest('button, input, label, .studio-mesh-actions');
+
+    const beginPaint = (i: number, e: React.MouseEvent) => {
+        if (e.button !== 0 || isInteractiveTarget(e.target)) return;
+        const slot = model.slots[i];
+        if (!slot) return;
+        e.preventDefault();
+        paintDragRef.current = true;
+        paintTargetRef.current = !slot.mesh.isEnabled();
+        paintedRef.current = new Set([i]);
+        setSlotVisible(i, paintTargetRef.current);
+    };
+
+    const paintEnter = (i: number) => {
+        if (!paintDragRef.current || paintedRef.current.has(i)) return;
+        paintedRef.current.add(i);
+        setSlotVisible(i, paintTargetRef.current);
+    };
+
+    useEffect(() => {
+        const onUp = () => { paintDragRef.current = false; };
+        window.addEventListener('mouseup', onUp);
+        return () => window.removeEventListener('mouseup', onUp);
+    }, []);
 
     const toggleFlip = (i: number) => {
         if (!lockSlot(i)) return;
@@ -223,8 +317,9 @@ function SideSection({ title, model, side }: {
                     <div
                         key={sm.index}
                         className={`studio-mesh-card ${sm.visible ? 'is-visible' : 'is-hidden'}`}
-                        onClick={() => toggleVisibility(sm.index)}
-                        title={sm.visible ? `Click to hide ${sm.name}` : `Click to show ${sm.name}`}
+                        onMouseDown={(e) => beginPaint(sm.index, e)}
+                        onMouseEnter={() => paintEnter(sm.index)}
+                        title={sm.visible ? `Click / drag to hide ${sm.name}` : `Click / drag to show ${sm.name}`}
                     >
                         <div className="studio-mesh-name" title={sm.name}>{sm.name}</div>
                         <div className="studio-mesh-row">
@@ -233,18 +328,16 @@ function SideSection({ title, model, side }: {
                                 {sm.resolution === 'manual' && 'manual'}
                                 {sm.resolution === 'missing' && 'no texture'}
                             </div>
-                            <label
-                                className="studio-mesh-flip"
-                                title="Flip face winding for this submesh"
-                                onClick={(e) => e.stopPropagation()}
+                            <button
+                                type="button"
+                                className={`studio-mesh-flip-btn ${sm.flipped ? 'is-on' : ''}`}
+                                title={sm.flipped
+                                    ? 'Faces are flipped — click to flip back'
+                                    : 'Flip this submesh’s face winding'}
+                                onClick={(e) => { e.stopPropagation(); toggleFlip(sm.index); }}
                             >
-                                <input
-                                    type="checkbox"
-                                    checked={sm.flipped}
-                                    onChange={() => toggleFlip(sm.index)}
-                                />
                                 Flip
-                            </label>
+                            </button>
                         </div>
                         {sm.texPath && (
                             <div className="studio-mesh-path" title={sm.texPath}>

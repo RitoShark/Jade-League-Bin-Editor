@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import MaterialOverrideDockPanel, { type LibraryPairResult } from './MaterialOverrideDockPanel';
 import { useShell } from './ShellContext';
@@ -66,60 +66,72 @@ export default function MaterialOverridePanel({ entryType, onClose }: MaterialOv
         return '';
     };
 
+    // Monotonic token so an in-flight reload that's been superseded (by a
+    // newer reload, e.g. right after an insert) doesn't clobber fresher state.
+    const loadGenRef = useRef(0);
+
+    // Re-scan the SKN for submeshes + folder textures and rebuild the
+    // suggestion lists, filtering out any submesh that ALREADY has a material
+    // override in the current editor content. Re-runnable so the lists stay
+    // live: called on file/tool change AND after every insert, so a submesh
+    // drops off the "Submeshes from SKN" list the moment it's overridden.
+    const loadSuggestions = useCallback(async () => {
+        const gen = ++loadGenRef.current;
+        const texturePath = extractFirst('texture');
+        setDefaultPath(texturePath);
+
+        if (!filePath) { setSuggestions([]); setDetectedTextures([]); return; }
+        const simpleSkinPath = extractFirst('simpleSkin');
+        if (!simpleSkinPath || !texturePath) { setSuggestions([]); setDetectedTextures([]); return; }
+
+        try {
+            const matchModeStr = await invoke<string>('get_preference', {
+                key: 'MaterialMatchMode',
+                defaultValue: '3',
+            });
+            const matchMode = parseInt(matchModeStr, 10) || 3;
+            const result = await invoke<AutoMaterialResult>('auto_material_override', {
+                binFilePath: filePath,
+                simpleSkinPath,
+                texturePath,
+                matchMode,
+            });
+            // A newer reload started while we awaited — discard this result.
+            if (gen !== loadGenRef.current) return;
+
+            // Skip submeshes that already have a material override.
+            const existing = new Set<string>();
+            for (const line of editorContent().split('\n')) {
+                const t = line.trim();
+                if (t.toLowerCase().startsWith('submesh:')) {
+                    const parts = t.split('=');
+                    if (parts.length >= 2) {
+                        existing.add(parts[1].trim().replace(/^["']|["']$/g, '').toLowerCase());
+                    }
+                }
+            }
+
+            const out: { material: string; texture: string }[] = [];
+            for (const m of result.matches) {
+                if (!existing.has(m.material.toLowerCase())) out.push({ material: m.material, texture: m.texture });
+            }
+            for (const u of result.unmatched) {
+                if (!existing.has(u.toLowerCase())) out.push({ material: u, texture: '' });
+            }
+            setSuggestions(out);
+            setDetectedTextures(result.textures ?? []);
+        } catch {
+            // Silently fall back to manual mode.
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filePath]);
+
     // Initial defaults + lazy suggestion load whenever the active file
     // or tool open state changes.
     useEffect(() => {
-        let cancelled = false;
-        const texturePath = extractFirst('texture');
-        setDefaultPath(texturePath);
         setSuggestions([]);
         setDetectedTextures([]);
-
-        if (!filePath) return;
-        const simpleSkinPath = extractFirst('simpleSkin');
-        if (!simpleSkinPath || !texturePath) return;
-
-        (async () => {
-            try {
-                const matchModeStr = await invoke<string>('get_preference', {
-                    key: 'MaterialMatchMode',
-                    defaultValue: '3',
-                });
-                const matchMode = parseInt(matchModeStr, 10) || 3;
-                const result = await invoke<AutoMaterialResult>('auto_material_override', {
-                    binFilePath: filePath,
-                    simpleSkinPath,
-                    texturePath,
-                    matchMode,
-                });
-                if (cancelled) return;
-
-                // Skip submeshes that already have a material override.
-                const existing = new Set<string>();
-                for (const line of editorContent().split('\n')) {
-                    const t = line.trim();
-                    if (t.toLowerCase().startsWith('submesh:')) {
-                        const parts = t.split('=');
-                        if (parts.length >= 2) {
-                            existing.add(parts[1].trim().replace(/^["']|["']$/g, '').toLowerCase());
-                        }
-                    }
-                }
-
-                const out: { material: string; texture: string }[] = [];
-                for (const m of result.matches) {
-                    if (!existing.has(m.material.toLowerCase())) out.push({ material: m.material, texture: m.texture });
-                }
-                for (const u of result.unmatched) {
-                    if (!existing.has(u.toLowerCase())) out.push({ material: u, texture: '' });
-                }
-                setSuggestions(out);
-                setDetectedTextures(result.textures ?? []);
-            } catch {
-                // Silently fall back to manual mode.
-            }
-        })();
-        return () => { cancelled = true; };
+        loadSuggestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [filePath, tab?.id, entryType]);
 
@@ -175,9 +187,19 @@ export default function MaterialOverridePanel({ entryType, onClose }: MaterialOv
     }, [s, tab]);
 
     const onSubmit = useCallback((path: string, submesh: string) => {
-        insertEntry(path, submesh, entryType);
-        onClose();
-    }, [insertEntry, entryType, onClose]);
+        // Keep the panel open after inserting so the user can add several
+        // overrides in a row (e.g. one per submesh) without re-opening it
+        // each time. Feedback comes from the status bar instead of the close.
+        const ok = insertEntry(path, submesh, entryType);
+        s.setStatusMessage(
+            ok
+                ? `Added ${entryType} override for "${submesh}"`
+                : `Couldn't add override — no materialOverride list found in this bin`,
+        );
+        // Re-scan so the just-overridden submesh drops off the list, keeping
+        // the picker in sync for the next insert.
+        if (ok) loadSuggestions();
+    }, [insertEntry, entryType, s, loadSuggestions]);
 
     /** Insert a `SkinMeshDataProperties_MaterialOverride` entry into the
      *  current bin's `materialOverride: list[embed]`. Returns the modified
@@ -333,7 +355,6 @@ export default function MaterialOverridePanel({ entryType, onClose }: MaterialOv
             });
             if (!snippet) {
                 s.setStatusMessage(`Library material ${library.materialPath} not cached`);
-                onClose();
                 return;
             }
 
@@ -379,6 +400,10 @@ export default function MaterialOverridePanel({ entryType, onClose }: MaterialOv
             next = injectMaterialDefSnippet(next, snippetText);
             s.handleGeneralEditContentChange(next);
 
+            // Re-scan so the just-overridden submesh drops off the picker for
+            // the next pairing.
+            loadSuggestions();
+
             // Copy the library's textures next to the bin so the embedded
             // assets/jadelib/<id>/<file> paths actually resolve on disk.
             try {
@@ -408,9 +433,10 @@ export default function MaterialOverridePanel({ entryType, onClose }: MaterialOv
             console.error('Library insert failed:', e);
             s.setStatusMessage(`Library insert failed: ${e}`);
         }
-        onClose();
+        // Panel stays open so the user can pair another material without
+        // reopening it — dismissal is via the dock pane's × button.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [filePath, applyOverrideEntry, injectMaterialDefSnippet, onClose]);
+    }, [filePath, applyOverrideEntry, injectMaterialDefSnippet, loadSuggestions]);
 
     return (
         <MaterialOverrideDockPanel

@@ -35,6 +35,7 @@
 use crate::core::bin::repath::{is_hud_icon_path, is_referenced_path, visit_strings, visit_strings_mut};
 use crate::core::bin::{read_bin_engine, write_bin_engine, BinValue};
 use crate::core::bin::jade::view;
+use crate::core::bin::modcheck;
 use crate::core::hash::get_frogtools_hash_dir;
 use crate::core::wad::extractor::chunk_io::{read_chunk_decompressed_bytes, read_chunk_raw};
 use crate::core::wad::format::{WadChunk, WadCompression};
@@ -160,6 +161,27 @@ impl ModWadState {
         let p = self.packed_path()?;
         packed_chunk_magic(p, chunk)
     }
+
+    /// First `n` decompressed bytes of an entry — enough to read a file
+    /// header (e.g. a 12-byte TEX header) without paying to decompress a
+    /// whole texture. Honours a pending rewrite in `replaced_data`.
+    fn entry_head(&self, entry: &ModEntry, n: usize) -> Option<Vec<u8>> {
+        if (entry.uncompressed_size as usize) < n {
+            return None;
+        }
+        if let Some(d) = self.replaced_data.get(&entry.path_hash) {
+            return d.get(..n).map(|s| s.to_vec());
+        }
+        if let Some(lp) = &entry.loose_path {
+            let mut f = std::fs::File::open(lp).ok()?;
+            let mut buf = vec![0u8; n];
+            f.read_exact(&mut buf).ok()?;
+            return Some(buf);
+        }
+        let chunk = entry.chunk.as_ref()?;
+        let p = self.packed_path()?;
+        packed_chunk_head(p, chunk, n)
+    }
 }
 
 struct ModSession {
@@ -251,6 +273,29 @@ fn packed_chunk_magic(disk_path: &Path, chunk: &WadChunk) -> Option<[u8; 4]> {
         WadCompression::Satellite => return None,
     }
     Some(magic)
+}
+
+/// First `n` decompressed bytes of a packed chunk (generalises
+/// [`packed_chunk_magic`] for reading longer file headers).
+fn packed_chunk_head(disk_path: &Path, chunk: &WadChunk, n: usize) -> Option<Vec<u8>> {
+    if (chunk.uncompressed_size as usize) < n {
+        return None;
+    }
+    let raw = read_chunk_raw(disk_path, chunk).ok()?;
+    let mut buf = vec![0u8; n];
+    match chunk.compression {
+        WadCompression::None => buf.copy_from_slice(raw.get(0..n)?),
+        WadCompression::GZip => {
+            let mut dec = flate2::read::GzDecoder::new(&raw[..]);
+            dec.read_exact(&mut buf).ok()?;
+        }
+        WadCompression::Zstd | WadCompression::ZstdMulti => {
+            let mut dec = zstd::stream::read::Decoder::new(&raw[..]).ok()?;
+            dec.read_exact(&mut buf).ok()?;
+        }
+        WadCompression::Satellite => return None,
+    }
+    Some(buf)
 }
 
 fn looks_like_locale_wad(stem_lower: &str) -> bool {
@@ -860,7 +905,8 @@ pub struct ModSuggestion {
 #[derive(Serialize)]
 pub struct ModIssue {
     pub id: u32,
-    /// "missing_linked" | "stale_override" | "missing_asset" | "wrong_extension" | "parse_error"
+    /// "missing_linked" | "stale_override" | "missing_asset" | "wrong_extension"
+    /// | "parse_error" | "sampler_key"
     pub kind: String,
     /// "error" | "warning" | "info"
     pub severity: String,
@@ -882,6 +928,20 @@ pub struct ModIssue {
     /// Whether the recommended action is safe to apply unattended (drives
     /// the "Apply N confident fixes" button).
     pub auto_fixable: bool,
+    /// A ready-to-send structured fix for content issues (sampler-key,
+    /// etc.) that don't fit the path-rewrite `recommended_action` model.
+    /// The UI echoes this back verbatim to `mod_apply_fixes`. Absent for
+    /// classic reference-integrity issues.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recommended_fix: Option<ModFix>,
+    /// Optional multi-line preview of exactly what the fix changes, shown
+    /// in the issue card so the user sees what the app "thinks".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// "low" | "medium" | "high" risk of the recommended fix, for the
+    /// card's risk badge. Absent = unclassified (treated as low).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1073,10 +1133,13 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
     }
     let mut parsed_per_wad: Vec<Vec<ParsedBin>> = Vec::new();
     let mut parse_failures: Vec<Vec<String>> = Vec::new();
+    // Content-validity findings (sampler-key etc.), one bucket per unit.
+    let mut content_per_wad: Vec<Vec<modcheck::ContentFinding>> = Vec::new();
 
     for wad in session.wads.iter_mut() {
         let mut parsed = Vec::new();
         let mut failures = Vec::new();
+        let mut content: Vec<modcheck::ContentFinding> = Vec::new();
         let mut new_bin_hashes = Vec::new();
         let entries = wad.entries.clone();
         for entry in &entries {
@@ -1110,6 +1173,10 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
                             refs.push(s.to_string());
                         }
                     });
+                    // Content-validity checks over the parsed tree — done
+                    // here while it's in hand (the scan otherwise only
+                    // keeps the extracted ref strings).
+                    content.extend(modcheck::detect(&tree, &display));
                     new_bin_hashes.push(entry.path_hash);
                     parsed.push(ParsedBin {
                         display,
@@ -1129,6 +1196,7 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
         }
         parsed_per_wad.push(parsed);
         parse_failures.push(failures);
+        content_per_wad.push(content);
     }
 
     let referenced_hashes: HashSet<u64> = parsed_per_wad
@@ -1200,12 +1268,15 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
                     path: dep.clone(),
                     owner: bin.display.clone(),
                     ref_count: 1,
-                    message: "Linked bin no longer exists in the game — loading this mod will crash"
+                    message: "Game-crashing: this mod references a linked bin that isn't in the mod or the live game, so it will crash on load"
                         .to_string(),
                     suggestions,
                     recommended_action,
                     recommended_path,
                     auto_fixable,
+                    recommended_fix: None,
+                    detail: None,
+                    risk: None,
                 });
                 next_issue_id += 1;
             }
@@ -1250,6 +1321,9 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
                         recommended_action: "update".to_string(),
                         recommended_path: Some(alt),
                         auto_fixable: true,
+                        recommended_fix: None,
+                        detail: None,
+                        risk: None,
                     });
                 } else {
                     let suggestions = suggest(&r_lower, &pool, true);
@@ -1268,6 +1342,9 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
                         recommended_action,
                         recommended_path,
                         auto_fixable,
+                        recommended_fix: None,
+                        detail: None,
+                        risk: None,
                     });
                 }
                 next_issue_id += 1;
@@ -1344,7 +1421,7 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
                     "The live counterpart was renamed — re-target the override so it applies again"
                         .to_string()
                 } else if is_bin {
-                    "The game no longer ships a bin at this path — this part of the mod is dead"
+                    "The game no longer ships a bin at this path, so this override applies to nothing — it's dead weight, but the file is present so it won't crash"
                         .to_string()
                 } else {
                     "This file no longer exists in the live game, so it overrides nothing".to_string()
@@ -1352,7 +1429,10 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
                 issues.push(ModIssue {
                     id: next_issue_id,
                     kind: "stale_override".to_string(),
-                    severity: if is_bin { "error" } else { "warning" }.to_string(),
+                    // A file that's present in the mod can't crash the game —
+                    // it just overrides nothing. Only a *missing* linked bin
+                    // (checked above) is game-crashing, so these stay warnings.
+                    severity: "warning".to_string(),
                     wad_name: wad.name.clone(),
                     path: display,
                     owner: String::new(),
@@ -1362,6 +1442,9 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
                     recommended_action,
                     recommended_path,
                     auto_fixable,
+                    recommended_fix: None,
+                    detail: None,
+                    risk: None,
                 });
                 next_issue_id += 1;
             }
@@ -1387,6 +1470,98 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
                 recommended_action: "none".to_string(),
                 recommended_path: None,
                 auto_fixable: false,
+                recommended_fix: None,
+                detail: None,
+                risk: None,
+            });
+            next_issue_id += 1;
+        }
+
+        // 2e. Content-validity findings (sampler-key, …) — problems inside
+        // a bin that parses fine but renders wrong. Each carries a ready
+        // structured fix the UI echoes straight back to mod_apply_fixes.
+        for finding in &content_per_wad[wi] {
+            if issues.len() >= MAX_ISSUES {
+                truncated = true;
+                break;
+            }
+            let recommended_fix = match finding.fix_kind {
+                "rekey_samplers" => Some(ModFix::RekeySamplers {
+                    wad_name: wad.name.clone(),
+                    bin_path: finding.bin_path.clone(),
+                }),
+                "remove_entry" => Some(ModFix::RemoveEntry {
+                    wad_name: wad.name.clone(),
+                    bin_path: finding.bin_path.clone(),
+                    object_hash: finding.object_hash,
+                }),
+                // Drop the whole bin file — reuses the existing chunk-remove.
+                "remove_bin" => Some(ModFix::RemoveChunk {
+                    wad_name: wad.name.clone(),
+                    chunk_path: finding.bin_path.clone(),
+                }),
+                _ => None,
+            };
+            issues.push(ModIssue {
+                id: next_issue_id,
+                kind: finding.kind.to_string(),
+                severity: finding.severity.to_string(),
+                wad_name: wad.name.clone(),
+                path: finding.bin_path.clone(),
+                owner: String::new(),
+                ref_count: 0,
+                message: finding.message.clone(),
+                suggestions: Vec::new(),
+                recommended_action: if recommended_fix.is_some() { "content_fix" } else { "none" }
+                    .to_string(),
+                recommended_path: None,
+                auto_fixable: finding.auto_fixable && recommended_fix.is_some(),
+                recommended_fix,
+                detail: Some(finding.detail.clone()),
+                risk: Some(finding.risk.to_string()),
+            });
+            next_issue_id += 1;
+        }
+
+        // 2f. TEX textures whose dimensions aren't a multiple of 4 → the
+        // BCn block decode reads past the buffer, rendering noise or
+        // crashing. Header-only check (12 bytes), fix crops down to ×4.
+        for entry in &wad.entries {
+            if wad.removed.contains(&entry.path_hash) {
+                continue;
+            }
+            let display = wad.display_path(entry);
+            if !display.to_ascii_lowercase().ends_with(".tex") {
+                continue;
+            }
+            let Some(head) = wad.entry_head(entry, 12) else { continue };
+            let Some((w, h, nw, nh)) = modcheck::tex_dim_check(&head) else { continue };
+            if issues.len() >= MAX_ISSUES {
+                truncated = true;
+                break;
+            }
+            issues.push(ModIssue {
+                id: next_issue_id,
+                kind: "tex_bad_dimensions".to_string(),
+                severity: "warning".to_string(),
+                wad_name: wad.name.clone(),
+                path: display.clone(),
+                owner: String::new(),
+                ref_count: 0,
+                message: format!(
+                    "Texture is {}×{} — not a multiple of 4, so it renders as noise or can crash. Cropping to {}×{} fixes it.",
+                    w, h, nw, nh
+                ),
+                suggestions: Vec::new(),
+                recommended_action: "content_fix".to_string(),
+                recommended_path: None,
+                auto_fixable: true,
+                recommended_fix: Some(ModFix::FixTexDimensions {
+                    wad_name: wad.name.clone(),
+                    chunk_path: display.clone(),
+                }),
+                detail: Some(format!("crop {}×{} → {}×{}", w, h, nw, nh)),
+                risk: Some("low".to_string()),
             });
             next_issue_id += 1;
         }
@@ -1411,13 +1586,32 @@ pub async fn mod_scan(id: u64, league_final_path: String) -> Result<ModScanResul
 
 // ── Fixes ──────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ModFix {
     UpdateLinked { wad_name: String, old_path: String, new_path: String },
     UpdateStringRef { wad_name: String, old_path: String, new_path: String },
     RenameChunk { wad_name: String, chunk_path: String, new_path: String },
     RemoveChunk { wad_name: String, chunk_path: String },
+    /// Content fix (§3.2): re-key every material sampler string in one bin
+    /// by content, curing the untextured-white-model symptom. `bin_path`
+    /// is the bin's display path within the unit.
+    RekeySamplers { wad_name: String, bin_path: String },
+    /// Content fix (§3.4): drop one stale, unreferenced object (by its
+    /// path-hash) from a bin's entries map.
+    RemoveEntry { wad_name: String, bin_path: String, object_hash: u32 },
+    /// Content fix (§3.9): crop a TEX with non-block-aligned dimensions
+    /// down to the nearest ×4. `chunk_path` is the texture's display path.
+    FixTexDimensions { wad_name: String, chunk_path: String },
+}
+
+/// Per-fix outcome, in the same order the fixes were submitted, so the UI
+/// can mark exactly which issues applied and which failed (instead of the
+/// old all-or-nothing based on a flat error list).
+#[derive(Serialize)]
+pub struct FixOutcome {
+    pub ok: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1425,6 +1619,7 @@ pub struct ApplyFixesResult {
     pub applied: u32,
     pub bins_rewritten: u32,
     pub errors: Vec<String>,
+    pub results: Vec<FixOutcome>,
 }
 
 /// Rewrite `old → new` across every bin entry of the unit — both the
@@ -1484,6 +1679,69 @@ fn rewrite_path_in_wad(wad: &mut ModWadState, old_path: &str, new_path: &str) ->
     Ok(rewritten)
 }
 
+/// Load a single bin (by its display path within the unit), let `edit`
+/// mutate the parsed tree, and stash the rewritten bytes if it reported a
+/// change. Returns 1 if the bin was rewritten, 0 if `edit` changed
+/// nothing. Errors if the bin can't be found or parsed. Shared backend
+/// for the structural content fixes.
+fn edit_bin_tree(
+    wad: &mut ModWadState,
+    bin_path: &str,
+    edit: impl FnOnce(&mut crate::core::bin::JadeBin) -> bool,
+) -> Result<u32, String> {
+    let want = bin_path.to_ascii_lowercase();
+    let entry = wad
+        .entries
+        .iter()
+        .find(|e| wad.display_path(e).to_ascii_lowercase() == want)
+        .cloned()
+        .ok_or_else(|| format!("Bin {} not found in {}", bin_path, wad.name))?;
+    if wad.removed.contains(&entry.path_hash) {
+        return Ok(0);
+    }
+    let data = wad.current_entry_bytes(&entry)?;
+    let mut tree = read_bin_engine(&data).map_err(|e| e.to_string())?;
+    if !edit(&mut tree) {
+        return Ok(0);
+    }
+    let bytes = write_bin_engine(&tree).map_err(|e| e.to_string())?;
+    wad.replaced_data.insert(entry.path_hash, bytes);
+    Ok(1)
+}
+
+/// Content fix (§3.2): re-key the material samplers in one bin.
+fn rekey_samplers_in_bin(wad: &mut ModWadState, bin_path: &str) -> Result<u32, String> {
+    edit_bin_tree(wad, bin_path, |tree| modcheck::rekey_samplers(tree) > 0)
+}
+
+/// Content fix (§3.4): drop one stale unreferenced object from a bin.
+fn remove_entry_in_bin(wad: &mut ModWadState, bin_path: &str, object_hash: u32) -> Result<u32, String> {
+    edit_bin_tree(wad, bin_path, |tree| modcheck::remove_entry(tree, object_hash))
+}
+
+/// Content fix (§3.9): crop a TEX texture to block-aligned dimensions.
+/// Operates on raw file bytes (no bin tree). Returns 1 if rewritten.
+fn fix_tex_dims_in_entry(wad: &mut ModWadState, chunk_path: &str) -> Result<u32, String> {
+    let want = chunk_path.to_ascii_lowercase();
+    let entry = wad
+        .entries
+        .iter()
+        .find(|e| wad.display_path(e).to_ascii_lowercase() == want)
+        .cloned()
+        .ok_or_else(|| format!("Texture {} not found in {}", chunk_path, wad.name))?;
+    if wad.removed.contains(&entry.path_hash) {
+        return Ok(0);
+    }
+    let data = wad.current_entry_bytes(&entry)?;
+    match modcheck::fix_tex_dimensions(&data) {
+        Some(new) => {
+            wad.replaced_data.insert(entry.path_hash, new);
+            Ok(1)
+        }
+        None => Ok(0),
+    }
+}
+
 #[tauri::command]
 pub async fn mod_apply_fixes(id: u64, fixes: Vec<ModFix>) -> Result<ApplyFixesResult, String> {
     let mut guard = sessions().write();
@@ -1492,6 +1750,7 @@ pub async fn mod_apply_fixes(id: u64, fixes: Vec<ModFix>) -> Result<ApplyFixesRe
     let mut applied = 0u32;
     let mut bins_rewritten = 0u32;
     let mut errors: Vec<String> = Vec::new();
+    let mut results: Vec<FixOutcome> = Vec::with_capacity(fixes.len());
 
     for fix in fixes {
         let (wad_name, outcome): (String, Result<u32, String>) = match &fix {
@@ -1529,6 +1788,33 @@ pub async fn mod_apply_fixes(id: u64, fixes: Vec<ModFix>) -> Result<ApplyFixesRe
                     });
                 (wad_name.clone(), res)
             }
+            ModFix::RekeySamplers { wad_name, bin_path } => {
+                let res = session
+                    .wads
+                    .iter_mut()
+                    .find(|w| w.name == *wad_name)
+                    .ok_or_else(|| format!("WAD {} not in this mod", wad_name))
+                    .and_then(|w| rekey_samplers_in_bin(w, bin_path));
+                (wad_name.clone(), res)
+            }
+            ModFix::RemoveEntry { wad_name, bin_path, object_hash } => {
+                let res = session
+                    .wads
+                    .iter_mut()
+                    .find(|w| w.name == *wad_name)
+                    .ok_or_else(|| format!("WAD {} not in this mod", wad_name))
+                    .and_then(|w| remove_entry_in_bin(w, bin_path, *object_hash));
+                (wad_name.clone(), res)
+            }
+            ModFix::FixTexDimensions { wad_name, chunk_path } => {
+                let res = session
+                    .wads
+                    .iter_mut()
+                    .find(|w| w.name == *wad_name)
+                    .ok_or_else(|| format!("WAD {} not in this mod", wad_name))
+                    .and_then(|w| fix_tex_dims_in_entry(w, chunk_path));
+                (wad_name.clone(), res)
+            }
             ModFix::RemoveChunk { wad_name, chunk_path } => {
                 let res = session
                     .wads
@@ -1546,12 +1832,17 @@ pub async fn mod_apply_fixes(id: u64, fixes: Vec<ModFix>) -> Result<ApplyFixesRe
             Ok(n) => {
                 applied += 1;
                 bins_rewritten += n;
+                results.push(FixOutcome { ok: true, error: None });
             }
-            Err(e) => errors.push(format!("[{}] {}", wad_name, e)),
+            Err(e) => {
+                let msg = format!("[{}] {}", wad_name, e);
+                errors.push(msg.clone());
+                results.push(FixOutcome { ok: false, error: Some(msg) });
+            }
         }
     }
 
-    Ok(ApplyFixesResult { applied, bins_rewritten, errors })
+    Ok(ApplyFixesResult { applied, bins_rewritten, errors, results })
 }
 
 // ── Save ───────────────────────────────────────────────────────────────────

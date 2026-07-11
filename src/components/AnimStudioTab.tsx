@@ -76,7 +76,13 @@ export default function AnimStudioTab({ tabId }: AnimStudioTabProps) {
         scene.attachCanvas('source', sourceCanvas);
         scene.attachCanvas('target', targetCanvas);
         s.registerAnimStudioScene(tabId, scene);
-        const off = scene.onChange(() => setSceneTick(n => n + 1));
+        const off = scene.onChange(() => {
+            setSceneTick(n => n + 1);
+            // Mirror the scene's dirty state onto the tab so the tab-bar
+            // modified dot + save-before-close prompt work (same as Photo
+            // Studio's StudioTab).
+            s.notifyStudioDirty(tabId, scene.isDirty());
+        });
 
         return () => {
             off();
@@ -286,6 +292,7 @@ export default function AnimStudioTab({ tabId }: AnimStudioTabProps) {
         return () => window.removeEventListener('keydown', onKey);
     }, []);
 
+    const mode = scene?.getMode() ?? 'retarget';
     const sourceInfo = scene?.getSide('source') ?? { path: null, object: null };
     const targetInfo = scene?.getSide('target') ?? { path: null, object: null };
     const clipPath = scene?.getClipPath() ?? null;
@@ -328,7 +335,33 @@ export default function AnimStudioTab({ tabId }: AnimStudioTabProps) {
                 color: 'var(--text-primary, #d4d4d4)',
             }}
         >
-            {/* ── Dual viewports (the only persistent in-tab content) ─ */}
+            {/* ── Mode switch — Retarget (dual rig) vs Physics (single) ─ */}
+            <div className="anim-mode-bar">
+                <div className="anim-mode-seg" role="tablist" aria-label="Editor mode">
+                    <button
+                        role="tab"
+                        aria-selected={mode === 'retarget'}
+                        className={`anim-mode-seg-btn${mode === 'retarget' ? ' is-on' : ''}`}
+                        onClick={() => scene?.setMode('retarget')}
+                        title="Retarget a clip from a source rig onto a target rig (physics optional on top)"
+                    >Retarget</button>
+                    <button
+                        role="tab"
+                        aria-selected={mode === 'physics'}
+                        className={`anim-mode-seg-btn${mode === 'physics' ? ' is-on' : ''}`}
+                        onClick={() => scene?.setMode('physics')}
+                        title="Add physics to a single rig + clip — no retargeting"
+                    >Physics</button>
+                </div>
+                <span className="anim-mode-hint">
+                    {mode === 'retarget'
+                        ? 'Retarget: source rig → target rig'
+                        : 'Physics: bake cloth / hair / tail onto one rig'}
+                </span>
+            </div>
+
+            {/* ── Viewport(s). Retarget = source + target side by side;
+                    Physics = a single rig viewport. ────────────────── */}
             <div
                 ref={dropZoneRef}
                 style={{
@@ -338,22 +371,29 @@ export default function AnimStudioTab({ tabId }: AnimStudioTabProps) {
                     flexDirection: 'row',
                 }}
             >
+                {/* Both panes stay mounted in every mode so their Babylon
+                    canvas bindings survive a mode toggle — Physics mode
+                    just hides the divider + target pane via CSS. */}
                 <ViewportPane
                     canvasRef={sourceCanvasRef}
                     side="source"
                     path={sourceInfo.path}
                     isHover={hover === 'source'}
+                    label={mode === 'physics' ? 'Rig' : 'Source'}
+                    emptyHint={mode === 'physics' ? 'Drop a .skn here to load your rig' : 'Drop a .skn here as source'}
                 />
                 <div style={{
                     width: 1,
                     background: 'var(--border-color, #3e3e42)',
                     flex: '0 0 auto',
+                    display: mode === 'physics' ? 'none' : undefined,
                 }} />
                 <ViewportPane
                     canvasRef={targetCanvasRef}
                     side="target"
                     path={targetInfo.path}
                     isHover={hover === 'target'}
+                    hidden={mode === 'physics'}
                 />
             </div>
 
@@ -396,19 +436,21 @@ export default function AnimStudioTab({ tabId }: AnimStudioTabProps) {
                 >
                     <LoopIcon size={13} />
                 </button>
-                <button
-                    onClick={() => scene?.setCameraLink(!scene.getCameraLink())}
-                    title={cameraLink
-                        ? 'Camera link on — source/target viewports mirror each other (click to unlink)'
-                        : 'Camera link off — click to mirror cameras'}
-                    className={`studio-icon-btn anim-scrubber-loop${cameraLink ? '' : ' is-off'}`}
-                >
-                    <LinkIcon size={13} />
-                </button>
-                {/* A/B offset — only when a clip is loaded. The button
-                    resets to sync (offset = 0); the slider sets the
-                    target's lag/lead in seconds. */}
-                {hasClip && (
+                {mode === 'retarget' && (
+                    <button
+                        onClick={() => scene?.setCameraLink(!scene.getCameraLink())}
+                        title={cameraLink
+                            ? 'Camera link on — source/target viewports mirror each other (click to unlink)'
+                            : 'Camera link off — click to mirror cameras'}
+                        className={`studio-icon-btn anim-scrubber-loop${cameraLink ? '' : ' is-off'}`}
+                    >
+                        <LinkIcon size={13} />
+                    </button>
+                )}
+                {/* A/B offset — retarget mode only (it compares the target
+                    against the source). The button resets to sync
+                    (offset = 0); the slider sets the target's lag/lead. */}
+                {hasClip && mode === 'retarget' && (
                     <>
                         <button
                             onClick={() => scene?.setTargetOffset(0)}
@@ -455,19 +497,23 @@ export default function AnimStudioTab({ tabId }: AnimStudioTabProps) {
     );
 }
 
-function ViewportPane({ canvasRef, side, path, isHover }: {
+function ViewportPane({ canvasRef, side, path, isHover, label, emptyHint, hidden }: {
     canvasRef: React.MutableRefObject<HTMLCanvasElement | null>;
     side: AnimStudioSide;
     path: string | null;
     isHover: boolean;
+    label?: string;
+    emptyHint?: string;
+    hidden?: boolean;
 }) {
     return (
         <div
             style={{
                 position: 'relative',
-                flex: '1 1 0',
+                flex: hidden ? '0 0 0' : '1 1 0',
                 minWidth: 0,
                 minHeight: 0,
+                display: hidden ? 'none' : undefined,
             }}
         >
             <canvas
@@ -480,11 +526,11 @@ function ViewportPane({ canvasRef, side, path, isHover }: {
                 }}
             />
             <div style={sideBadgeStyle}>
-                {side === 'source' ? 'Source' : 'Target'}
+                {label ?? (side === 'source' ? 'Source' : 'Target')}
             </div>
             {!path && (
                 <div style={emptyHintStyle}>
-                    Drop a .skn here as {side}
+                    {emptyHint ?? `Drop a .skn here as ${side}`}
                 </div>
             )}
             {isHover && (

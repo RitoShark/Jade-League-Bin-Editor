@@ -10,6 +10,7 @@ import {
     Library as LibraryLucide,
     Gauge as PerformanceLucide,
     CloudDownload as UpdatesLucide,
+    ShieldCheck as ModCheckerLucide,
 } from 'lucide-react';
 import './SettingsDialog.css';
 
@@ -45,6 +46,7 @@ type NavSection =
     | 'behavior'
     | 'registration'
     | 'library'
+    | 'modchecker'
     | 'performance'
     | 'updates';
 
@@ -54,6 +56,7 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: React.ReactNode }[] = [
     { id: 'behavior',     label: 'App Behavior', icon: <BehaviorLucide size={16} />    },
     { id: 'registration', label: 'Registration', icon: <LinkLucide size={16} />        },
     { id: 'library',      label: 'Library',      icon: <LibraryLucide size={16} />     },
+    { id: 'modchecker',   label: 'Mod Checker',  icon: <ModCheckerLucide size={16} />  },
     { id: 'performance',  label: 'Performance',  icon: <PerformanceLucide size={16} /> },
     { id: 'updates',      label: 'Updates',      icon: <UpdatesLucide size={16} />     },
 ];
@@ -210,6 +213,23 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
     const [materialMatchMode, setMaterialMatchMode] = useState<number>(3);
     const [recentFilesLimit, setRecentFilesLimit] = useState<number>(10);
 
+    // ── Mod Checker: which content checks run + how fixes are offered.
+    // Stored as individual 'True'/'False' prefs; ManageTab reads the same
+    // keys and applies them, re-reading on the `modchecker-settings-changed`
+    // event so toggles take effect without reopening the tab.
+    const [mcSampler, setMcSampler] = useState(true);
+    const [mcUnreferenced, setMcUnreferenced] = useState(true);
+    const [mcGameplay, setMcGameplay] = useState(true);
+    const [mcTexDims, setMcTexDims] = useState(true);
+    const [mcAutoSelect, setMcAutoSelect] = useState(true);
+    const [mcShowRisky, setMcShowRisky] = useState(true);
+
+    /** Persist a mod-checker toggle and notify an open Manage tab live. */
+    const saveModCheck = async (key: string, value: boolean) => {
+        await savePref(key, value);
+        window.dispatchEvent(new CustomEvent('modchecker-settings-changed'));
+    };
+
     // ── Material Library state ──
     const [libStatus, setLibStatus] = useState<LibraryStatus | null>(null);
     const [libDownloaded, setLibDownloaded] = useState<DownloadedMaterialInfo[]>([]);
@@ -279,6 +299,14 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
             setAutoDownloadUpdates((await invoke<string>('get_preference', { key: 'AutoDownloadUpdates', defaultValue: 'False' })) === 'True');
             setSilentUpdate((await invoke<string>('get_preference', { key: 'SilentUpdate', defaultValue: 'False' })) === 'True');
             setConverterEngine(await invoke<string>('get_preference', { key: 'ConverterEngine', defaultValue: 'jade' }));
+            const mcGet = async (key: string) =>
+                (await invoke<string>('get_preference', { key, defaultValue: 'True' })) === 'True';
+            setMcSampler(await mcGet('ModCheckSampler'));
+            setMcUnreferenced(await mcGet('ModCheckUnreferenced'));
+            setMcGameplay(await mcGet('ModCheckGameplay'));
+            setMcTexDims(await mcGet('ModCheckTexDims'));
+            setMcAutoSelect(await mcGet('ModCheckAutoSelect'));
+            setMcShowRisky(await mcGet('ModCheckShowRisky'));
             setMaterialMatchMode(parseInt(await invoke<string>('get_preference', { key: 'MaterialMatchMode', defaultValue: '3' })) || 3);
             const rawLimit = parseInt(await invoke<string>('get_preference', { key: 'RecentFilesLimit', defaultValue: '10' }));
             setRecentFilesLimit(Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 10);
@@ -1169,12 +1197,66 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
         );
     };
 
+    const renderModChecker = () => (
+        <>
+            <h2 className="settings-section-title">Mod Checker</h2>
+            <p className="settings-section-subtitle">
+                Choose which content checks the Manage tab runs and how fixes are offered. Reference
+                checks (missing linked bins, dead overrides, broken paths) always run — these control
+                the extra content-validity checks on top.
+            </p>
+
+            <h3 className="settings-section-title" style={{ fontSize: 16 }}>Checks</h3>
+            <ToggleRow
+                label="Material samplers (white model)"
+                description="Flag materials whose sampler keys are scrambled so the model renders untextured white, and offer a one-click re-key."
+                checked={mcSampler}
+                onChange={v => { setMcSampler(v); saveModCheck('ModCheckSampler', v); }}
+            />
+            <ToggleRow
+                label="Stale entries"
+                description="Flag leftover ContextualAction / AnimationGraph / GearSkinUpgrade objects that nothing references, and offer to drop them."
+                checked={mcUnreferenced}
+                onChange={v => { setMcUnreferenced(v); saveModCheck('ModCheckUnreferenced', v); }}
+            />
+            <ToggleRow
+                label="Gameplay data bins"
+                description="Point out bins that change abilities, spells, stats or recommendations instead of visuals, so you can drop them if you only want the skin."
+                checked={mcGameplay}
+                onChange={v => { setMcGameplay(v); saveModCheck('ModCheckGameplay', v); }}
+            />
+            <ToggleRow
+                label="Texture dimensions"
+                description="Flag textures whose width or height isn't a multiple of 4 (they render as noise or crash) and offer to crop them to a safe size."
+                checked={mcTexDims}
+                onChange={v => { setMcTexDims(v); saveModCheck('ModCheckTexDims', v); }}
+            />
+
+            <div className="settings-divider" />
+
+            <h3 className="settings-section-title" style={{ fontSize: 16 }}>Behavior</h3>
+            <ToggleRow
+                label="Offer bulk 'confident fixes'"
+                description="Show the button that applies every high-confidence, low-risk fix at once. Turn off to review and apply each fix individually."
+                checked={mcAutoSelect}
+                onChange={v => { setMcAutoSelect(v); saveModCheck('ModCheckAutoSelect', v); }}
+            />
+            <ToggleRow
+                label="Show risky / experimental fixes"
+                description="Show medium- and high-risk findings (entry/bin removal and other opt-in changes). Turn off to see only the safe, low-risk fixes."
+                checked={mcShowRisky}
+                onChange={v => { setMcShowRisky(v); saveModCheck('ModCheckShowRisky', v); }}
+            />
+        </>
+    );
+
     const sectionContent: Record<NavSection, () => React.ReactElement> = {
         hashes: renderHashes,
         converter: renderConverter,
         behavior: renderBehavior,
         registration: renderRegistration,
         library: renderLibrary,
+        modchecker: renderModChecker,
         performance: renderPerformance,
         updates: renderUpdates,
     };

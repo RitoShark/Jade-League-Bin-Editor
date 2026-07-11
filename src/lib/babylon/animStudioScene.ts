@@ -35,11 +35,15 @@ import type { Camera } from '@babylonjs/core/Cameras/camera';
 import { Vector3, Color3, Color4 } from '@babylonjs/core/Maths/math';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { CreateGround } from '@babylonjs/core/Meshes/Builders/groundBuilder';
+import { CreateSphere } from '@babylonjs/core/Meshes/Builders/sphereBuilder';
+import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder';
+import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { GridMaterial } from '@babylonjs/materials/grid/gridMaterial';
 import type { Engine } from '@babylonjs/core/Engines/engine';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { Observer } from '@babylonjs/core/Misc/observable';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { Quaternion as BabylonQuaternion, Vector3 as BabylonVector3 } from '@babylonjs/core/Maths/math';
 import { UtilityLayerRenderer } from '@babylonjs/core/Rendering/utilityLayerRenderer';
 import { GizmoManager } from '@babylonjs/core/Gizmos/gizmoManager';
@@ -69,6 +73,13 @@ import {
 } from '../animation/retarget';
 import { retargetViaBabylon } from '../animation/babylonRetarget';
 import {
+    type MeshColliderBind,
+    type SkinnedCollider,
+    makeSkinnedCollider,
+    updateSkinnedCollider,
+    pushOutOfMesh,
+} from './meshCollisionSolver';
+import {
     autoMapBones,
     applyOverrides,
     buildMappingRows,
@@ -79,10 +90,34 @@ import {
 
 export type AnimStudioSide = 'source' | 'target';
 
+/** Editing mode for the studio.
+ *   - `retarget`: the classic two-viewport flow — retarget a clip from
+ *     the source rig onto the target rig (physics optional on top).
+ *   - `physics`: a single-viewport flow — load one rig + one clip and
+ *     bake physics onto it directly, no retargeting. The single rig
+ *     lives on the `source` side. */
+export type AnimStudioMode = 'retarget' | 'physics';
+
+/** Maya-style mesh-collision configuration. */
+export interface MeshCollisionConfig {
+    /** Collide physics chains against the rig's skinned mesh. */
+    enabled: boolean;
+    /** Collision shell radius (world units) — how far chain bones stay off
+     *  the mesh surface. Maya's "thickness". */
+    thickness: number;
+    /** Submesh names to EXCLUDE from the collider — always exclude the
+     *  dynamic mesh itself (the hair/cape) so it doesn't collide with its
+     *  own bind-pose surface. */
+    excludedMeshes: string[];
+}
+
 /** `.animstudio.json` schema. Versioned so future format changes
  *  can be back-compat'd via a switch on `version`. */
 export interface AnimStudioSceneData {
     version: 1;
+    /** Active editing mode. Optional for back-compat with scene files
+     *  written before the mode switch existed (default `retarget`). */
+    mode?: AnimStudioMode;
     sourceSknPath: string | null;
     targetSknPath: string | null;
     sourceClipPath: string | null;
@@ -105,6 +140,8 @@ export interface AnimStudioSceneData {
     /** Sphere colliders preventing chain particles from clipping
      *  through body bones. */
     physicsColliders?: PhysicsCollider[];
+    /** Maya-style mesh-collision config. Optional for back-compat. */
+    meshCollision?: MeshCollisionConfig;
 }
 
 const IGNORED_SERIALISED = -1;
@@ -313,49 +350,74 @@ const IDENTITY_QUAT_LOCAL: Quat = [0, 0, 0, 1];
 const ZERO_VEC_LOCAL: Vec3 = [0, 0, 0];
 
 /**
- * Bake a set of spring-driven physics chains into the target DTO.
+ * Bake a set of physics chains into the target DTO using a stable
+ * Verlet + Position-Based-Dynamics (PBD) solver.
  *
- * Each chain has an anchor bone (index 0) that stays animation-driven
- * and a sequence of "simulated" bones that lag behind under spring
- * + damping + gravity. Per simulated bone we maintain a world-space
- * particle (`pos`, `vel`) that is integrated frame-by-frame:
+ * The previous implementation used an explicit-Euler spring, which
+ * blows up whenever `stiffness·dt` exceeds ~2 (i.e. at any usable
+ * stiffness) and injects energy when damping is high — that was the
+ * jitter/flailing. PBD replaces the spring with *geometric position
+ * projection*, which is unconditionally stable at any parameter value:
  *
- *   target = anchor's animated world  +  parent rigid-bind offset
- *            rotated into the anchor's animated frame
- *   force  = spring·(target - pos) + gravity·down  - damping·vel
- *   vel   += force·dt
- *   pos   += vel·dt
+ *   Per substep (dt/SUBSTEPS):
+ *     1. Verlet integrate each free particle:
+ *          vel   = (pos - prevPos) · velRetain          (implicit damping)
+ *          prev  = pos
+ *          pos  += vel + gravity·dt²
+ *     2. Pin the anchor (bone 0) to its animated world position.
+ *     3. Iterate constraints (each is a pure position projection):
+ *          - stiffness: ease every bone toward its RIGID rest pose
+ *            (the shape it would have if rigidly parented to the
+ *            anchor, in the anchor's animated orientation). This is
+ *            both the "return to combed pose" spring and the follow-
+ *            the-body behaviour, with no stability cost.
+ *          - distance: clamp each segment to its bind length (soft
+ *            when `lockLength` is off, so it can stretch a little).
+ *          - collision: push particles out of sphere colliders.
  *
- * Optional length lock pulls each particle back to the rest length
- * from its parent's CURRENT pos (Position-Based Dynamics style),
- * preventing the chain from stretching.
+ * `inertia` lags the rest-pose orientation behind the true anchor so a
+ * fast body swing drags the tail. `damping` maps to velRetain (1 =
+ * bouncy free swing, 0 = dead). Gravity is scaled by mean segment
+ * length so the drape looks the same on any rig size (g/L invariant).
  *
- * Sphere colliders are resolved AFTER integration: any particle inside
- * a sphere is pushed back to the surface, with its velocity component
- * along the outward normal zeroed (slide-along-surface).
- *
- * Once the world-space positions are settled per frame we synthesise
- * each simulated bone's LOCAL TRS so the runtime player can apply
- * it the normal way:
- *   - Rotation: look-at from this bone's pos toward the next bone's
- *     pos (or, for the tip, extend along the bind direction). The
- *     bind-pose "down the bone" axis is recovered from the bone's
- *     own bind local translation direction so rigs with X-down,
- *     Y-down, or Z-down chains all work without per-rig knobs.
- *   - Translation: bind local translation (we don't move the bone
- *     along its parent — the rotation does all the work).
- *
- * Note: the simulation is sensitive to its starting state. We seed
- * with bind-pose at rest, then run a few warm-up frames at frame 0
- * before recording — without this, frame 0 starts in mid-fall.
+ * Once world positions settle per frame we synthesise each simulated
+ * bone's LOCAL TRS the same way as before (look-at toward the next
+ * bone; bind local translation), so playback + .anm export are
+ * unchanged. We seed at the rigid bind pose and warm up at frame 0 so
+ * recording starts from a settled hang, not mid-fall.
  */
 function applyPhysicsChains(
     dto: BakedAnimationDTO,
     joints: import('./skeletonBuilder').SklJointDTO[],
     chains: import('../animation/retarget').PhysicsChain[],
     colliders: import('../animation/retarget').PhysicsCollider[],
+    meshCol: SkinnedCollider | null = null,
 ): void {
     if (chains.length === 0) return;
+
+    // Bind-pose world rot/pos per joint — needed to skin the mesh collider
+    // each frame (M = animWorld · bindWorld⁻¹). Computed once.
+    let bindRotArr: Quat[] | null = null;
+    let bindPosArr: Vec3[] | null = null;
+    if (meshCol) {
+        bindRotArr = new Array(joints.length);
+        bindPosArr = new Array(joints.length);
+        for (let i = 0; i < joints.length; i++) {
+            const j = joints[i];
+            const lt = j.local_translation as Vec3;
+            const lr = j.local_rotation as Quat;
+            if (j.parent_id < 0 || j.parent_id >= i) {
+                bindPosArr[i] = [lt[0], lt[1], lt[2]];
+                bindRotArr[i] = [lr[0], lr[1], lr[2], lr[3]];
+            } else {
+                const pr = bindRotArr[j.parent_id];
+                const pp = bindPosArr[j.parent_id];
+                bindRotArr[i] = quatMul(pr, lr);
+                const r = quatRotateVec3(pr, lt);
+                bindPosArr[i] = [pp[0] + r[0], pp[1] + r[1], pp[2] + r[2]];
+            }
+        }
+    }
 
     const jointByHash = new Map<number, import('./skeletonBuilder').SklJointDTO>();
     const idxByHash = new Map<number, number>();
@@ -426,12 +488,14 @@ function applyPhysicsChains(
         boneIdxs: number[]; // joint indices
         restLen: number[];  // distance from previous bone in bind pose (index 0 unused)
         bindLocalT: Vec3[]; // per bone bind local translation
+        bindLocalRot: Quat[]; // per bone bind local rotation (for the rigid rest pose)
         bindLocalDir: Vec3[]; // unit direction of bind local T per bone (defines "down the bone")
         bindLocalLen: number[]; // length of bind local T (== restLen[i] for i>0 typically)
+        restDirAnchor: Vec3[]; // segment i's rest direction expressed in the anchor's frame
         meanSeg: number;     // average segment length — rig scale, for gravity scaling
         particlePos: Vec3[]; // current world pos per simulated bone
-        particleVel: Vec3[]; // current world velocity
-        lastAnchorPos: Vec3 | null;
+        particlePrev: Vec3[]; // previous world pos (Verlet — encodes velocity)
+        lagRot: Quat | null; // inertia-lagged anchor rotation for the rest pose
     }
     const sims: SimChain[] = [];
     for (const chain of chains) {
@@ -446,12 +510,15 @@ function applyPhysicsChains(
         if (!ok) continue;
         const restLen: number[] = new Array(boneIdxs.length);
         const bindLocalT: Vec3[] = new Array(boneIdxs.length);
+        const bindLocalRot: Quat[] = new Array(boneIdxs.length);
         const bindLocalDir: Vec3[] = new Array(boneIdxs.length);
         const bindLocalLen: number[] = new Array(boneIdxs.length);
         for (let i = 0; i < boneIdxs.length; i++) {
             const j = joints[boneIdxs[i]];
             const lt = j.local_translation as Vec3;
             bindLocalT[i] = [lt[0], lt[1], lt[2]];
+            const lr = j.local_rotation as Quat;
+            bindLocalRot[i] = [lr[0], lr[1], lr[2], lr[3]];
             const len = Math.hypot(lt[0], lt[1], lt[2]);
             bindLocalLen[i] = len;
             bindLocalDir[i] = len > 1e-6
@@ -462,24 +529,44 @@ function applyPhysicsChains(
         let segSum = 0, segN = 0;
         for (let i = 1; i < restLen.length; i++) if (restLen[i] > 1e-4) { segSum += restLen[i]; segN++; }
         const meanSeg = segN > 0 ? segSum / segN : 1;
+        // Rest direction of each segment, expressed in the ANCHOR's frame.
+        // Segment i runs bone(i-1)→bone(i); its bind direction lives in
+        // bone(i-1)'s local frame, so we transport it up to the anchor by
+        // the running product of bind local rotations. Used by the
+        // bending constraint to place each bone at its authored angle
+        // RELATIVE TO ITS PARENT (not rigidly off the anchor) so the whole
+        // chain can bend + droop, not just the first link.
+        const restDirAnchor: Vec3[] = new Array(boneIdxs.length);
+        restDirAnchor[0] = [0, 1, 0];
+        {
+            let R: Quat = [0, 0, 0, 1];
+            for (let i = 1; i < boneIdxs.length; i++) {
+                restDirAnchor[i] = quatRotateVec3(R, bindLocalDir[i]);
+                R = quatMul(R, bindLocalRot[i]);
+            }
+        }
         sims.push({
             chain,
             boneIdxs,
             restLen,
             bindLocalT,
+            bindLocalRot,
             bindLocalDir,
             bindLocalLen,
+            restDirAnchor,
             meanSeg,
             particlePos: new Array(boneIdxs.length),
-            particleVel: boneIdxs.map(() => [0, 0, 0]),
-            lastAnchorPos: null,
+            particlePrev: new Array(boneIdxs.length),
+            lagRot: null,
         });
     }
     if (sims.length === 0) return;
 
-    // Build colliders lookup (joint index + offset/radius).
+    // Build colliders lookup (joint index + offset/radius). `boneIdxB`
+    // is the capsule's second endpoint, or -1 for a plain sphere.
     interface SimCollider {
         boneIdx: number;
+        boneIdxB: number;
         offset: Vec3;
         radius: number;
     }
@@ -487,8 +574,10 @@ function applyPhysicsChains(
     for (const c of colliders) {
         const idx = idxByHash.get(c.boneHash);
         if (idx === undefined) continue;
+        const idxB = c.boneHashB !== undefined ? (idxByHash.get(c.boneHashB) ?? -1) : -1;
         simColliders.push({
             boneIdx: idx,
+            boneIdxB: idxB,
             offset: [c.offsetX, c.offsetY, c.offsetZ],
             radius: Math.max(0, c.radius),
         });
@@ -520,18 +609,31 @@ function applyPhysicsChains(
             const off = quatRotateVec3(parentRot, sim.bindLocalT[i]);
             sim.particlePos[i] = [parentPos[0] + off[0], parentPos[1] + off[1], parentPos[2] + off[2]];
         }
-        sim.lastAnchorPos = [...sim.particlePos[0]] as Vec3;
+        // Verlet seeds prev == pos → zero initial velocity. Rest-pose
+        // orientation starts locked to the anchor (no lag yet).
+        sim.particlePrev = sim.particlePos.map(p => [p[0], p[1], p[2]] as Vec3);
+        sim.lagRot = [...worldRot[sim.boneIdxs[0]]] as Quat;
+    }
+    // Skin the mesh collider to frame 0 so the warmup already collides
+    // against the body in its starting pose.
+    if (meshCol && bindRotArr && bindPosArr) {
+        updateSkinnedCollider(meshCol, worldRot, worldPos, bindRotArr, bindPosArr);
     }
     // Warmup at frame 0 so the chain settles into its hanging rest pose
     // before recording — with rig-scaled gravity it takes a few dozen
     // steps to fall from the bind pose into the natural droop.
     for (let warm = 0; warm < 40; warm++) {
-        stepSims(sims, simColliders, worldRot, worldPos, dt);
+        stepSims(sims, simColliders, worldRot, worldPos, dt, meshCol);
     }
 
     for (let frame = 0; frame < dto.frame_count; frame++) {
         composeWorld(frame, worldRot, worldPos);
-        stepSims(sims, simColliders, worldRot, worldPos, dt);
+        // Re-skin the mesh collider to this frame's animated pose before
+        // the chain steps against it.
+        if (meshCol && bindRotArr && bindPosArr) {
+            updateSkinnedCollider(meshCol, worldRot, worldPos, bindRotArr, bindPosArr);
+        }
+        stepSims(sims, simColliders, worldRot, worldPos, dt, meshCol);
 
         // Convert simulated world positions into local TRS against
         // each bone's actual SKL parent. The parent for chain bone
@@ -617,151 +719,272 @@ function applyPhysicsChains(
     for (const sim of sims) applyChainLoopBlend(dto, sim.chain);
 }
 
-/** One spring-damper integration step for every chain. Reads
- *  `worldRot`/`worldPos` for the anchor bones (already composed
- *  from this frame's animation), updates each chain particle's
- *  position + velocity, then resolves sphere collisions. */
+/** One Verlet + PBD integration step for every chain, internally
+ *  sub-stepped for stability. Reads `worldRot`/`worldPos` for the
+ *  anchor bones (already composed from this frame's animation), then
+ *  advances each chain particle by geometric position projection —
+ *  no explicit spring, so it is unconditionally stable at any
+ *  stiffness / damping / gravity. */
 function stepSims(
     sims: Array<{
         chain: import('../animation/retarget').PhysicsChain;
         boneIdxs: number[];
         restLen: number[];
         bindLocalT: Vec3[];
+        bindLocalRot: Quat[];
         bindLocalDir: Vec3[];
         bindLocalLen: number[];
+        restDirAnchor: Vec3[];
         meanSeg: number;
         particlePos: Vec3[];
-        particleVel: Vec3[];
-        lastAnchorPos: Vec3 | null;
+        particlePrev: Vec3[];
+        lagRot: Quat | null;
     }>,
-    simColliders: Array<{ boneIdx: number; offset: Vec3; radius: number }>,
+    simColliders: Array<{ boneIdx: number; boneIdxB: number; offset: Vec3; radius: number }>,
     worldRot: Quat[],
     worldPos: Vec3[],
     dt: number,
+    meshCol: SkinnedCollider | null = null,
 ): void {
+    // Scratch buffers for the capsule/sphere collision solve — reused
+    // across every particle so the inner loop stays allocation-free.
+    const coreP: Vec3 = [0, 0, 0];
+    const coreQ: Vec3 = [0, 0, 0];
+    const hitH: Vec3 = [0, 0, 0];
+    const hitC: Vec3 = [0, 0, 0];
+    // Split the frame into short substeps: PBD is stable regardless, but
+    // substepping keeps a fast anchor swing from overshooting and lets
+    // the constraints converge to a taut chain.
+    const SUBSTEPS = 6;
+    const ITERS = 6;
+    const dts = dt / SUBSTEPS;
+    const dts2 = dts * dts;
+    const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
+
     for (const sim of sims) {
+        const n = sim.boneIdxs.length;
+        if (n < 2) continue;
         const anchorIdx = sim.boneIdxs[0];
         const anchorPos = worldPos[anchorIdx];
         const anchorRot = worldRot[anchorIdx];
-        // Anchor particle = anchor's animated world. No physics on it.
-        sim.particlePos[0] = [anchorPos[0], anchorPos[1], anchorPos[2]];
-        // Anchor velocity (for inertia propagation) — derived from
-        // displacement since the last step.
-        const anchorVel: Vec3 = sim.lastAnchorPos
-            ? [
-                (anchorPos[0] - sim.lastAnchorPos[0]) / Math.max(dt, 1e-6),
-                (anchorPos[1] - sim.lastAnchorPos[1]) / Math.max(dt, 1e-6),
-                (anchorPos[2] - sim.lastAnchorPos[2]) / Math.max(dt, 1e-6),
-            ]
-            : [0, 0, 0];
-        sim.lastAnchorPos = [anchorPos[0], anchorPos[1], anchorPos[2]];
 
-        const stiffness = Math.max(0, Math.min(1, sim.chain.stiffness));
-        const damping = Math.max(0, Math.min(1, sim.chain.damping));
-        const inertia = Math.max(0, Math.min(1, sim.chain.inertia));
+        const stiff = clamp01(sim.chain.stiffness);
+        const damping = clamp01(sim.chain.damping);
+        const inertia = clamp01(sim.chain.inertia);
 
-        // Spring stiffness as a real acceleration constant (rad/s²-ish):
-        // stiffness 0 → floppy (k=30, droops & swings loose), 1 → rigid
-        // (k=150, follows the body tightly). Tuned via spike so droop +
-        // propagation both read right across the range.
-        const kSpring = 30 + stiffness * 120;
-        // Gravity scaled by segment length so it's scale-invariant and
-        // actually visible on large League rigs (the old raw `gravity`
-        // was imperceptible — the cape "floated"). GRAVITY_SCALE dialed
-        // in alongside kSpring.
-        const GRAVITY_SCALE = 2;
-        const gAccel = sim.chain.gravity * GRAVITY_SCALE * sim.meanSeg;
+        // Rest-pose orientation lags the true anchor by `inertia`, so a
+        // fast body turn/swing drags the chain instead of the rest pose
+        // snapping rigidly. Updated once per frame. inertia 0 → locked
+        // to the anchor, 1 → very laggy tail-drag.
+        if (!sim.lagRot) sim.lagRot = [anchorRot[0], anchorRot[1], anchorRot[2], anchorRot[3]];
+        else sim.lagRot = quatSlerp(sim.lagRot, anchorRot, 1 - inertia * 0.85);
+        const restRot = sim.lagRot;
 
-        // Follow-the-parent spring chain. Each bone springs toward its
-        // PARENT's *current* simulated position plus the rest segment
-        // (the bind offset rotated into the anchor's animated frame).
-        // Processing parent→child and reading the parent's freshly
-        // updated position (Gauss-Seidel) makes motion cascade: the
-        // anchor swings → bone 1 moves → bone 2's target moves → … so
-        // the whole cape swings instead of only the first link.
-        for (let i = 1; i < sim.boneIdxs.length; i++) {
-            const p = sim.particlePos[i];
-            const v = sim.particleVel[i];
-            const parentPos = sim.particlePos[i - 1]; // already updated this step
-            // Rest segment from parent to this bone, in the body's
-            // animated orientation so the cape's neutral hang tracks the
-            // character turning.
-            const seg = quatRotateVec3(anchorRot, sim.bindLocalT[i]);
-            const tx = parentPos[0] + seg[0];
-            const ty = parentPos[1] + seg[1];
-            const tz = parentPos[2] + seg[2];
-            // Spring acceleration toward the parent-relative target.
-            const aSx = (tx - p[0]) * kSpring;
-            const aSy = (ty - p[1]) * kSpring;
-            const aSz = (tz - p[2]) * kSpring;
-            // Inertia as a velocity blend toward the PARENT's velocity
-            // (anchor for bone 1), so a body swing actually drags the
-            // chain along instead of every bone getting a flat impulse.
-            const parentVel = i === 1 ? anchorVel : sim.particleVel[i - 1];
-            v[0] = v[0] * damping + aSx * dt + (parentVel[0] - v[0]) * inertia;
-            v[1] = v[1] * damping + (aSy - gAccel) * dt + (parentVel[1] - v[1]) * inertia;
-            v[2] = v[2] * damping + aSz * dt + (parentVel[2] - v[2]) * inertia;
-            p[0] += v[0] * dt;
-            p[1] += v[1] * dt;
-            p[2] += v[2] * dt;
+        // Per-substep bending stiffness: how hard each bone is eased
+        // toward its authored angle RELATIVE TO ITS PARENT. Squared so the
+        // low end stays genuinely floppy (gravity wins → the cape hangs +
+        // swings); the high end holds the combed shape. This is a LOCAL
+        // constraint, so unlike a global rigid-pose pull it lets the whole
+        // chain droop + bend instead of only the top link moving.
+        const kStiff = 0.02 + stiff * stiff * 0.5;
+        // Verlet velocity retention (damping). 1 = keep all momentum
+        // (bouncy free swing), 0 = dead-stop each step.
+        const velRetain = damping;
+        // Gravity along world -Y, scaled by rig size so the drape is
+        // scale-invariant (same g/L on any rig). GRAV_SCALE dialed for
+        // the default gravity slider.
+        const GRAV_SCALE = 3;
+        const gAccel = sim.chain.gravity * GRAV_SCALE * sim.meanSeg;
+        // Distance-constraint strength: hard when length is locked, soft
+        // (partial projection) otherwise so it may stretch a little.
+        const distK = sim.chain.lockLength ? 1 : 0.5;
+
+        // World rest direction of each segment — constant across substeps
+        // (restRot is per-frame). Reused by the bending force AND the swing
+        // limit below, so we build it once here.
+        const worldRestDir: Vec3[] = new Array(n);
+        for (let i = 1; i < n; i++) {
+            worldRestDir[i] = quatRotateVec3(restRot, sim.restDirAnchor[i]);
         }
+        // Swing limit: cap how far each bone may deviate from its combed rest
+        // direction, so fast attacks can't fling the hair through the body or
+        // fold it inside-out. `maxSwing` is the cone half-angle in degrees;
+        // 0 or ≥180 = off (unlimited).
+        const maxSwing = sim.chain.maxSwing ?? 0;
+        const swingLimited = maxSwing > 0 && maxSwing < 180;
+        const maxSwingCos = swingLimited ? Math.cos(maxSwing * Math.PI / 180) : -1;
+        const maxSwingSin = swingLimited ? Math.sqrt(Math.max(0, 1 - maxSwingCos * maxSwingCos)) : 0;
 
-        // Length lock: clamp each bone's distance from its predecessor
-        // to the rest length. PBD-style — moves the position only,
-        // leaving velocity for the next-frame damping to drain.
-        if (sim.chain.lockLength) {
-            for (let i = 1; i < sim.boneIdxs.length; i++) {
-                const parent = sim.particlePos[i - 1];
-                const self = sim.particlePos[i];
-                const dx = self[0] - parent[0];
-                const dy = self[1] - parent[1];
-                const dz = self[2] - parent[2];
-                const len = Math.hypot(dx, dy, dz);
-                const rest = sim.restLen[i];
-                if (len > 1e-6 && rest > 1e-6) {
-                    const scale = rest / len;
-                    self[0] = parent[0] + dx * scale;
-                    self[1] = parent[1] + dy * scale;
-                    self[2] = parent[2] + dz * scale;
+        const pos = sim.particlePos;
+        const prev = sim.particlePrev;
+
+        for (let s = 0; s < SUBSTEPS; s++) {
+            // 1. Verlet integrate the free particles (implicit velocity
+            //    from pos−prev, damped by velRetain, plus gravity).
+            for (let i = 1; i < n; i++) {
+                const p = pos[i], pr = prev[i];
+                const vx = (p[0] - pr[0]) * velRetain;
+                const vy = (p[1] - pr[1]) * velRetain;
+                const vz = (p[2] - pr[2]) * velRetain;
+                pr[0] = p[0]; pr[1] = p[1]; pr[2] = p[2];
+                p[0] = p[0] + vx;
+                p[1] = p[1] + vy - gAccel * dts2;
+                p[2] = p[2] + vz;
+            }
+            // 2. Pin the anchor to its animated world position.
+            pos[0] = [anchorPos[0], anchorPos[1], anchorPos[2]];
+
+            // 3. Bending (once per substep — inside the iteration loop it
+            //    would compound and over-lock). This is the shape-restoring
+            //    force, and the fix for "only the top flaps": each bone is
+            //    eased toward its authored REST DIRECTION relative to its
+            //    ACTUAL parent segment — NOT a rigid pose bolted to the
+            //    anchor. So when the chain swings, every segment's rest
+            //    target rotates with its parent, and the bend cascades all
+            //    the way down. Gravity is free to droop the whole chain
+            //    because the constraint only fixes relative angle, not
+            //    absolute position.
+            {
+                // Bone 1: eased toward the anchor's rest direction (this is
+                // the one link whose "parent" is the animated body). Its
+                // droop is the tug-of-war between kStiff (toward rest dir)
+                // and gravity — low stiffness → it hangs straight down.
+                const wrd1 = worldRestDir[1];
+                const rl1 = sim.restLen[1];
+                pos[1][0] += (pos[0][0] + wrd1[0] * rl1 - pos[1][0]) * kStiff;
+                pos[1][1] += (pos[0][1] + wrd1[1] * rl1 - pos[1][1]) * kStiff;
+                pos[1][2] += (pos[0][2] + wrd1[2] * rl1 - pos[1][2]) * kStiff;
+                // Bones 2..n: target = parent pos + (rest child direction,
+                // transported by however far the parent segment has rotated
+                // from ITS rest). Gauss-Seidel ascending so the corrected
+                // parent feeds the child in the same pass.
+                for (let i = 2; i < n; i++) {
+                    const ax = pos[i - 1][0] - pos[i - 2][0];
+                    const ay = pos[i - 1][1] - pos[i - 2][1];
+                    const az = pos[i - 1][2] - pos[i - 2][2];
+                    const alen = Math.hypot(ax, ay, az);
+                    if (alen < 1e-6) continue;
+                    const actualDir: Vec3 = [ax / alen, ay / alen, az / alen];
+                    const restParent = worldRestDir[i - 1];
+                    const restChild = worldRestDir[i];
+                    // Rotate the rest child direction by the same rotation
+                    // that carries the rest parent dir onto the actual one.
+                    const align = quatFromTo(restParent, actualDir);
+                    const tgtDir = quatRotateVec3(align, restChild);
+                    const rl = sim.restLen[i];
+                    const p = pos[i];
+                    p[0] += (pos[i - 1][0] + tgtDir[0] * rl - p[0]) * kStiff;
+                    p[1] += (pos[i - 1][1] + tgtDir[1] * rl - p[1]) * kStiff;
+                    p[2] += (pos[i - 1][2] + tgtDir[2] * rl - p[2]) * kStiff;
                 }
             }
-        }
 
-        // Collision: push particles out of sphere colliders. Slide
-        // along surface (zero out the velocity component along the
-        // outward normal).
-        for (let i = 1; i < sim.boneIdxs.length; i++) {
-            const p = sim.particlePos[i];
-            const v = sim.particleVel[i];
-            for (const c of simColliders) {
-                if (c.radius <= 0) continue;
-                // Sphere world centre = bone world pos + boneWorldRot · offset.
-                const boneRot = worldRot[c.boneIdx];
-                const bonePos = worldPos[c.boneIdx];
-                const o = quatRotateVec3(boneRot, c.offset);
-                const cx = bonePos[0] + o[0];
-                const cy = bonePos[1] + o[1];
-                const cz = bonePos[2] + o[2];
-                const dx = p[0] - cx;
-                const dy = p[1] - cy;
-                const dz = p[2] - cz;
-                const d2 = dx * dx + dy * dy + dz * dz;
-                const r = c.radius;
-                if (d2 < r * r && d2 > 1e-10) {
-                    const d = Math.sqrt(d2);
-                    const nx = dx / d, ny = dy / d, nz = dz / d;
-                    // Push to surface.
-                    p[0] = cx + nx * r;
-                    p[1] = cy + ny * r;
-                    p[2] = cz + nz * r;
-                    // Cancel inward velocity (slide-along).
-                    const vn = v[0] * nx + v[1] * ny + v[2] * nz;
-                    if (vn < 0) {
-                        v[0] -= vn * nx;
-                        v[1] -= vn * ny;
-                        v[2] -= vn * nz;
+            // 4. Constraint iterations — pure position projections that
+            //    keep segment lengths and resolve collisions.
+            for (let iter = 0; iter < ITERS; iter++) {
+                // 4a. Distance: clamp each segment toward its bind length.
+                //     Move only the child (the parent is nearer the
+                //     pinned anchor, so treat it as the heavier end).
+                for (let i = 1; i < n; i++) {
+                    const a = pos[i - 1], b = pos[i];
+                    const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+                    const len = Math.hypot(dx, dy, dz);
+                    const rest = sim.restLen[i];
+                    if (len > 1e-6 && rest > 1e-6) {
+                        const diff = ((len - rest) / len) * distK;
+                        b[0] -= dx * diff;
+                        b[1] -= dy * diff;
+                        b[2] -= dz * diff;
                     }
                 }
+                // 4b. Collision: push particles out of sphere / capsule
+                //     colliders. We test the whole hair SEGMENT (parent→bone)
+                //     against the collider's CORE (a point for a sphere, a
+                //     bone-to-bone segment for a capsule) via closest-segment
+                //     distance — so a fast swing whose endpoints straddle the
+                //     limb still gets caught instead of slipping through, and
+                //     capsules wrap a whole limb with no gaps. Verlet turns
+                //     the position change into a velocity change for free.
+                for (let i = 1; i < n; i++) {
+                    const a = pos[i - 1], b = pos[i];
+                    for (const c of simColliders) {
+                        if (c.radius <= 0) continue;
+                        const boneRot = worldRot[c.boneIdx];
+                        const bonePos = worldPos[c.boneIdx];
+                        const o = quatRotateVec3(boneRot, c.offset);
+                        coreP[0] = bonePos[0] + o[0];
+                        coreP[1] = bonePos[1] + o[1];
+                        coreP[2] = bonePos[2] + o[2];
+                        if (c.boneIdxB >= 0) {
+                            const bq = worldPos[c.boneIdxB];
+                            coreQ[0] = bq[0]; coreQ[1] = bq[1]; coreQ[2] = bq[2];
+                        } else {
+                            coreQ[0] = coreP[0]; coreQ[1] = coreP[1]; coreQ[2] = coreP[2];
+                        }
+                        // Closest points between the hair segment and the core.
+                        closestSegSeg(a, b, coreP, coreQ, hitH, hitC);
+                        let nx = hitH[0] - hitC[0], ny = hitH[1] - hitC[1], nz = hitH[2] - hitC[2];
+                        const d2 = nx * nx + ny * ny + nz * nz;
+                        const r = c.radius;
+                        if (d2 < r * r) {
+                            let d = Math.sqrt(d2);
+                            if (d < 1e-6) {
+                                // Hair runs through the core — push out along
+                                // the bone→particle direction instead.
+                                nx = b[0] - hitC[0]; ny = b[1] - hitC[1]; nz = b[2] - hitC[2];
+                                d = Math.hypot(nx, ny, nz);
+                                if (d < 1e-6) { nx = 0; ny = 1; nz = 0; d = 1; }
+                            }
+                            const pen = r - d;
+                            b[0] += (nx / d) * pen;
+                            b[1] += (ny / d) * pen;
+                            b[2] += (nz / d) * pen;
+                        }
+                    }
+                }
+                // 4c. Swing limit: clamp each segment's direction to within
+                //     `maxSwing` of its combed rest direction. This is the
+                //     hard stop that keeps hair from folding through the body
+                //     or turning inside-out on a fast attack. Runs after
+                //     collision so it also reels back anything a collider
+                //     shoved too far.
+                if (swingLimited) {
+                    for (let i = 1; i < n; i++) {
+                        const rd = worldRestDir[i];
+                        const a = pos[i - 1], b = pos[i];
+                        const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+                        const len = Math.hypot(dx, dy, dz);
+                        if (len < 1e-6) continue;
+                        const ux = dx / len, uy = dy / len, uz = dz / len;
+                        const cosA = ux * rd[0] + uy * rd[1] + uz * rd[2];
+                        if (cosA >= maxSwingCos) continue; // within the cone
+                        // Perpendicular component of the actual direction
+                        // relative to the rest axis, used to rebuild the
+                        // direction exactly on the cone boundary.
+                        let px = ux - rd[0] * cosA, py = uy - rd[1] * cosA, pz = uz - rd[2] * cosA;
+                        const plen = Math.hypot(px, py, pz);
+                        let cxi: number, cyi: number, czi: number;
+                        if (plen < 1e-6) {
+                            // Antiparallel to rest — collapse straight to rest.
+                            cxi = rd[0]; cyi = rd[1]; czi = rd[2];
+                        } else {
+                            px /= plen; py /= plen; pz /= plen;
+                            cxi = rd[0] * maxSwingCos + px * maxSwingSin;
+                            cyi = rd[1] * maxSwingCos + py * maxSwingSin;
+                            czi = rd[2] * maxSwingCos + pz * maxSwingSin;
+                        }
+                        b[0] = a[0] + cxi * len;
+                        b[1] = a[1] + cyi * len;
+                        b[2] = a[2] + czi * len;
+                    }
+                }
+            }
+            // 5. Mesh collision (Maya-style): push every particle out of the
+            //    skinned collision mesh's thickness shell. Done once per
+            //    substep (it's the costly one); Verlet carries the correction
+            //    and the next substep re-enforces distance + swing.
+            if (meshCol) {
+                for (let i = 1; i < n; i++) pushOutOfMesh(meshCol, pos[i]);
             }
         }
     }
@@ -1025,10 +1248,10 @@ function applyPhysicsChainsHavok(
             plugin.setActivationControl(d.body, PhysicsActivationControl.ALWAYS_ACTIVE);
             // Gravity is scaled by segment length so it's scale-invariant
             // across rigs (keeps g/L constant → same drape on any rig
-            // size). The 5× calibration was dialed in via spike: below
-            // it the chain settles too slowly within the clip and still
-            // looks floaty; above it barely changes (it's already hung).
-            const GRAVITY_CALIBRATION = 5;
+            // size). Kept in step with the simple solver's GRAV_SCALE (3)
+            // so the two solvers drape similarly at the same gravity knob
+            // — the old 5× over-drove the chain and read as "flailing".
+            const GRAVITY_CALIBRATION = 3;
             d.body.setGravityFactor(chain.gravity * meanSeg * GRAVITY_CALIBRATION);
             dynBodies.push(d.body);
             dynNodes.push(d.node);
@@ -1246,6 +1469,48 @@ function applyPhysicsChainsHavok(
     plugin.dispose();
     engine.dispose();
     EngineStore._LastCreatedScene = prevLastScene;
+}
+
+/** Closest points between two segments [p1,q1] and [p2,q2]. Writes the
+ *  closest point on segment 1 into `c1` and on segment 2 into `c2`.
+ *  Standard clamped solver (Ericson, Real-Time Collision Detection);
+ *  degenerates gracefully when either segment has zero length (so a
+ *  sphere collider = a capsule with p2==q2 falls out of the same path).
+ *  Takes pre-allocated out arrays to stay allocation-free in the inner
+ *  physics loop. */
+function closestSegSeg(
+    p1: Vec3, q1: Vec3, p2: Vec3, q2: Vec3, c1: Vec3, c2: Vec3,
+): void {
+    const d1x = q1[0] - p1[0], d1y = q1[1] - p1[1], d1z = q1[2] - p1[2];
+    const d2x = q2[0] - p2[0], d2y = q2[1] - p2[1], d2z = q2[2] - p2[2];
+    const rx = p1[0] - p2[0], ry = p1[1] - p2[1], rz = p1[2] - p2[2];
+    const a = d1x * d1x + d1y * d1y + d1z * d1z; // |seg1|²
+    const e = d2x * d2x + d2y * d2y + d2z * d2z; // |seg2|²
+    const f = d2x * rx + d2y * ry + d2z * rz;
+    const EPS = 1e-9;
+    let s: number, t: number;
+    if (a <= EPS && e <= EPS) {
+        s = 0; t = 0;
+    } else if (a <= EPS) {
+        s = 0; t = f / e;
+    } else {
+        const c = d1x * rx + d1y * ry + d1z * rz;
+        if (e <= EPS) {
+            t = 0; s = -c / a;
+        } else {
+            const b = d1x * d2x + d1y * d2y + d1z * d2z;
+            const denom = a * e - b * b;
+            s = denom > EPS ? (b * f - c * e) / denom : 0;
+            s = s < 0 ? 0 : s > 1 ? 1 : s;
+            t = (b * s + f) / e;
+            if (t < 0) { t = 0; s = -c / a; }
+            else if (t > 1) { t = 1; s = (b - c) / a; }
+        }
+    }
+    s = s < 0 ? 0 : s > 1 ? 1 : s;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    c1[0] = p1[0] + d1x * s; c1[1] = p1[1] + d1y * s; c1[2] = p1[2] + d1z * s;
+    c2[0] = p2[0] + d2x * t; c2[1] = p2[1] + d2y * t; c2[2] = p2[2] + d2z * t;
 }
 
 /** Quaternion that rotates unit vector `from` onto unit vector `to`.
@@ -1633,6 +1898,44 @@ export interface AnimStudioScene {
     setPhysicsCollider: (collider: PhysicsCollider) => void;
     /** Remove a collider by id. */
     removePhysicsCollider: (id: string) => void;
+    /** Auto-fit body colliders (capsules per bone) from the physics rig's
+     *  skinned mesh — Unreal-Physics-Asset style. Returns how many were
+     *  added (dedupes against existing, skips physics-chain bones). */
+    generateCollidersFromMesh: () => number;
+    /** Maya-style mesh-collision config (collide chains against the skinned
+     *  mesh with a thickness shell). */
+    getMeshCollision: () => MeshCollisionConfig;
+    setMeshCollision: (patch: Partial<MeshCollisionConfig>) => void;
+    /** Submesh names on the physics rig (for the mesh-collision exclusion
+     *  list — exclude the hair/cape mesh so it doesn't self-collide). */
+    getPhysicsMeshNames: () => string[];
+    /** Whether the translucent collider-preview spheres are drawn in the
+     *  physics-rig viewport. */
+    getShowColliders: () => boolean;
+    /** Toggle the collider-preview spheres. They ride the animated bones
+     *  so you can size-check them against the mesh during playback. */
+    setShowColliders: (show: boolean) => void;
+
+    // ── Editing mode (retarget vs standalone physics) ─────────────
+
+    /** Current editing mode. */
+    getMode: () => AnimStudioMode;
+    /** Switch editing mode. Recomputes the relevant DTO(s), reattaches
+     *  the players and emits. In Physics mode only the source viewport
+     *  is meaningful (single rig + clip). */
+    setMode: (mode: AnimStudioMode) => void;
+    /** The rig that physics chains attach to for the active mode:
+     *  the target rig in Retarget mode, the single source rig in
+     *  Physics mode. */
+    getPhysicsRigSide: () => AnimStudioSide;
+    /** Sorted (hash, name) joints of the physics rig — the list the
+     *  physics panel populates its bone pickers from. Empty when the
+     *  relevant rig isn't loaded. */
+    getPhysicsJoints: () => Array<{ hash: number; name: string }>;
+    /** Batch helper for Physics mode: load a clip from disk, bake the
+     *  current physics chains onto the single (source) rig and return
+     *  the DTO — without disturbing the live preview. */
+    bakePhysicsClipForExport: (anmPath: string) => Promise<BakedAnimationDTO | null>;
 
     // ── Phase 6: bake-and-write ───────────────────────────────────
 
@@ -1926,6 +2229,12 @@ export function createAnimStudioScene(): AnimStudioScene {
      *  rebuild. Doing that on scrub or play would melt the main
      *  thread. We only rebuild on the three trigger events. */
     let targetClipDto: BakedAnimationDTO | null = null;
+    /** In Physics mode, the source clip with physics chains baked onto
+     *  the single (source) rig. The source player renders THIS in
+     *  Physics mode instead of the raw clip. Null in Retarget mode. */
+    let physicsClipDto: BakedAnimationDTO | null = null;
+    /** Active editing mode. See {@link AnimStudioMode}. */
+    let mode: AnimStudioMode = 'retarget';
     let retargetOptions: RetargetOptions = { ...DEFAULT_RETARGET_OPTIONS };
 
     // ── Bone mapping ──────────────────────────────────────────────
@@ -1947,8 +2256,16 @@ export function createAnimStudioScene(): AnimStudioScene {
     const guidesByTargetHash = new Map<number, BoneGuide>();
     /** Physics chains by id. Insertion-ordered. */
     const physicsChains = new Map<string, PhysicsChain>();
-    /** Sphere colliders by id. */
+    /** Sphere / capsule colliders by id. */
     const physicsColliders = new Map<string, PhysicsCollider>();
+    /** Maya-style mesh collision config. When enabled, chains collide against
+     *  the physics rig's skinned mesh (minus excluded submeshes) with a
+     *  thickness shell, in addition to the sphere/capsule colliders. */
+    let meshCollision: MeshCollisionConfig = { enabled: false, thickness: 1, excludedMeshes: [] };
+    /** Cache the (expensive-to-read) collider bind data so a slider drag
+     *  doesn't re-read every vertex buffer — keyed by the rig object + the
+     *  excluded-submesh set; thickness is patched in cheaply. */
+    let meshColBindCache: { obj: StudioObject; key: string; bind: MeshColliderBind } | null = null;
 
     // ── Gizmo edit state ─────────────────────────────────────────
     // Per-tab single-edit: at most one guide is being gizmo-edited
@@ -2093,6 +2410,33 @@ export function createAnimStudioScene(): AnimStudioScene {
             }
         }
 
+        // Lock bone lengths: force every non-root bone's translation +
+        // scale back to the TARGET rig's bind values, keeping only the
+        // retargeted rotation. Babylon passes the source clip's
+        // translation/scale through, so a skin-to-skin retarget otherwise
+        // drags each bone to the SOURCE skin's proportions and the mesh
+        // shears (the "squished / stretched shoulders" report). Locking to
+        // target bind keeps every bone at its own rig's proportions. Root
+        // is skipped so locomotion survives. Runs before guides / physics
+        // so those still take precedence on the bones they touch.
+        if (retargetOptions.lockBoneLengths) {
+            const rootName = (retargetOptions.rootNodeName || 'Root').toLowerCase();
+            const bindByHash = new Map<number, import('./skeletonBuilder').SklJointDTO>();
+            for (const j of targetObj.skn.joints) bindByHash.set(j.name_hash, j);
+            for (const t of dto.tracks) {
+                const name = targetNameByHash.get(t.joint_hash);
+                if (name && name.toLowerCase() === rootName) continue; // keep root locomotion
+                const bind = bindByHash.get(t.joint_hash);
+                if (!bind) continue;
+                const bt = bind.local_translation as [number, number, number];
+                const bs = bind.local_scale as [number, number, number];
+                for (const f of t.frames) {
+                    f.translation = [bt[0], bt[1], bt[2]];
+                    f.scale = [bs[0], bs[1], bs[2]];
+                }
+            }
+        }
+
         // Apply user-set per-bone guides on top of Babylon's
         // retargeted output. Each guide strips its target bone's
         // animation and pins it to a "follow" bone with an XYZ
@@ -2146,13 +2490,49 @@ export function createAnimStudioScene(): AnimStudioScene {
                 ? all.filter(c => c.solver !== 'havok')
                 : all; // no instance yet → bake everything simple
             if (simpleChains.length > 0) {
-                applyPhysicsChains(dto, targetObj.skn.joints, simpleChains, allColliders);
+                applyPhysicsChains(dto, targetObj.skn.joints, simpleChains, allColliders, buildMeshCollider());
             }
             if (havokInstance && havokChains.length > 0) {
                 applyPhysicsChainsHavok(dto, targetObj.skn.joints, havokChains, allColliders, havokInstance);
             }
         }
 
+        return dto;
+    };
+
+    /** Physics-mode recompute: bake the current physics chains directly
+     *  onto the single (source) rig, with NO retargeting. Clones the
+     *  source clip so the raw DTO is never mutated. `sourceOverride`
+     *  lets the batch exporter bake an arbitrary disk clip without
+     *  disturbing the live preview. Mirrors the physics tail of
+     *  `recomputeTargetDto`, just against the source rig. */
+    const recomputePhysicsDto = (
+        havokInstance?: HavokInstance | null,
+        sourceOverride?: BakedAnimationDTO | null,
+        skipPhysics?: boolean,
+    ): BakedAnimationDTO | null => {
+        const srcDto = sourceOverride ?? sourceClipDto;
+        if (!srcDto) return null;
+        const rigObj = sides.source?.object ?? null;
+        if (!rigObj?.skn) return null;
+        // Deep clone — applyPhysicsChains mutates track frames in place
+        // and appends stub tracks; the source clip must stay pristine so
+        // the raw-vs-physics comparison and re-bakes stay correct.
+        const dto = structuredClone(srcDto) as BakedAnimationDTO;
+        if (physicsChains.size > 0 && !skipPhysics) {
+            const allColliders = Array.from(physicsColliders.values());
+            const all = Array.from(physicsChains.values());
+            const havokChains = all.filter(c => c.solver === 'havok');
+            const simpleChains = havokInstance
+                ? all.filter(c => c.solver !== 'havok')
+                : all; // no instance yet → bake everything simple
+            if (simpleChains.length > 0) {
+                applyPhysicsChains(dto, rigObj.skn.joints, simpleChains, allColliders, buildMeshCollider());
+            }
+            if (havokInstance && havokChains.length > 0) {
+                applyPhysicsChainsHavok(dto, rigObj.skn.joints, havokChains, allColliders, havokInstance);
+            }
+        }
         return dto;
     };
     /** Real-time wall clock at the previous tick. The shared advance
@@ -2336,9 +2716,14 @@ export function createAnimStudioScene(): AnimStudioScene {
     const attachPlayer = (vp: ViewportState, side: AnimStudioSide) => {
         detachPlayer(vp);
         if (!sourceClipDto || !vp.object || !vp.object.skn) return;
-        const dto = side === 'target'
-            ? (targetClipDto ?? sourceClipDto)
-            : sourceClipDto;
+        // Physics mode: the single (source) viewport renders the
+        // physics-baked clip. Retarget mode: source plays the raw clip,
+        // target plays the retargeted DTO.
+        const dto = mode === 'physics'
+            ? (physicsClipDto ?? sourceClipDto)
+            : side === 'target'
+                ? (targetClipDto ?? sourceClipDto)
+                : sourceClipDto;
         const player = new AnimationPlayer(
             dto,
             vp.object.skn.boneIndexByHash,
@@ -2487,11 +2872,13 @@ export function createAnimStudioScene(): AnimStudioScene {
         clock.frameCount = baked.frame_count;
         clock.time = 0;
         clock.playing = true; // auto-play on load — matches Photo Studio's behavior
-        // New clip → recompute target DTO from scratch, then build
-        // both players. Source plays the raw clip; target plays the
-        // retargeted version. (Auto-mapping is keyed off the rigs,
-        // not the clip — it's already current.)
+        // New clip → recompute the DTO the active mode renders, then
+        // build the players. Retarget mode: source plays the raw clip,
+        // target plays the retargeted version. Physics mode: source
+        // plays the physics-baked clip. (Auto-mapping is keyed off the
+        // rigs, not the clip — it's already current.)
         targetClipDto = recomputeTargetDto();
+        physicsClipDto = mode === 'physics' ? recomputePhysicsDto(null) : null;
         if (sides.source) attachPlayer(sides.source, 'source');
         if (sides.target) attachPlayer(sides.target, 'target');
         scheduleHavokOverlay();
@@ -2620,10 +3007,17 @@ export function createAnimStudioScene(): AnimStudioScene {
         const gen = ++havokBakeGen;
         loadFreshHavok().then((havok) => {
             if (gen !== havokBakeGen) return; // superseded by a newer bake
-            if (!sourceClipDto || !sides.target) return;
+            if (!sourceClipDto) return;
             try {
-                targetClipDto = recomputeTargetDto(havok);
-                attachPlayer(sides.target, 'target');
+                if (mode === 'physics') {
+                    if (!sides.source) return;
+                    physicsClipDto = recomputePhysicsDto(havok);
+                    attachPlayer(sides.source, 'source');
+                } else {
+                    if (!sides.target) return;
+                    targetClipDto = recomputeTargetDto(havok);
+                    attachPlayer(sides.target, 'target');
+                }
                 emit();
             } catch (err) {
                 console.error('[havok] bake failed — keeping simple solver result:', err);
@@ -2643,6 +3037,25 @@ export function createAnimStudioScene(): AnimStudioScene {
             scheduleHavokOverlay();
         }
         emit();
+    };
+
+    /** Physics-mode counterpart of `rebakeTarget`: re-bake physics onto
+     *  the single (source) rig and re-render the source viewport. */
+    const rebakePhysics = () => {
+        if (sourceClipDto && sides.source) {
+            physicsClipDto = recomputePhysicsDto(null);
+            attachPlayer(sides.source, 'source');
+            scheduleHavokOverlay();
+        }
+        emit();
+    };
+
+    /** Re-bake whichever DTO the active mode renders. Physics chain /
+     *  collider edits route through here so they take effect in both
+     *  modes. */
+    const rebake = () => {
+        if (mode === 'physics') rebakePhysics();
+        else rebakeTarget();
     };
 
     const setGuide = (guide: BoneGuide) => {
@@ -2674,6 +3087,49 @@ export function createAnimStudioScene(): AnimStudioScene {
         commitUndoStep();
     };
 
+    // ── Editing mode ──────────────────────────────────────────────
+    const getMode = (): AnimStudioMode => mode;
+    const getPhysicsRigSide = (): AnimStudioSide => (mode === 'physics' ? 'source' : 'target');
+    const getPhysicsJoints = (): Array<{ hash: number; name: string }> => {
+        const obj = sides[getPhysicsRigSide()]?.object ?? null;
+        if (!obj?.skn) return [];
+        return obj.skn.joints
+            .map(j => ({ hash: j.name_hash, name: j.name }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    };
+    const setMode = (next: AnimStudioMode) => {
+        if (next === mode) return;
+        mode = next;
+        // Recompute + reattach the players for the new mode. Both DTOs
+        // are refreshed defensively so switching back and forth never
+        // leaves a stale preview.
+        if (sourceClipDto) {
+            targetClipDto = sides.target ? recomputeTargetDto(null) : null;
+            physicsClipDto = mode === 'physics' ? recomputePhysicsDto(null) : null;
+            if (sides.source) attachPlayer(sides.source, 'source');
+            if (sides.target) attachPlayer(sides.target, 'target');
+            scheduleHavokOverlay();
+        }
+        // Physics moved to the other viewport — re-point the collider
+        // overlay if it's showing.
+        rebindColliderVis();
+        emit();
+        commitUndoStep();
+    };
+
+    const bakePhysicsClipForExport = async (
+        anmPath: string,
+    ): Promise<BakedAnimationDTO | null> => {
+        const srcDto = await loadDiskAnimation(anmPath);
+        if (!srcDto) return null;
+        const needsHavok = Array.from(physicsChains.values()).some(c => c.solver === 'havok');
+        let havok: HavokInstance | null = null;
+        if (needsHavok) {
+            try { havok = await loadFreshHavok(); } catch { havok = null; }
+        }
+        return recomputePhysicsDto(havok, srcDto, false);
+    };
+
     // ── Physics chains + colliders ────────────────────────────────
     const getPhysicsChains = (): PhysicsChain[] => Array.from(physicsChains.values()).map(c => ({
         ...c,
@@ -2685,27 +3141,370 @@ export function createAnimStudioScene(): AnimStudioScene {
             ...chain,
             boneHashes: [...chain.boneHashes],
         });
-        rebakeTarget();
+        rebake();
         // Coalesce per-chain so dragging a stiffness / gravity slider is
         // one undo step rather than dozens.
         commitUndoStep(`chain:${chain.id}`);
     };
     const removePhysicsChain = (id: string) => {
         if (!physicsChains.delete(id)) return;
-        rebakeTarget();
+        rebake();
         commitUndoStep();
     };
     const getPhysicsColliders = (): PhysicsCollider[] => Array.from(physicsColliders.values()).map(c => ({ ...c }));
     const setPhysicsCollider = (col: PhysicsCollider) => {
         if (!col.id) return;
         physicsColliders.set(col.id, { ...col });
-        rebakeTarget();
+        rebake();
         commitUndoStep(`collider:${col.id}`);
     };
     const removePhysicsCollider = (id: string) => {
         if (!physicsColliders.delete(id)) return;
-        rebakeTarget();
+        rebake();
         commitUndoStep();
+    };
+
+    /** Auto-generate body colliders from the physics rig's mesh — the same
+     *  idea as an Unreal "Physics Asset": group the skinned vertices by their
+     *  dominant bone and fit a capsule (bone → child, radius = how far the
+     *  skin sits off the bone axis) or a sphere (leaf bones) to each. Gives
+     *  mesh-shaped body collision that rides the animation for free, without
+     *  hand-placing spheres. Skips bones that are part of a physics chain (so
+     *  the hair doesn't collide with itself) and dedupes against existing
+     *  colliders. Returns how many were added. */
+    const generateCollidersFromMesh = (): number => {
+        const obj = sides[getPhysicsRigSide()]?.object ?? null;
+        if (!obj?.skn) return 0;
+        const joints = obj.skn.joints;
+        const nj = joints.length;
+        if (nj === 0) return 0;
+
+        // Bind-pose world position of every joint (skeleton space — the same
+        // space the mesh's bind vertex positions live in, and that the solver
+        // composes collision in).
+        const bindPos: Vec3[] = new Array(nj);
+        const bindRot: Quat[] = new Array(nj);
+        for (let i = 0; i < nj; i++) {
+            const j = joints[i];
+            const lt = j.local_translation as Vec3;
+            const lr = j.local_rotation as Quat;
+            if (j.parent_id < 0 || j.parent_id >= i) {
+                bindPos[i] = [lt[0], lt[1], lt[2]];
+                bindRot[i] = [lr[0], lr[1], lr[2], lr[3]];
+            } else {
+                const pr = bindRot[j.parent_id];
+                const pp = bindPos[j.parent_id];
+                bindRot[i] = quatMul(pr, lr);
+                const r = quatRotateVec3(pr, lt);
+                bindPos[i] = [pp[0] + r[0], pp[1] + r[1], pp[2] + r[2]];
+            }
+        }
+        const childrenOf = new Map<number, number[]>();
+        for (let i = 0; i < nj; i++) {
+            const p = joints[i].parent_id;
+            if (p >= 0 && p < nj) {
+                const arr = childrenOf.get(p);
+                if (arr) arr.push(i); else childrenOf.set(p, [i]);
+            }
+        }
+
+        // Gather each vertex under its dominant (highest-weight) bone.
+        const pointsByBone = new Map<number, number[]>();
+        for (const mesh of obj.meshes) {
+            const pos = mesh.getVerticesData(VertexBuffer.PositionKind);
+            const mi = mesh.getVerticesData(VertexBuffer.MatricesIndicesKind);
+            const mw = mesh.getVerticesData(VertexBuffer.MatricesWeightsKind);
+            if (!pos || !mi || !mw) continue;
+            const vcount = (pos.length / 3) | 0;
+            for (let v = 0; v < vcount; v++) {
+                let best = 0, bestW = -1;
+                for (let k = 0; k < 4; k++) {
+                    const w = mw[v * 4 + k];
+                    if (w > bestW) { bestW = w; best = mi[v * 4 + k] | 0; }
+                }
+                if (best < 0 || best >= nj) continue;
+                let arr = pointsByBone.get(best);
+                if (!arr) { arr = []; pointsByBone.set(best, arr); }
+                arr.push(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]);
+            }
+        }
+
+        // Bones already used by a physics chain — don't collide hair with itself.
+        const chainBones = new Set<number>();
+        for (const c of physicsChains.values()) {
+            for (const h of c.boneHashes) {
+                const idx = obj.skn.boneIndexByHash.get(h);
+                if (idx !== undefined) chainBones.add(idx);
+            }
+        }
+        const existing = new Set<string>();
+        for (const c of physicsColliders.values()) existing.add(`${c.boneHash}:${c.boneHashB ?? ''}`);
+
+        // Robust radius: a high percentile of the spread, so a few stray verts
+        // don't inflate the capsule but it still wraps the bulk of the skin.
+        const pct = (vals: number[], p: number): number => {
+            if (vals.length === 0) return 0;
+            vals.sort((x, y) => x - y);
+            const i = Math.min(vals.length - 1, Math.max(0, Math.round(p * (vals.length - 1))));
+            return vals[i];
+        };
+        const MIN_VERTS = 24;
+        let added = 0;
+        for (const [boneIdx, flat] of pointsByBone) {
+            if (chainBones.has(boneIdx)) continue;
+            const cnt = (flat.length / 3) | 0;
+            if (cnt < MIN_VERTS) continue;
+            const Pa = bindPos[boneIdx];
+            // Prefer to span to the longest non-chain child bone → a capsule.
+            let childIdx = -1, bestLen = 0;
+            for (const k of childrenOf.get(boneIdx) ?? []) {
+                if (chainBones.has(k)) continue;
+                const dx = bindPos[k][0] - Pa[0], dy = bindPos[k][1] - Pa[1], dz = bindPos[k][2] - Pa[2];
+                const L = Math.hypot(dx, dy, dz);
+                if (L > bestLen) { bestLen = L; childIdx = k; }
+            }
+            let radius: number;
+            let boneHashB: number | undefined;
+            if (childIdx >= 0 && bestLen > 1e-3) {
+                const Pb = bindPos[childIdx];
+                const ux = (Pb[0] - Pa[0]) / bestLen, uy = (Pb[1] - Pa[1]) / bestLen, uz = (Pb[2] - Pa[2]) / bestLen;
+                const perps: number[] = new Array(cnt);
+                for (let vi = 0; vi < cnt; vi++) {
+                    const vx = flat[vi * 3] - Pa[0], vy = flat[vi * 3 + 1] - Pa[1], vz = flat[vi * 3 + 2] - Pa[2];
+                    const t = vx * ux + vy * uy + vz * uz;
+                    const px = vx - t * ux, py = vy - t * uy, pz = vz - t * uz;
+                    perps[vi] = Math.hypot(px, py, pz);
+                }
+                radius = pct(perps, 0.8);
+                boneHashB = joints[childIdx].name_hash;
+            } else {
+                const dists: number[] = new Array(cnt);
+                for (let vi = 0; vi < cnt; vi++) {
+                    const vx = flat[vi * 3] - Pa[0], vy = flat[vi * 3 + 1] - Pa[1], vz = flat[vi * 3 + 2] - Pa[2];
+                    dists[vi] = Math.hypot(vx, vy, vz);
+                }
+                radius = pct(dists, 0.7);
+            }
+            if (!(radius > 1e-3)) continue;
+            const boneHash = joints[boneIdx].name_hash;
+            const key = `${boneHash}:${boneHashB ?? ''}`;
+            if (existing.has(key)) continue;
+            existing.add(key);
+            const id = Math.random().toString(36).slice(2, 10);
+            physicsColliders.set(id, { id, boneHash, boneHashB, radius, offsetX: 0, offsetY: 0, offsetZ: 0 });
+            added++;
+        }
+        if (added > 0) { rebake(); commitUndoStep(); }
+        return added;
+    };
+
+    // ── Mesh collision (Maya-style) ───────────────────────────────
+    /** Read + concatenate the physics rig's collider submeshes into bind
+     *  data for the mesh-collision solver. Cached by rig + excluded set. */
+    const buildMeshColliderBind = (): MeshColliderBind | null => {
+        const obj = sides[getPhysicsRigSide()]?.object ?? null;
+        if (!obj?.skn) return null;
+        const excluded = new Set(meshCollision.excludedMeshes);
+        const meshes = obj.meshes.filter(m => !excluded.has(m.name));
+        if (meshes.length === 0) return null;
+        const key = [...excluded].sort().join('|');
+        if (meshColBindCache && meshColBindCache.obj === obj && meshColBindCache.key === key) {
+            meshColBindCache.bind.thickness = Math.max(0.01, meshCollision.thickness);
+            return meshColBindCache.bind;
+        }
+        const positions: number[] = [];
+        const bidx: number[] = [];
+        const wts: number[] = [];
+        const tris: number[] = [];
+        let base = 0;
+        for (const m of meshes) {
+            const pos = m.getVerticesData(VertexBuffer.PositionKind);
+            const mi = m.getVerticesData(VertexBuffer.MatricesIndicesKind);
+            const mw = m.getVerticesData(VertexBuffer.MatricesWeightsKind);
+            const idx = m.getIndices();
+            if (!pos || !mi || !mw || !idx) continue;
+            const vcount = (pos.length / 3) | 0;
+            for (let v = 0; v < vcount; v++) {
+                positions.push(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]);
+                for (let k = 0; k < 4; k++) { bidx.push(mi[v * 4 + k] | 0); wts.push(mw[v * 4 + k]); }
+            }
+            for (let t = 0; t < idx.length; t++) tris.push(idx[t] + base);
+            base += vcount;
+        }
+        if (positions.length === 0 || tris.length === 0) return null;
+        const bind: MeshColliderBind = {
+            vBind: new Float32Array(positions),
+            boneIdx: new Int32Array(bidx),
+            weight: new Float32Array(wts),
+            indices: new Uint32Array(tris),
+            vertexCount: (positions.length / 3) | 0,
+            triCount: (tris.length / 3) | 0,
+            thickness: Math.max(0.01, meshCollision.thickness),
+        };
+        meshColBindCache = { obj, key, bind };
+        return bind;
+    };
+    /** A fresh SkinnedCollider for a bake, or null when mesh collision is
+     *  off / unavailable. */
+    const buildMeshCollider = (): SkinnedCollider | null => {
+        if (!meshCollision.enabled) return null;
+        const bind = buildMeshColliderBind();
+        return bind ? makeSkinnedCollider(bind) : null;
+    };
+    const getMeshCollision = (): MeshCollisionConfig => ({
+        ...meshCollision,
+        excludedMeshes: [...meshCollision.excludedMeshes],
+    });
+    const setMeshCollision = (patch: Partial<MeshCollisionConfig>) => {
+        meshCollision = {
+            ...meshCollision,
+            ...patch,
+            excludedMeshes: patch.excludedMeshes ? [...patch.excludedMeshes] : meshCollision.excludedMeshes,
+        };
+        // Geometry changes invalidate the cached bind data (thickness doesn't).
+        if ('excludedMeshes' in patch || 'enabled' in patch) meshColBindCache = null;
+        rebake();
+        commitUndoStep('meshcol');
+    };
+    const getPhysicsMeshNames = (): string[] => {
+        const obj = sides[getPhysicsRigSide()]?.object ?? null;
+        return obj ? obj.meshes.map(m => m.name) : [];
+    };
+
+    // ── Collider visualisation ───────────────────────────────────
+    // Translucent spheres drawn at each collider's animated world
+    // position so the user can see (and size-check) them. Parented to
+    // the physics rig's root and positioned in skeleton space, so they
+    // ride the animated bones exactly like the real collision spheres
+    // the solver uses. Rebuilt lazily each frame from the live collider
+    // list — add / remove / resize just shows up.
+    let showColliders = false;
+    // Per collider: its preview meshes (a sphere, or two end spheres + a
+    // cylinder for a capsule) and whether it's currently a capsule so we
+    // know to rebuild when the user toggles the second bone.
+    const colliderGizmos = new Map<string, { meshes: Mesh[]; capsule: boolean }>();
+    let colliderGizmoMat: StandardMaterial | null = null;
+    let colliderObs: Observer<Scene> | null = null;
+    let colliderObsScene: Scene | null = null;
+
+    const clearColliderGizmoMeshes = () => {
+        for (const rec of colliderGizmos.values()) {
+            for (const m of rec.meshes) { try { m.dispose(); } catch { /* ignore */ } }
+        }
+        colliderGizmos.clear();
+    };
+    const disposeColliderVis = () => {
+        clearColliderGizmoMeshes();
+        if (colliderObs && colliderObsScene) {
+            colliderObsScene.onBeforeRenderObservable.remove(colliderObs);
+        }
+        colliderObs = null;
+        colliderObsScene = null;
+        if (colliderGizmoMat) { try { colliderGizmoMat.dispose(); } catch { /* ignore */ } colliderGizmoMat = null; }
+    };
+
+    const updateColliderGizmos = () => {
+        const vp = sides[getPhysicsRigSide()];
+        const obj = vp?.object ?? null;
+        if (!vp || !obj?.skn) { clearColliderGizmoMeshes(); return; }
+        const scene = vp.scene;
+        if (!colliderGizmoMat || colliderGizmoMat.getScene() !== scene) {
+            if (colliderGizmoMat) { try { colliderGizmoMat.dispose(); } catch { /* ignore */ } }
+            const m = new StandardMaterial('__collider_gizmo__', scene);
+            m.disableLighting = true;
+            m.emissiveColor = new Color3(0.25, 0.8, 1);
+            m.alpha = 0.3;
+            m.backFaceCulling = false;
+            colliderGizmoMat = m;
+        }
+        // Bone-local point → skeleton-space (before the model root transform,
+        // which the parented gizmo then re-applies to match the mesh).
+        const boneWorld = (boneHash: number, ox = 0, oy = 0, oz = 0): BabylonVector3 | null => {
+            const idx = obj.skn!.boneIndexByHash.get(boneHash);
+            if (idx === undefined) return null;
+            const bone = obj.skn!.bones[idx];
+            if (!bone) return null;
+            return BabylonVector3.TransformCoordinates(new BabylonVector3(ox, oy, oz), bone.getWorldMatrix());
+        };
+
+        const live = new Set<string>();
+        for (const c of physicsColliders.values()) {
+            if (c.radius <= 0) continue;
+            const pA = boneWorld(c.boneHash, c.offsetX, c.offsetY, c.offsetZ);
+            if (!pA) continue;
+            const pB = c.boneHashB !== undefined ? boneWorld(c.boneHashB) : null;
+            const isCapsule = !!pB;
+            live.add(c.id);
+
+            let rec = colliderGizmos.get(c.id);
+            if (!rec || rec.capsule !== isCapsule || rec.meshes.some(m => m.isDisposed())) {
+                if (rec) for (const m of rec.meshes) { try { m.dispose(); } catch { /* ignore */ } }
+                const meshes: Mesh[] = [];
+                const sA = CreateSphere(`__colgz_${c.id}_a`, { diameter: 2, segments: 10 }, scene);
+                meshes.push(sA);
+                if (isCapsule) {
+                    meshes.push(CreateSphere(`__colgz_${c.id}_b`, { diameter: 2, segments: 10 }, scene));
+                    meshes.push(CreateCylinder(`__colgz_${c.id}_c`, { height: 1, diameter: 2, tessellation: 12 }, scene));
+                }
+                for (const m of meshes) {
+                    m.material = colliderGizmoMat;
+                    m.parent = obj.root;
+                    m.isPickable = false;
+                    m.alwaysSelectAsActiveMesh = true;
+                }
+                rec = { meshes, capsule: isCapsule };
+                colliderGizmos.set(c.id, rec);
+            }
+
+            const r = c.radius;
+            rec.meshes[0].position.copyFrom(pA);
+            rec.meshes[0].scaling.setAll(r);
+            if (isCapsule && pB) {
+                rec.meshes[1].position.copyFrom(pB);
+                rec.meshes[1].scaling.setAll(r);
+                const cyl = rec.meshes[2];
+                const dir = pB.subtract(pA);
+                const len = dir.length();
+                cyl.position.copyFrom(pA.add(pB).scaleInPlace(0.5));
+                cyl.scaling.set(r, Math.max(len, 1e-4), r);
+                if (len > 1e-5) {
+                    if (!cyl.rotationQuaternion) cyl.rotationQuaternion = new BabylonQuaternion();
+                    // Orient the cylinder's Y axis along the bone-to-bone dir.
+                    BabylonQuaternion.FromUnitVectorsToRef(BabylonVector3.Up(), dir.scaleInPlace(1 / len), cyl.rotationQuaternion);
+                }
+            }
+        }
+        for (const [id, rec] of colliderGizmos) {
+            if (!live.has(id)) {
+                for (const m of rec.meshes) { try { m.dispose(); } catch { /* ignore */ } }
+                colliderGizmos.delete(id);
+            }
+        }
+    };
+
+    const attachColliderObs = () => {
+        const vp = sides[getPhysicsRigSide()];
+        if (!vp) return;
+        colliderObsScene = vp.scene;
+        colliderObs = colliderObsScene.onBeforeRenderObservable.add(() => updateColliderGizmos());
+        updateColliderGizmos();
+    };
+
+    /** Re-point the collider overlay at the current physics-rig scene
+     *  (after a mode switch changes which side owns physics). */
+    const rebindColliderVis = () => {
+        if (!showColliders) return;
+        disposeColliderVis();
+        attachColliderObs();
+    };
+
+    const getShowColliders = () => showColliders;
+    const setShowColliders = (show: boolean) => {
+        if (show === showColliders) return;
+        showColliders = show;
+        if (show) attachColliderObs();
+        else disposeColliderVis();
+        emit();
     };
 
     // ── Gizmo edit lifecycle ─────────────────────────────────────
@@ -2934,9 +3733,12 @@ export function createAnimStudioScene(): AnimStudioScene {
     const getEditingGuideMode = () => editingGuideMode;
 
     const getRetargetedClip = (): BakedAnimationDTO | null => {
-        // Prefer the cached target DTO (the retargeted version the
-        // target player is actually rendering). Fall back to the
-        // raw clip when no target rig is loaded but a clip is — the
+        // Physics mode: the physics-baked clip is what the single
+        // viewport renders and what the user wants to write.
+        if (mode === 'physics') return physicsClipDto ?? sourceClipDto;
+        // Retarget mode: prefer the cached target DTO (the retargeted
+        // version the target player is actually rendering). Fall back to
+        // the raw clip when no target rig is loaded but a clip is — the
         // user might still want to write the raw clip back out (the
         // round-trip case).
         return targetClipDto ?? sourceClipDto;
@@ -2988,6 +3790,7 @@ export function createAnimStudioScene(): AnimStudioScene {
         }
         return {
             version: 1,
+            mode,
             sourceSknPath: sides.source?.path ?? null,
             targetSknPath: sides.target?.path ?? null,
             sourceClipPath: sourceClipPath,
@@ -3000,6 +3803,7 @@ export function createAnimStudioScene(): AnimStudioScene {
                 boneHashes: [...c.boneHashes],
             })),
             physicsColliders: Array.from(physicsColliders.values()).map(c => ({ ...c })),
+            meshCollision: { ...meshCollision, excludedMeshes: [...meshCollision.excludedMeshes] },
         };
     };
 
@@ -3012,6 +3816,10 @@ export function createAnimStudioScene(): AnimStudioScene {
         // Reset everything first so a partial reload doesn't leave
         // stale state mixed with the new scene.
         clearClip();
+        // Restore the editing mode BEFORE re-loading the clip so the
+        // clip bake below uses the correct mode's DTO path.
+        mode = data.mode ?? 'retarget';
+        physicsClipDto = null;
         if (sides.source) {
             detachPlayer(sides.source);
             try { sides.source.object?.dispose(); } catch { /* ignore */ }
@@ -3046,6 +3854,10 @@ export function createAnimStudioScene(): AnimStudioScene {
                 physicsColliders.set(c.id, { ...c });
             }
         }
+        meshColBindCache = null;
+        meshCollision = data.meshCollision
+            ? { enabled: !!data.meshCollision.enabled, thickness: data.meshCollision.thickness ?? 1, excludedMeshes: [...(data.meshCollision.excludedMeshes ?? [])] }
+            : { enabled: false, thickness: 1, excludedMeshes: [] };
         retargetOptions = { ...DEFAULT_RETARGET_OPTIONS, ...data.retargetOptions };
         // Push overrides into the map BEFORE loading clips so the
         // first retarget pass on clip-load already sees them. The
@@ -3246,6 +4058,7 @@ export function createAnimStudioScene(): AnimStudioScene {
             && next.rebaseRotations === retargetOptions.rebaseRotations
             && next.stripRootMotion === retargetOptions.stripRootMotion
             && next.mirror === retargetOptions.mirror
+            && next.lockBoneLengths === retargetOptions.lockBoneLengths
             && next.dropMismatchedParents === retargetOptions.dropMismatchedParents
             && next.verticalOffset === retargetOptions.verticalOffset
             && arraysShallowEqual(next.verticalOffsetExcludedMeshes, retargetOptions.verticalOffsetExcludedMeshes)
@@ -3446,6 +4259,7 @@ export function createAnimStudioScene(): AnimStudioScene {
 
     const dispose = () => {
         disposeGizmo();
+        disposeColliderVis();
         if (rafId !== null && typeof cancelAnimationFrame !== 'undefined') {
             cancelAnimationFrame(rafId);
             rafId = null;
@@ -3536,6 +4350,17 @@ export function createAnimStudioScene(): AnimStudioScene {
         getPhysicsColliders,
         setPhysicsCollider,
         removePhysicsCollider,
+        generateCollidersFromMesh,
+        getMeshCollision,
+        setMeshCollision,
+        getPhysicsMeshNames,
+        getShowColliders,
+        setShowColliders,
+        getMode,
+        setMode,
+        getPhysicsRigSide,
+        getPhysicsJoints,
+        bakePhysicsClipForExport,
         getRetargetedClip,
         retargetClipForExport,
         getDefaultBakePath,

@@ -131,10 +131,12 @@ export default function CompareTab({
       // real file to write back to (unlike a git/saved-snapshot diff).
       readOnly: false,
       originalEditable: true,
-      // The minimap on a side-by-side diff renders TWO syntax-highlighted
-      // miniature copies and was a dominant cost on the 10k-line BIN files
-      // we ship through this — keep it off.
-      minimap: { enabled: false },
+      // Minimap on for parity with the normal editor — gives an at-a-glance
+      // overview + fast scrubbing across a long diff. It renders two
+      // miniatures on a side-by-side diff, so to keep the cost down on the
+      // 10k-line BINs we ship through here we draw color blocks instead of
+      // real glyphs (renderCharacters:false) and cap the column width.
+      minimap: { enabled: true, renderCharacters: false, maxColumn: 80 },
       scrollBeyondLastLine: false,
       automaticLayout: true,
       fontSize: fontSize ?? 14,

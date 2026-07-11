@@ -35,6 +35,7 @@ import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder';
 import { CreateSphere } from '@babylonjs/core/Meshes/Builders/sphereBuilder';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import '@babylonjs/loaders/glTF';
 // (TGA / WebP / BMP / etc. now decode via the Rust `image` crate
 // alongside DDS and TEX — see `core/mesh/texture_decode.rs::decode_auto`.
@@ -71,31 +72,56 @@ export interface StudioSlot {
 }
 
 /**
- * Toggle the winding/visibility orientation of one mesh. Drives the
- * mesh panel's "flip faces" checkbox. We swap `sideOrientation` so
- * the GPU rasterises the back faces as front, which corrects models
- * that ship with inverted winding (common with hand-modelled FBX /
- * GLTF assets exported through pipelines we don't control). Both
- * states are visible without disabling back-face culling — keeping
- * culling on is cheaper to draw than a `DOUBLESIDE` two-pass render.
+ * Flip one mesh's face winding — a *real* geometry flip (reverse the two
+ * trailing indices of every triangle) plus a normal recompute, not a
+ * `sideOrientation` swap.
+ *
+ * Why geometry, not `sideOrientation`: League SKN meshes load as
+ * `DOUBLESIDE` (capes / cloth need both sides), so a `sideOrientation`
+ * toggle either did nothing visible or fought the double-sided render, and
+ * the panel could never tell "is this flipped?" from the orientation value.
+ * Reversing the winding is unambiguous, persists through export, and makes
+ * the Blender-style face-orientation overlay (which reads `gl_FrontFacing`)
+ * recolor the moment you flip. The current state is tracked on
+ * `mesh.metadata.jadeFaceFlipped` so the panel can seed its button and — for
+ * League meshes, which the importer already winds "flipped" — start selected.
  */
 export function setMeshFaceFlipped(mesh: AbstractMesh, flipped: boolean): void {
     const M = mesh as Mesh;
-    // 0 = FRONTSIDE (normal), 1 = BACKSIDE (cull front, render back —
-    // effectively flips the visible side of the mesh). Aliasing the
-    // numeric values directly avoids depending on whichever enum
-    // export name Babylon currently surfaces.
-    M.sideOrientation = flipped ? 1 : 0;
+    if (isMeshFaceFlipped(M) === flipped) return;
+    reverseMeshWinding(M);
+    const meta = (M.metadata ?? {}) as Record<string, unknown>;
+    meta.jadeFaceFlipped = flipped;
+    M.metadata = meta;
 }
 
 /**
- * Read the current flip state off a mesh — true when the mesh is
- * rendering its back faces as front. Used by the panel to seed its
- * checkbox state on (re)mount.
+ * Read the current flip state off a mesh. League importer marks its meshes
+ * `jadeFaceFlipped: true` at build (their winding is pre-flipped), so the
+ * panel's Flip button shows selected for them by default.
  */
 export function isMeshFaceFlipped(mesh: AbstractMesh): boolean {
-    const M = mesh as Mesh;
-    return M.sideOrientation === 1;
+    const meta = (mesh as Mesh).metadata as { jadeFaceFlipped?: boolean } | null | undefined;
+    return !!(meta && meta.jadeFaceFlipped);
+}
+
+/** Reverse every triangle's winding in place and recompute normals so lit
+ *  shading + the face-orientation overlay both track the new front side. */
+function reverseMeshWinding(mesh: Mesh): void {
+    const indices = mesh.getIndices();
+    if (!indices) return;
+    for (let i = 0; i + 2 < indices.length; i += 3) {
+        const tmp = indices[i + 1];
+        indices[i + 1] = indices[i + 2];
+        indices[i + 2] = tmp;
+    }
+    mesh.setIndices(indices);
+    const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+    if (positions) {
+        const normals = mesh.getVerticesData(VertexBuffer.NormalKind) ?? new Float32Array(positions.length);
+        VertexData.ComputeNormals(positions, indices, normals);
+        mesh.setVerticesData(VertexBuffer.NormalKind, normals);
+    }
 }
 
 export interface StudioObjectSknData {

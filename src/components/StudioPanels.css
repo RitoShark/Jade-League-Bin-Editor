@@ -210,6 +210,9 @@
 }
 
 .studio-anim-clip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     text-align: left;
     padding: 4px 8px;
     font-size: 12px;
@@ -219,6 +222,18 @@
     border-radius: var(--border-radius, 3px);
     cursor: pointer;
     font-family: inherit;
+}
+.anim-clip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+.anim-clips-meta {
+    font-size: 10px;
+    color: var(--text-muted, #8a8a8a);
+    padding: 2px 2px 6px;
+    min-height: 12px;
 }
 
 .studio-anim-clip:hover:not(:disabled) {
@@ -787,6 +802,136 @@
     accent-color: var(--jade-accent);
     width: 13px;
     height: 13px;
+}
+
+/* Per-submesh flip action button (replaces the old checkbox). Compact so
+   it sits happily next to the resolution badge; highlights while the
+   submesh is currently flipped. */
+.studio-mesh-flip-btn {
+    flex: 0 0 auto;
+    padding: 2px 9px;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-secondary, #9DA5B4);
+    background: color-mix(in srgb, var(--text-color, #cccccc) 8%, transparent);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 3px);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.studio-mesh-flip-btn:hover {
+    color: var(--text-color, #e6e6e6);
+    border-color: color-mix(in srgb, var(--jade-accent, #007acc) 55%, transparent);
+}
+
+.studio-mesh-flip-btn.is-on {
+    color: var(--jade-accent-text, #8cc5ff);
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 18%, transparent);
+    border-color: color-mix(in srgb, var(--jade-accent, #007acc) 55%, transparent);
+}
+
+/* Mesh-panel toolbar row (holds the "Show face directions" toggle). */
+.studio-mesh-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+/* Blender-style viewport shading toolbar. */
+.studio-shade-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+/* Segmented display-mode control. */
+.studio-shade-group {
+    display: inline-flex;
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 3px);
+    overflow: hidden;
+}
+
+.studio-shade-group .studio-shade-btn {
+    border: none;
+    border-right: 1px solid var(--border-color, #3e3e42);
+    border-radius: 0;
+}
+
+.studio-shade-group .studio-shade-btn:last-child {
+    border-right: none;
+}
+
+.studio-shade-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-secondary, #9DA5B4);
+    background: color-mix(in srgb, var(--text-color, #cccccc) 7%, transparent);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 3px);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.studio-shade-btn:hover {
+    color: var(--text-color, #e6e6e6);
+}
+
+/* Icon inside a shading button — slightly dimmed so the label stays
+   primary, and it inherits the button's accent colour when active. */
+.studio-shade-ico {
+    flex: 0 0 auto;
+    opacity: 0.85;
+}
+.studio-shade-btn.is-on .studio-shade-ico {
+    opacity: 1;
+}
+
+.studio-shade-btn.is-on {
+    color: var(--jade-accent-text, #8cc5ff);
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 20%, transparent);
+}
+
+.studio-shade-group .studio-shade-btn.is-on {
+    border-right-color: color-mix(in srgb, var(--jade-accent, #007acc) 45%, transparent);
+}
+
+.studio-shade-standalone.is-on {
+    border-color: color-mix(in srgb, var(--jade-accent, #007acc) 60%, transparent);
+}
+
+.studio-mesh-facedir-toggle {
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary, #9DA5B4);
+    background: color-mix(in srgb, var(--text-color, #cccccc) 8%, transparent);
+    border: 1px solid var(--border-color, #3e3e42);
+    border-radius: var(--border-radius, 3px);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.studio-mesh-facedir-toggle:hover {
+    color: var(--text-color, #e6e6e6);
+    border-color: color-mix(in srgb, var(--jade-accent, #007acc) 55%, transparent);
+}
+
+.studio-mesh-facedir-toggle.is-on {
+    color: var(--jade-accent-text, #8cc5ff);
+    background: color-mix(in srgb, var(--jade-accent, #007acc) 18%, transparent);
+    border-color: color-mix(in srgb, var(--jade-accent, #007acc) 60%, transparent);
 }
 
 .studio-mesh-badge {
@@ -1393,6 +1538,97 @@
     color: var(--jade-accent-text, #ffffff);
 }
 
+/* ── "Set as default" button on a physics chain card ────────────── */
+.anim-set-default-btn {
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 3px 10px;
+    font-size: 10.5px;
+    font-family: inherit;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--text-color, #cccccc);
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 3px);
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease;
+}
+.anim-set-default-btn:hover {
+    background: var(--selected-tab-bg, #2a2d2e);
+    border-color: var(--jade-accent, #007acc);
+}
+[data-ui-mode="modern"] .anim-set-default-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+}
+[data-ui-mode="modern"] .anim-set-default-btn:hover {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: var(--jade-accent);
+}
+
+/* ── Anim Studio mode bar (Retarget / Physics) ──────────────────── */
+.anim-mode-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
+    padding: 5px 8px;
+    background: var(--editor-bg, #1e1e1e);
+    border-bottom: 1px solid var(--border-color, #3e3e42);
+}
+.anim-mode-seg {
+    display: inline-flex;
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 3px);
+    overflow: hidden;
+}
+.anim-mode-seg-btn {
+    padding: 3px 14px;
+    font-size: 11px;
+    font-family: inherit;
+    font-weight: 600;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--text-color, #cccccc);
+    border: 0;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+}
+.anim-mode-seg-btn + .anim-mode-seg-btn {
+    border-left: 1px solid var(--vscode-input-border, #3c3c3c);
+}
+.anim-mode-seg-btn:hover:not(.is-on) {
+    background: var(--selected-tab-bg, #2a2d2e);
+}
+.anim-mode-seg-btn.is-on {
+    background: var(--jade-accent, #007acc);
+    color: var(--jade-accent-text, #ffffff);
+}
+.anim-mode-hint {
+    font-size: 10.5px;
+    color: var(--text-muted, #8a8a8a);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+[data-ui-mode="modern"] .anim-mode-bar {
+    background: transparent;
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+[data-ui-mode="modern"] .anim-mode-seg {
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+}
+[data-ui-mode="modern"] .anim-mode-seg-btn {
+    background: rgba(255, 255, 255, 0.05);
+}
+[data-ui-mode="modern"] .anim-mode-seg-btn + .anim-mode-seg-btn {
+    border-left-color: rgba(255, 255, 255, 0.10);
+}
+[data-ui-mode="modern"] .anim-mode-seg-btn.is-on {
+    background: var(--jade-accent);
+    color: var(--jade-accent-text, #ffffff);
+}
+
 .anim-count-chip {
     padding: 2px 8px;
     font-size: 10px;
@@ -1856,6 +2092,82 @@
     line-height: 1.4;
     color: var(--text-secondary, #9DA5B4);
     margin: 0 0 8px;
+}
+.anim-batch-source-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 8px;
+}
+.anim-batch-source-label {
+    font-size: 10.5px;
+    color: var(--text-secondary, #9DA5B4);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* Physics-mode rows have no target / physics columns — the single
+   source column spans the row. */
+.anim-batch-row-solo {
+    grid-template-columns: 1fr !important;
+}
+
+/* ── Backup mode controls (Off / .jbck / Folder) + restore ──────── */
+.anim-backup {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 4px 0;
+}
+.anim-backup-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.anim-backup-label {
+    font-size: 11px;
+    color: var(--text-secondary, #9DA5B4);
+}
+.anim-backup-seg {
+    display: inline-flex;
+    border: 1px solid var(--vscode-input-border, #3c3c3c);
+    border-radius: var(--border-radius, 3px);
+    overflow: hidden;
+}
+.anim-backup-seg-btn {
+    padding: 3px 10px;
+    font-size: 10.5px;
+    font-family: inherit;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--text-color, #cccccc);
+    border: 0;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+}
+.anim-backup-seg-btn + .anim-backup-seg-btn {
+    border-left: 1px solid var(--vscode-input-border, #3c3c3c);
+}
+.anim-backup-seg-btn:hover:not(.is-on) {
+    background: var(--selected-tab-bg, #2a2d2e);
+}
+.anim-backup-seg-btn.is-on {
+    background: var(--jade-accent, #007acc);
+    color: var(--jade-accent-text, #ffffff);
+}
+[data-ui-mode="modern"] .anim-backup-seg {
+    border-color: rgba(255, 255, 255, 0.10);
+    border-radius: 5px;
+}
+[data-ui-mode="modern"] .anim-backup-seg-btn {
+    background: rgba(255, 255, 255, 0.05);
+}
+[data-ui-mode="modern"] .anim-backup-seg-btn + .anim-backup-seg-btn {
+    border-left-color: rgba(255, 255, 255, 0.10);
+}
+[data-ui-mode="modern"] .anim-backup-seg-btn.is-on {
+    background: var(--jade-accent);
+    color: var(--jade-accent-text, #ffffff);
 }
 .anim-batch-table {
     display: flex;

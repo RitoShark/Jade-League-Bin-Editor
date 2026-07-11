@@ -384,7 +384,11 @@ pub async fn read_animation(path: String) -> Result<BakedAnimation, String> {
 pub async fn write_animation_v4(
     path: String,
     baked: BakedAnimation,
-    backup_existing: bool,
+    // Backup mode for an existing file at `path`: "none" | "sibling" | "folder".
+    // "sibling" writes `<name>.anm.jbck` next to it; "folder" copies the old
+    // file into `backup_dir` as `<name>.anm.jbck`. Optional for back-compat.
+    backup_mode: Option<String>,
+    backup_dir: Option<String>,
 ) -> Result<u64, String> {
     let pb = PathBuf::from(&path);
     let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
@@ -393,23 +397,30 @@ pub async fn write_animation_v4(
     .await
     .map_err(|e| format!("ANM write task join failed: {e}"))??;
 
-    // Backup-existing happens AFTER serialisation succeeds — we
-    // don't want to rename the old file out of the way and then
-    // fail to write the new one, leaving the user with nothing at
-    // the canonical path.
-    if backup_existing && pb.exists() {
-        let mut backup = pb.clone();
-        let new_name = format!(
-            "{}.bak",
-            pb.file_name().and_then(|s| s.to_str()).unwrap_or("anm"),
-        );
-        backup.set_file_name(new_name);
-        // Remove an existing `.bak` first — `rename` will fail on
-        // Windows if the destination already exists.
+    // Backup happens AFTER serialisation succeeds — we don't want to move the
+    // old file out of the way and then fail to write the new one. We COPY (not
+    // rename) so the original stays put until the write below overwrites it.
+    let mode = backup_mode.as_deref().unwrap_or("none");
+    if mode != "none" && pb.exists() {
+        let fname = pb.file_name().and_then(|s| s.to_str()).unwrap_or("anm");
+        let backup: PathBuf = if mode == "folder" {
+            let dir = backup_dir
+                .as_deref()
+                .filter(|d| !d.is_empty())
+                .ok_or_else(|| "backup folder not set".to_string())?;
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("create backup dir '{}': {}", dir, e))?;
+            PathBuf::from(dir).join(format!("{}.jbck", fname))
+        } else {
+            // "sibling" (default for any non-"folder", non-"none" value)
+            let mut b = pb.clone();
+            b.set_file_name(format!("{}.jbck", fname));
+            b
+        };
         if backup.exists() {
             let _ = std::fs::remove_file(&backup);
         }
-        std::fs::rename(&pb, &backup)
+        std::fs::copy(&pb, &backup)
             .map_err(|e| format!("backup '{}' → '{}': {}", pb.display(), backup.display(), e))?;
     }
 
@@ -427,6 +438,48 @@ pub async fn write_animation_v4(
     std::fs::write(&pb, &bytes)
         .map_err(|e| format!("write ANM '{}': {}", pb.display(), e))?;
     Ok(len)
+}
+
+/// Restore a previously-backed-up ANM over `path`. Looks for the backup in
+/// order: the `<name>.anm.jbck` sidecar next to the file, then
+/// `<backup_dir>/<name>.anm.jbck`, then the legacy `<name>.anm.bak` sidecar.
+/// Copies the first one found back onto `path`. Returns the path it restored
+/// from, or an error when no backup exists.
+#[tauri::command]
+pub async fn restore_animation_backup(
+    path: String,
+    backup_dir: Option<String>,
+) -> Result<String, String> {
+    let pb = PathBuf::from(&path);
+    let fname = pb
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| "bad path".to_string())?
+        .to_string();
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    {
+        let mut sib = pb.clone();
+        sib.set_file_name(format!("{}.jbck", fname));
+        candidates.push(sib);
+    }
+    if let Some(dir) = backup_dir.as_deref().filter(|d| !d.is_empty()) {
+        candidates.push(PathBuf::from(dir).join(format!("{}.jbck", fname)));
+    }
+    {
+        let mut legacy = pb.clone();
+        legacy.set_file_name(format!("{}.bak", fname));
+        candidates.push(legacy);
+    }
+
+    for cand in candidates {
+        if cand.is_file() {
+            std::fs::copy(&cand, &pb)
+                .map_err(|e| format!("restore '{}' → '{}': {}", cand.display(), pb.display(), e))?;
+            return Ok(cand.display().to_string());
+        }
+    }
+    Err(format!("no backup (.jbck / .bak) found for {}", fname))
 }
 
 /// Disk-source counterpart of [`wad_read_skn_animations`]. Walks up
