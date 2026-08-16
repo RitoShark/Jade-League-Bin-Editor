@@ -13,7 +13,7 @@ A feature rich studio app designed for modding and editing League of Legends fil
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react)](https://react.dev/)
 [![License](https://img.shields.io/badge/License-PolyForm%20Strict%201.0.0-red?style=flat-square)](LICENSE.md)
 
-[Download](#download) · [Features](#features) · [License](#license)
+[Download](#download) · [Features](#features) · [Translations](#translations) · [License](#license)
 
 <div align="center">
 
@@ -154,13 +154,19 @@ Grab the latest build from the [releases page](https://github.com/RitoShark/Jade
 > [!NOTE]
 > The app needs a League install for some of its features such as the viewer or the materials, but everything else still works.
 
+## Translations
+
+Locale files live in [`locales/`](locales). Edit the JSON for your language and open a pull request. See [`locales/TRANSLATING.md`](locales/TRANSLATING.md) for the rules (placeholders, game terms, Windows-style wording).
+
+The application source is not published here.
+
 ## Notes
 
 - This project is not affiliated with Riot Games.
 
 ## License
 
-[PolyForm Strict 1.0.0](LICENSE.md). Source available, not open source.
+[PolyForm Strict 1.0.0](LICENSE.md). The app is closed source.
 
-You may use Jade League Studio for any noncommercial purpose. You may not redistribute it, and you may not make changes or derivative works based on it. Everything else stays with the copyright holder.
+You may use Jade League Studio for any noncommercial purpose. You may not redistribute it, and you may not make changes or derivative works based on it. Everything else stays with the copyright holder. Translation pull requests against `locales/` are welcome.
 
